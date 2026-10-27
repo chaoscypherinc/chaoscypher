@@ -554,12 +554,16 @@ Returns:
 |---|---|---|
 | `is_system` | `bool` |  |
 
-#### `create_edge(edge_create: EdgeCreate) -> Edge`
+#### `create_edge(edge_create: EdgeCreate, custom_id: str | None = None, *, person_made: bool = False) -> Edge`
 
 Create a new edge between two nodes.
 
 Args:
     edge_create: Edge creation data
+    custom_id: The row's id; None generates one.
+    person_made: A person makes it (the create tools, the API, the SDK, the
+        CLI): no release deletes or rewrites it (migration 0025). Never request
+        input: only the person paths pass it.
 
 Returns:
     Created Edge object with generated ID
@@ -590,6 +594,8 @@ created_edge = graph_repo.create_edge(edge_create)
 | Parameter | Type | Description |
 |---|---|---|
 | `edge_create` | `EdgeCreate` |  |
+| `custom_id` | `str \| None` |  |
+| `person_made` | `bool` |  |
 
 #### `create_edges_batch(edge_creates: list[EdgeCreate]) -> list[Edge]`
 
@@ -605,12 +611,16 @@ Returns:
 |---|---|---|
 | `edge_creates` | `list[EdgeCreate]` |  |
 
-#### `create_node(node_create: NodeCreate) -> Node`
+#### `create_node(node_create: NodeCreate, custom_id: str | None = None, *, person_made: bool = False) -> Node`
 
 Create a new node in the graph.
 
 Args:
     node_create: Node creation data
+    custom_id: The row's id; None generates one.
+    person_made: A person makes it (the create tools, the API, the SDK, the
+        CLI): no release deletes or rewrites it (migration 0025). Never request
+        input: only the person paths pass it.
 
 Returns:
     Created Node object with generated ID
@@ -640,6 +650,8 @@ print(f"Created node with ID: {created_node.id}")
 | Parameter | Type | Description |
 |---|---|---|
 | `node_create` | `NodeCreate` |  |
+| `custom_id` | `str \| None` |  |
+| `person_made` | `bool` |  |
 
 #### `create_nodes_batch(node_creates: list[NodeCreate]) -> list[Node]`
 
@@ -761,6 +773,13 @@ Delete GraphTemplate rows by ID list. Returns count.
 |---|---|---|
 | `template_ids` | `list[str]` |  |
 
+#### `discard_failed_work() -> None`
+
+Roll back what a failed call left in this repository's session.
+
+For a catch that answers a failure and goes on: the next call must not find the
+session needing a rollback. Inside a transaction block, the block rolls back.
+
 #### `drop_edge_citations(edge_id: str) -> None`
 
 Delete an edge's relationship citations (a merge turned it into a self-loop).
@@ -823,6 +842,23 @@ Returns:
 | `keys` | `Sequence[str]` |  |
 | `carry` | `Sequence[str]` |  |
 | `ids` | `Sequence[str] \| None` |  |
+
+#### `ensure_default_templates_exist(default_templates_provider: Callable[[], list[dict[str, Any]]] | None = None) -> int`
+
+Insert each template the provider gives that the database lacks; return how many.
+
+A template is present when a row has its id; a present one is never rewritten.
+
+Args:
+    default_templates_provider: Returns the template definitions
+        (`templates/default_templates.py`'s shape); None inserts nothing.
+
+Returns:
+    How many were inserted.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `default_templates_provider` | `Callable[[], list[dict[str, Any]]] \| None` |  |
 
 #### `export_graph(max_items: int = 100000) -> dict[str, Any]`
 
@@ -1130,6 +1166,19 @@ source_nodes = graph_repo.list_nodes(source_ids=["src_1", "src_2"])
 | `minimal` | `bool` |  |
 | `include_embedding` | `bool` |  |
 
+#### `list_nodes_without_embeddings(*, after_id: str | None = None, limit: int = 10000) -> list[Node]`
+
+Nodes with no embedding vector, ordered by id, after `after_id` when given.
+
+Args:
+    after_id: Keyset cursor: only ids after it; None starts at the beginning.
+    limit: Maximum number of results.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `after_id` | `str \| None` |  |
+| `limit` | `int` |  |
+
 #### `list_templates(template_type: str | None = None, include_disabled_sources: bool = False, source_id: str | None = None, skip: int = 0, limit: int | None = None) -> list[Template]`
 
 List templates (node and edge types).
@@ -1206,6 +1255,17 @@ Map source_id to the snapshot that source wrote for this node.
 | Parameter | Type | Description |
 |---|---|---|
 | `node_id` | `str` |  |
+
+#### `nodes_attested_by(source_ids: Collection[str], limit: int) -> list[str]`
+
+At most `limit` nodes `source_ids` attest, most memberships among them first.
+
+Ties go by node id. A scoped memory's seed reads its scope's nodes with it.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_ids` | `Collection[str]` |  |
+| `limit` | `int` |  |
 
 #### `nodes_with_true_properties(keys: Sequence[str], ids: Sequence[str] | None = None) -> dict[str, list[str]]`
 
@@ -1321,6 +1381,21 @@ Reopen the edges `source_id` closed (`valid_to` and `closed_by_source_id` unset)
 | Parameter | Type | Description |
 |---|---|---|
 | `source_id` | `str` |  |
+
+#### `repoint_edge(edge_id: str, *, source_node_id: str, target_node_id: str) -> None`
+
+Move an edge to new ends in place, keeping its id, `created_at` and `ccx_iri`.
+
+Joins the caller's transaction: nothing is committed here.
+
+Raises:
+    NotFoundError: No edge of this database has the id.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `edge_id` | `str` |  |
+| `source_node_id` | `str` |  |
+| `target_node_id` | `str` |  |
 
 #### `set_edge_validity(edge_id: str, *, valid_from: date | None, valid_to: date | None, closed_by_source_id: str | None) -> None`
 
@@ -1560,7 +1635,9 @@ Returns:
 A unit of work that holds the database's writer lock from its first statement.
 
 For a read-then-write that must not interleave with another writer:
-what is read inside is what the writes inside build on. Commits on a
+what is read inside is what the writes inside build on. The rows the
+session cached are reloaded when the lock is taken, so what is read
+inside is the database as of the lock. Commits on a
 clean exit and rolls back on an exception; inside a caller's
 transaction it joins it (taking the lock now if the transaction has
 not written yet) and commits nothing.
@@ -1728,7 +1805,7 @@ Deprecated:
 | `embedding_dimensions` | `int` |  |
 | `status` | `str` |  |
 
-#### `update_chunk_embeddings_batch(embeddings_by_chunk: dict[str, str], *, embedding_model: str, embedding_dimensions: int, status: str) -> list[str]`
+#### `update_chunk_embeddings_batch(embeddings_by_chunk: dict[str, str], *, embedding_model: str, embedding_dimensions: int, status: str | None) -> list[str]`
 
 Batch form of `update_chunk_embedding` — one UPDATE, one commit.
 
@@ -1737,7 +1814,8 @@ Args:
         embedding bytes.
     embedding_model: Model name that generated the embeddings.
     embedding_dimensions: Vector dimensions (e.g., 1024).
-    status: New status for every updated chunk.
+    status: New status for every updated chunk, or None to leave
+        each chunk's status as it is.
 
 Returns:
     The subset of chunk ids that do not exist (skipped) — callers
@@ -1755,7 +1833,7 @@ Notes:
 | `embeddings_by_chunk` | `dict[str, str]` |  |
 | `embedding_model` | `str` |  |
 | `embedding_dimensions` | `int` |  |
-| `status` | `str` |  |
+| `status` | `str \| None` |  |
 
 #### `update_chunk_source(chunk_id: str, source_id: str) -> None`
 
@@ -2318,7 +2396,7 @@ a test pins the two alike.
 
 ### `item_in_source_scope(item: object, scope: Container[str]) -> bool`
 
-Whether a graph row is in a source scope: it names no source, or a source in the scope attests it.
+Whether a graph row is in a source scope: a person made it, it names no source, or a source in the scope attests it.
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -2327,7 +2405,7 @@ Whether a graph row is in a source scope: it names no source, or a source in the
 
 ### `item_visible(item: object, disabled: Container[str]) -> bool`
 
-Whether a graph row may answer: it names no source, or a source not switched off attests it.
+Whether a graph row may answer: a person made it, it names no source, or a source not switched off attests it.
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -3242,6 +3320,19 @@ Returns:
 | `tag_id` | `str \| None` |  |
 | `site_id` | `str \| None` |  |
 | `in_site` | `bool \| None` |  |
+
+#### `settle_imported_memory_links(source_ids: list[str], database_name: str) -> int`
+
+Mark imported memories `linked` or `linked_empty` by what they attest.
+
+A memory that attests a node is `linked`, one that attests none
+`linked_empty` (`memory_linked_at` now). Run after a package import wrote their memberships. Only memory rows among
+`source_ids` change. Returns how many rows changed.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_ids` | `list[str]` |  |
+| `database_name` | `str` |  |
 
 #### `start_commit(source_id: str) -> None`
 

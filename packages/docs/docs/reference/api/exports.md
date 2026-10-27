@@ -100,9 +100,8 @@ Upload and import a `.ccx` package file. The file is sent as multipart form
 data.
 
 ```bash
-curl -X POST http://localhost/api/v1/exports/import \
-  -F "file=@my-export.ccx" \
-  -F "merge=false"
+curl -X POST "http://localhost/api/v1/exports/import?merge=false" \
+  -F "file=@my-export.ccx"
 ```
 
 ### Parameters
@@ -110,7 +109,7 @@ curl -X POST http://localhost/api/v1/exports/import \
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `file` | file | **Yes** | -- | `.ccx` package file to import |
-| `merge` | bool | No | `false` | Template handling only: reuse a local template that shares a name (`true`) or always create fresh, self-contained templates (`false`). Import is always additive — existing data is never cleared. |
+| `merge` | bool (query) | No | `false` | Template handling only: reuse a local template that shares a name (`true`) or always create fresh, self-contained templates (`false`). Import is always additive — existing data is never cleared. |
 
 ### Template Handling
 
@@ -121,7 +120,7 @@ curl -X POST http://localhost/api/v1/exports/import \
 
 Import is **always additive**: entities, edges, and sources upsert by their
 CCX IRI, and existing data is never cleared. Each imported source is recorded
-as attesting the entities it cites, with the package's own content for each;
+as attesting the entities and edges it cites, with the package's own content for each;
 an entity a source outside the package already shares (it was merged into the
 same node) is rebuilt from every source's content, which can change its label
 and home source, so deleting any one source later removes only what that
@@ -149,6 +148,8 @@ statistics about the import:
 - Number of edges imported
 - Number of workflows imported
 - Any errors or warnings
+
+A package whose declared ed25519 signature does not verify against its manifest bytes is refused (the task fails with `package signature failed`); a package with no signature imports as before, and a signature kind this install cannot verify is logged and skipped.
 
 ### Errors
 
@@ -193,9 +194,9 @@ curl -X POST "http://localhost/api/v1/exports/by_sources?include_templates=true"
 
 ### What Gets Exported
 
-- **Entities** that have citations from the specified sources
+- **Entities** attested by (members of) the specified sources
 - **Edges** where both endpoints are in the entity set (referential integrity)
-- **Templates** linked to the sources (via TemplateSourceAssignment) and templates used by exported entities
+- **Templates** the sources own (`source_id`) and templates used by exported entities
 - **Source metadata**, chunks, citations, and tags
 
 ### Response `202 Accepted` -- ExportResponse

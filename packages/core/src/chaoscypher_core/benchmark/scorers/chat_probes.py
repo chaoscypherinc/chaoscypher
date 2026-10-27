@@ -185,13 +185,41 @@ failed only for a word the names check read as a name ('Conversely',
 'Every', 'No. The', 'Kurágin-related') and pass. Book One's reviewed set is
 unchanged (its two standing disagreements, q026 and q028, predate v8).
 Recipe samples s52-s61.
+
+Scorer v9 (2026-10-23, after the Book One answer review: 30 reviewers and 8
+adjudicators graded by hand all 7,920 answers of the 2.1 board,
+internal/benchmarks/runs/2026-10-23-book-one-review-verdicts.json). A phrase
+term is met by its words joined with hyphens ('forty\u2011thousand rubles'),
+and a hyphenated term by its words spaced. An out-of-scope decline that then
+offers a candidate ('Schubert is a candidate'), draws an inference ('we can
+infer that', 'it can be inferred'), names a likely answer ('likely', 'may have
+been', 'may be the', 'it appears that') or concludes one ('Therefore, the
+answer is: the third floor window') guesses; a concluding 'the answer is'
+sentence that declines is the decline. ``must_not_contain`` reads nothing
+wholly inside a long quotation the retrieved context holds word for word
+(right answers quoting '... and the little Princess Bolkónskaya' failed
+'little princess'); a phrase that runs from the answer's own words into the
+quotation is still stated. The names check takes the graph's own label
+'Entity' for no name, 'Another', 'Specific', 'Subsequent' and 'Translator' as
+English openers, and the Russian form of a given name the translation writes
+in English ('Andrei', 'Nikolai', 'Mikhail') as supported where the English
+name is. ``alias_evidence`` phrases opening with :data:`ABSENT_EVIDENCE_MARKER`
+must be absent for the alias to count (a description of the bride's brother
+answers only where the context never names him, q029), and a name whose
+plain evidence the context lacks, grounded only by such a description, is
+from memory. With the fixture's 'Review 2026-10-23 (answers)' entries, v9
+takes the review's disagreements from 394 under v8 to 79, with none new (the
+known scorer misses left, internal/benchmarks/runs/2026-10-23-book-one-review-known-misses.json);
+Book One's 10-03 reviewed set goes from two standing disagreements to one
+(q026), the Ollama docs review from 154 to 150 (three h023 guesses, q033's
+'Specific'), none new. Recipe samples s62-s69.
 """
 
 from __future__ import annotations
 
 import functools
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -205,7 +233,7 @@ if TYPE_CHECKING:
     from chaoscypher_core.benchmark.queries import LabeledQuery, LabeledQuerySet
     from chaoscypher_core.benchmark.types import RawOutput
 
-CHAT_PROBE_SCORER_VERSION = 8
+CHAT_PROBE_SCORER_VERSION = 9
 """Bumped whenever a verdict can change; the module docstring names what moved in each.
 
 v8 (2026-10-23): the Ollama docs answer review's rules: a number and its unit
@@ -534,6 +562,10 @@ _NOT_A_NAME = {
     "tab",
     "enter",
     "cmd",
+    # the retrieved graph's own label, cited as it is written ('(Entity description)',
+    # '[[Entity: Prince Vasíli Kurágin]]'; the Book One review, 2026-10-23)
+    "entity",
+    "entities",
 }
 
 # An identifier made only of placeholder words ('VARIABLE_NAME', 'MY_VAR', 'YOUR_VARIABLE',
@@ -681,9 +713,10 @@ def context_holds_terms(
     tied = alias_evidence or {}
 
     def ungated(member: str) -> bool:
-        """Whether the member's evidence phrases, if it has any, are written."""
-        needs = tied.get(member)
-        return not needs or any(_mentions_phrase(folded, _straight_apostrophes(n)) for n in needs)
+        """Whether the member's evidence phrases, if it has any, hold (:func:`alias_is_tied`)."""
+        return alias_is_tied(
+            tied.get(member), lambda n: _mentions_phrase(folded, _straight_apostrophes(n))
+        )
 
     for group in answer_terms:
         members = [m for m in ([group] if isinstance(group, str) else list(group)) if ungated(m)]
@@ -694,6 +727,31 @@ def context_holds_terms(
         if not any(_mentions_phrase(folded, _straight_apostrophes(m)) for m in candidates):
             return False
     return True
+
+
+ABSENT_EVIDENCE_MARKER = "!"
+"""Opens an ``alias_evidence`` phrase the context must NOT hold for the alias to count.
+
+'the man who married Lise Meinen' identifies the bride's brother where the context never
+names him, and is no answer where it calls him young Bolkónski (q029: the Book One review
+of 2026-10-23 passed it on the rungs without the name, the 10-03 reviews failed it where the
+name was retrieved). ``{"married Lise Meinen": ["!young Bolkónski", "!wife of Prince Andrew"]}``.
+"""
+
+
+def alias_is_tied(needs: Sequence[str] | None, holds: Callable[[str], bool]) -> bool:
+    """Whether an alias's evidence phrases hold in a context (``holds`` tests one phrase).
+
+    No phrases: it counts. Plain phrases: one of them is written. Phrases opening with
+    :data:`ABSENT_EVIDENCE_MARKER`: none of them is written. Both kinds: both tests.
+    """
+    if not needs:
+        return True
+    present = [n for n in needs if not n.startswith(ABSENT_EVIDENCE_MARKER)]
+    absent = [
+        n[len(ABSENT_EVIDENCE_MARKER) :] for n in needs if n.startswith(ABSENT_EVIDENCE_MARKER)
+    ]
+    return (not present or any(holds(n) for n in present)) and not any(holds(n) for n in absent)
 
 
 def _is_bare_term(term: str) -> bool:
@@ -942,7 +1000,7 @@ _ENGLISH_ENDING = re.compile(
 # lower case elsewhere, which no name in the corpus is.
 _COMMON_OPENERS = frozenset(
     {
-        "addressed", "along", "appears", "better", "check", "claims", "combine", "conclude",
+        "addressed", "along", "another", "appears", "better", "check", "claims", "combine", "conclude",
         "construct", "contains", "conversation", "correct", "correction", "could", "dialogue",
         "direct", "discusses", "discussion", "doc", "docs", "double", "education", "ends",
         "ensure", "entity", "even", "evidence", "filename", "follow", "found", "generic",
@@ -950,7 +1008,8 @@ _COMMON_OPENERS = frozenset(
         "interaction", "irrelevant", "just", "keep", "key", "kisses", "lists", "location",
         "look", "make", "mention", "mentioned", "most", "never", "neither", "often", "omit",
         "prompt", "provide", "quote", "refers", "regardless", "rule", "safest", "say", "scan",
-        "scene", "search", "sometimes", "state", "stick", "text", "usually",
+        "scene", "search", "sometimes", "specific", "state", "stick", "subsequent", "text",
+        "translator", "usually",
     }
 )  # fmt: skip
 
@@ -1305,6 +1364,7 @@ def answers_from_graph(rec: dict[str, Any], q: LabeledQuery) -> tuple[bool, str]
             "|".join(t) if isinstance(t, tuple) else t
             for t in q.answer_terms
             if not _term_in_support(_used_aliases(flat, t, answer) or t, support, q.alias_evidence)
+            or _names_an_untied_alias(_used_aliases(flat, t, answer), support, q.alias_evidence)
         ]
         if absent:
             return False, f"answer terms not in the retrieved context={absent}"
@@ -1402,7 +1462,38 @@ def _term_matches(text: str, term: str | tuple[str, ...], raw: str) -> bool:
     # i/y and w/v transliterate one Cyrillic letter each: 'Radziwílov' names
     # 'Radzivílov' (2026-10-03), 'Vasily' names 'Vasíli' (scorer v6)
     folded = _transliteration_fold(text)
-    return _term_matches_exact(folded, term, raw, transliterate=True)
+    if _term_matches_exact(folded, term, raw, transliterate=True):
+        return True
+    # 'forty\u2011thousand' names 'forty thousand' (the Book One review, 2026-10-23)
+    phrases = _phrases_spaced(term)
+    hyphenated = "-" in text or any("-" in m for m in ((term,) if isinstance(term, str) else term))
+    if not phrases or not hyphenated:
+        return False
+    spaced = _HYPHEN_IN_A_WORD.sub(" ", text)
+    return _term_matches_exact(spaced, phrases, raw) or _term_matches_exact(
+        _transliteration_fold(spaced), phrases, raw, transliterate=True
+    )
+
+
+_HYPHEN_IN_A_WORD = re.compile(r"(?<=[^\W\d_])-(?=[^\W\d_])")
+"""A hyphen between two letters: the joint of a compound ('forty-thousand', 'aide-de-camp')."""
+
+
+def _phrases_spaced(term: str | tuple[str, ...]) -> tuple[str, ...]:
+    """The term's phrases (members of more than one word) with their hyphens read as spaces.
+
+    A phrase term is met by its words joined with hyphens ('forty\u2011thousand rubles',
+    GPT-OSS 20B, q004 and q025 of the Book One review), and a hyphenated term by its words
+    spaced ('aide de camp'): :func:`_term_matches` reads both sides with the joints spaced.
+    A one-word member keeps its own match; a plain multi-word term becomes a one-member
+    alias group, matched whole, as a phrase term is.
+    """
+    members = (term,) if isinstance(term, str) else term
+    return tuple(
+        _HYPHEN_IN_A_WORD.sub(" ", _straight_apostrophes(m))
+        for m in members
+        if " " in m.strip() or "-" in m
+    )
 
 
 def _term_matches_exact(
@@ -1461,8 +1552,9 @@ def _term_in_support(
     """
     aliases = [term] if isinstance(term, str) else list(term)
     for alias in aliases:
-        needs = (alias_evidence or {}).get(alias)
-        if needs and not any(fold(_straight_apostrophes(n)) in support for n in needs):
+        if not alias_is_tied(
+            (alias_evidence or {}).get(alias), lambda n: fold(_straight_apostrophes(n)) in support
+        ):
             continue  # the context never ties this name to the asked person
         digits = alias.replace(",", "").strip()
         if digits.isdigit():  # '40,000' is grounded by 'forty thousand'
@@ -1486,6 +1578,45 @@ def _term_in_support(
             if len(stem) >= 4 and re.search(r"(?<![a-z0-9])" + re.escape(stem), support):
                 return True
     return False
+
+
+def _names_an_untied_alias(
+    used: tuple[str, ...], support: str, alias_evidence: dict[str, list[str]]
+) -> bool:
+    """A name from memory grounded only by a description beside it.
+
+    Grounding is met by any alias the answer names, so 'This is Prince Andrew, who married
+    Lise Meinen' was grounded by the description where the context never ties Andrew to the
+    brother (q029, the Book One review, 2026-10-23: failed as 'not in context'). True when
+    the answer names an alias whose plain evidence the context lacks and every alias that
+    grounds it is a description (gated only by :data:`ABSENT_EVIDENCE_MARKER` phrases); a
+    grounded name beside it ('young Prince Bolkónski (Prince Andrew)') or an ungated alias
+    ('Prince Vasíli') still grounds the answer.
+    """
+
+    def phrases(alias: str, *, absent: bool) -> list[str]:
+        return [
+            n
+            for n in alias_evidence.get(alias, [])
+            if n.startswith(ABSENT_EVIDENCE_MARKER) is absent
+        ]
+
+    def holds(n: str) -> bool:
+        return fold(_straight_apostrophes(n)) in support
+
+    untied = [
+        a
+        for a in used
+        if phrases(a, absent=False) and not any(map(holds, phrases(a, absent=False)))
+    ]
+    if not untied:
+        return False
+    grounding = [
+        a for a in used if a not in untied and _term_in_support((a,), support, alias_evidence)
+    ]
+    return bool(grounding) and all(
+        phrases(a, absent=True) and not phrases(a, absent=False) for a in grounding
+    )
 
 
 def _declining_conclusion(text: str, q: LabeledQuery) -> str | None:
@@ -1872,6 +2003,7 @@ def no_unsupported_names(rec: dict[str, Any], q: LabeledQuery) -> tuple[bool, st
             _typo_of_supported(w, answer_words, support)
             or _transliteration_of(w, support)
             or _iy_variant_supported(w, support)
+            or _english_given_name_supported(w, support)
             for w in named
         ):
             continue  # Karágin where the same answer also writes Kurágin
@@ -1879,6 +2011,24 @@ def no_unsupported_names(rec: dict[str, Any], q: LabeledQuery) -> tuple[bool, st
             continue
         bad.append(cand)
     return not bad, f"names not in the retrieved context={bad[:4]}"
+
+
+_ENGLISH_GIVEN_NAME = {
+    "andrei": "andrew",
+    "andrey": "andrew",
+    "nikolai": "nicholas",
+    "nikolay": "nicholas",
+    "mikhail": "michael",
+}
+"""The Russian form of a given name the translation writes in English ('Andrei' for Andrew,
+'Nikolai' for Nicholas; Qwen3.8 27B, q062 and q112 of the Book One review, 2026-10-23): a
+closed list of the corpus's given names."""
+
+
+def _english_given_name_supported(word: str, support: str) -> bool:
+    """A folded name word whose English given name (:data:`_ENGLISH_GIVEN_NAME`) the support writes."""
+    english = _ENGLISH_GIVEN_NAME.get(re.sub(r"'s?$", "", word))
+    return english is not None and _word_supported(english, support)
 
 
 # A number token: '1969', '114', '3.5', '1,000'; a decade's 's' ('1960s') is
@@ -2311,10 +2461,21 @@ def must_not_contain(rec: dict[str, Any], q: LabeledQuery) -> tuple[bool, str]:
     answer = _answer_of(rec)
     lines = answer.lines
     spellings = ((lines, False), (_transliteration_fold(lines), True))
+    # a phrase wholly inside a long quotation the retrieved context holds word for word says
+    # what the source says (the Book One review, 2026-10-23: right answers quoting '... and the
+    # little Princess Bolkónskaya' failed q100's 'little princess'); one that runs into the
+    # answer's own words ('Prince Vasíli is "very fond of Pierre ..."') is still stated
+    quoted = _context_quotations(rec, q)
+    spans = {tr: _spans_of(text, quoted, tr) for text, tr in spellings}
     hits: list[str] = []
     negated: list[str] = []
     for t in q.must_not_contain:
-        found = [(text, tr, span) for text, tr in spellings for span in _phrase_hits(text, t, tr)]
+        found = [
+            (text, tr, span)
+            for text, tr in spellings
+            for span in _phrase_hits(text, t, tr)
+            if not any(a <= span[0] and span[1] <= b for a, b in spans[tr])
+        ]
         if not found:
             continue
         if carries_its_own_polarity(t) or any(
@@ -2325,6 +2486,45 @@ def must_not_contain(rec: dict[str, Any], q: LabeledQuery) -> tuple[bool, str]:
             negated.append(t)
     why = f"wrong facts stated={hits}"
     return not hits, why + (f", negated={negated}" if negated else "")
+
+
+_QUOTE_TRAILER = re.compile(r"[\s.,;:!?\u2026]+$")
+"""What a quotation's end may add to the source's words: its closing punctuation, an ellipsis."""
+
+
+def _context_quotations(rec: dict[str, Any], q: LabeledQuery) -> tuple[str, ...]:
+    """The answer's long quotations that its retrieved context holds word for word, normalised.
+
+    A quotation is one :data:`_QUOTED` matches (double or curly double quotes, 40 to 400
+    characters on one line); its words, normalised as the answer is
+    (:attr:`NormalisedAnswer.flat`) and less a closing ellipsis or punctuation, are looked
+    for in the folded context with its whitespace collapsed. A quotation the context does not
+    hold ('"Hélène ... is the little princess of the family"') is the answer's own claim.
+    Only read when the query declares wrong facts (:func:`must_not_contain`).
+    """
+    context = rec.get("context_text") or ""
+    raw = _answer_of(rec).text
+    if not context or not q.must_not_contain or not _QUOTED.search(raw):
+        return ()
+    support = _support_text(context, q)
+    out: list[str] = []
+    for match in _QUOTED.finditer(raw):
+        words = _QUOTE_TRAILER.sub("", normalise_answer(match.group(0)[1:-1]).flat)
+        if len(words) >= 40 and words in support:
+            out.append(words)
+    return tuple(out)
+
+
+def _spans_of(text: str, quoted: tuple[str, ...], transliterate: bool) -> list[tuple[int, int]]:
+    """Where each normalised quotation stands in one spelling of the answer."""
+    spans: list[tuple[int, int]] = []
+    for words in quoted:
+        form = _transliteration_fold(words) if transliterate else words
+        start = text.find(form)
+        while start != -1:
+            spans.append((start, start + len(form)))
+            start = text.find(form, start + 1)
+    return spans
 
 
 @functools.cache
@@ -2731,17 +2931,41 @@ def declines_when_unsupported(rec: dict[str, Any], q: LabeledQuery) -> tuple[boo
     declined = declines(text)
     # A decline that then guesses ("the sources do not say; it was presumably
     # Prince Vasíli") asserts an answer it has no source for (scorer v5).
-    guess = _SPECULATION.search(_PARENTHESISED.sub(" ", text))
+    guess = _speculation(_PARENTHESISED.sub(" ", text))
     ok = not decoys and declined and guess is None
     why = f"decoys asserted={decoys}, decline phrase={'yes' if declined else 'no'}"
     if guess:
-        why += f", speculates: {guess.group(0)!r}"
+        why += f", speculates: {guess!r}"
     return ok, why
 
 
 # Only the forms that assert a guessed answer; 'if I assume' in leaked reasoning
 # and a parenthetical '(likely X)' aside are not guesses (real answers, 2026-10-03).
-_SPECULATION = re.compile(r"\b(?:presumably|probably|most likely|would have been|must have been)\b")
+# A candidate offered, an inference drawn or a likely answer named after the decline
+# guesses too (the Book One review, 2026-10-23: 'Schubert is a candidate', 'we can
+# infer that ...', 'it is likely to be Andrei', 'Borís may have been involved').
+_SPECULATION = re.compile(
+    r"\b(?:presumably|probably|(?:most )?likely|would have been|must have been|may have been|"
+    r"may be the|candidates?|(?:we|one|i) can (?:infer|deduce|conclude)|can be (?:inferred|deduced)|"
+    r"it appears that)\b"
+)
+_CONCLUDED_ANSWER = re.compile(r"\bthe answer is:?\s+([^.\n]+)")
+"""A concluded answer ('Therefore, the answer is: the third floor window', q067 of the Book
+One review); one that declines ('the answer is: it is not in the sources', 'the answer is not
+explicitly stated') is the decline."""
+
+
+def _speculation(text: str) -> str | None:
+    """The words of a folded out-of-scope answer that guess an answer, or None."""
+    guess = _SPECULATION.search(text)
+    if guess:
+        return guess.group(0)
+    for concluded in _CONCLUDED_ANSWER.finditer(text):
+        if not _matches_decline(concluded.group(0)):
+            return concluded.group(0)
+    return None
+
+
 _PARENTHESISED = re.compile(r"\([^()\n]{0,300}\)")
 
 
@@ -2878,6 +3102,7 @@ class ChatProbeScorer:
 
 
 __all__ = [
+    "ABSENT_EVIDENCE_MARKER",
     "ADDITIVE_AFTER_NOT",
     "BAND_TIER",
     "CHAT_PROBE_SCORER_VERSION",
@@ -2890,6 +3115,7 @@ __all__ = [
     "STATED_WHEN_NEGATED_MARKER",
     "ChatProbeScorer",
     "NormalisedAnswer",
+    "alias_is_tied",
     "carries_its_own_polarity",
     "cited_chunks",
     "cites_the_answer",

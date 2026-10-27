@@ -1332,7 +1332,8 @@ class ExtractionOrchestrator:
         result = await self.engine.extraction_service.finalize_distributed_extraction(
             raw_entities=all_entities,
             raw_relationships=all_relationships,
-            generate_embeddings=True,
+            # no entity vectors with vector search off (the engine has no provider)
+            generate_embeddings=self.engine.embedding_service is not None,
             file_info=file_info,
             detected_domain=source_domain,
             forced_domain=forced_domain,

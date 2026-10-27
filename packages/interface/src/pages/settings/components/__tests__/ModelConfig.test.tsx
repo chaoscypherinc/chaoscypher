@@ -401,10 +401,4 @@ describe('ContextWindowSlider', () => {
     const sliders = screen.getAllByRole('slider');
     expect(sliders).toHaveLength(2);
   });
-
-  // Sanity import for `within` so the eslint unused-import check passes.
-  it('lets us scope queries with within() (smoke)', () => {
-    const { container } = render(<ContextWindowSlider {...baseProps} />);
-    expect(within(container).getByLabelText('Context Window')).toBeInTheDocument();
-  });
 });

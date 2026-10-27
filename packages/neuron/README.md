@@ -157,16 +157,18 @@ uv run --with watchdog watchmedo auto-restart -d packages/neuron/src -p "*.py" -
 
 ## Scaling
 
-The all-in-one image runs exactly one `cc-neuron` instance under
-supervisord. For horizontal scale-out, use the multi-container
-deployment and replicate the `neuron` service:
+Run exactly one Neuron worker. The all-in-one image runs one `cc-neuron`
+under supervisord, and the multi-container compose files run one `neuron`
+service with a fixed `container_name`, so `docker compose --scale` cannot
+replicate it. There is no horizontal scaling path (the docs' Production
+page, "Scaling considerations", says the same), and each worker enforces
+its own concurrency caps, so extra workers would multiply the LLM queue's
+limit rather than share it.
 
-```bash
-cd packages/docker/multi-container
-docker compose -f docker-compose.prod.yml up -d --scale neuron=4
-```
-
-Each replica polls both queues; Valkey distributes tasks across them.
+To get more throughput, raise `max_concurrent` per queue in
+`workers.yaml` (see Configuration above), add enabled Ollama instances
+(the LLM queue's default concurrency is one per enabled instance), or give
+the host more CPU and RAM.
 
 ## License
 

@@ -306,8 +306,10 @@ class NodeService:
             msg = "Template"
             raise NotFoundError(msg, node_create.template_id)
 
-        # Create node
-        node = self.graph_repository.create_node(node_create)
+        # A node a caller makes with no source is the person's (migration 0025)
+        node = self.graph_repository.create_node(
+            node_create, person_made=node_create.source_id is None
+        )
 
         # Index for search (with error handling)
         self.safe_index_node(node.id, node)
@@ -319,6 +321,8 @@ class NodeService:
             "properties": node.properties,
             "position": {"x": node.position.x, "y": node.position.y} if node.position else None,
             "embedding": node.embedding,
+            "source_id": node.source_id,
+            "person_made": node.person_made,
             "created_at": node.created_at,
             "updated_at": node.updated_at,
         }

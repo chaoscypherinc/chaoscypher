@@ -247,8 +247,12 @@ class ChatSuite:
         a live run's resolved levers, the query vector cache while pins are
         built, and the suite's router model.
         """
+        from chaoscypher_core.adapters.embedding import require_embedding_provider
+
         engine = await self._open_engine()
-        service = engine.embedding_service
+        service = require_embedding_provider(
+            engine.embedding_service, "The benchmark's vector retrieval"
+        )
         settings = engine.settings
         if self._live_graphrag is not None:
             settings = settings.model_copy(update={"graphrag": self._live_graphrag})

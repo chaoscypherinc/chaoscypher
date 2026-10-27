@@ -64,11 +64,11 @@ export function buildStageStats(
   if (num('structural_entities_filtered') > 0) filter.push({ label: 'Structural', value: num('structural_entities_filtered'), description: 'Entities removed by structural filters — headings, formatting artifacts, and other non-entities.' });
   // Keep, flag, never delete (2026-10-07): orphan_entities_filtered now counts the edgeless
   // entities KEPT (flagged `orphan`); evidence_less_entities_dropped the ones still dropped.
-  if (num('orphan_entities_filtered') > 0) filter.push({ label: 'Unconnected', value: num('orphan_entities_filtered'), description: 'Entities committed with no relationship, kept because they carry a description or evidence and flagged as unconnected (grouped in the canvas\'s Unresolved region).' });
+  if (num('orphan_entities_filtered') > 0) filter.push({ label: 'Unconnected', value: num('orphan_entities_filtered'), description: 'Entities committed with no relationship, kept because they carry a description or evidence and flagged as unconnected (gathered under the canvas\'s Unresolved node).' });
   if (num('evidence_less_entities_dropped') > 0) filter.push({ label: 'No evidence', value: num('evidence_less_entities_dropped'), description: 'Entities with no relationship and neither a description nor an evidence sentence, dropped at commit (kept when orphan protection is on).' });
   // Keep, flag, never delete (2026-10-07): per-chunk entities kept flagged instead of dropped.
-  if (num('plausibility_entities_flagged') > 0) filter.push({ label: 'Low plausibility', value: num('plausibility_entities_flagged'), description: 'Entities whose name scored below the plausibility bar, kept because they carry a description or evidence and flagged as low plausibility (grouped in the canvas\'s Unresolved region).' });
-  if (num('unplaced_type_entities_flagged') > 0) filter.push({ label: 'Unplaced type', value: num('unplaced_type_entities_flagged'), description: 'Entities whose written type no core type answers to, kept as a Concept with the written type and flagged as unplaced (grouped in the canvas\'s Unresolved region).' });
+  if (num('plausibility_entities_flagged') > 0) filter.push({ label: 'Low plausibility', value: num('plausibility_entities_flagged'), description: 'Entities whose name scored below the plausibility bar, kept because they carry a description or evidence and flagged as low plausibility (gathered under the canvas\'s Unresolved node).' });
+  if (num('unplaced_type_entities_flagged') > 0) filter.push({ label: 'Unplaced type', value: num('unplaced_type_entities_flagged'), description: 'Entities whose written type no core type answers to, kept as a Concept with the written type and flagged as unplaced (gathered under the canvas\'s Unresolved node).' });
   // Keep, flag, never delete (2026-10-07): relationships_unevidenced_kept counts the relationships
   // the evidence filter KEPT flagged `unevidenced`; evidence_relationships_dropped only the ones it
   // still drops (an endpoint that is no entity), where it used to count every one without evidence.
@@ -78,9 +78,9 @@ export function buildStageStats(
   // exclusion examples and the strict type check keep what they used to drop, flagged.
   // evidence_entities_dropped now counts only the entities with no description, and
   // relationships_dropped_type_unmatched the relationships the type check KEPT flagged.
-  if (num('entities_unevidenced_kept') > 0) filter.push({ label: 'Unevidenced ents', value: num('entities_unevidenced_kept'), description: 'Entities whose cited sentence does not name them, kept because they carry a description and flagged as unevidenced (grouped in the canvas\'s Unresolved region).' });
+  if (num('entities_unevidenced_kept') > 0) filter.push({ label: 'Unevidenced ents', value: num('entities_unevidenced_kept'), description: 'Entities whose cited sentence does not name them, kept because they carry a description and flagged as unevidenced (gathered under the canvas\'s Unresolved node).' });
   if (num('evidence_entities_dropped') > 0) filter.push({ label: 'No-evidence ents', value: num('evidence_entities_dropped'), description: 'Entities the evidence filter dropped: their cited sentence does not name them and they carry no description.' });
-  if (num('excluded_entities_kept') > 0) filter.push({ label: 'Excluded names', value: num('excluded_entities_kept'), description: 'Entities whose name is one of the domain\'s exclusion examples, kept because they carry a description or evidence and flagged as an excluded name (grouped in the canvas\'s Unresolved region).' });
+  if (num('excluded_entities_kept') > 0) filter.push({ label: 'Excluded names', value: num('excluded_entities_kept'), description: 'Entities whose name is one of the domain\'s exclusion examples, kept because they carry a description or evidence and flagged as an excluded name (gathered under the canvas\'s Unresolved node).' });
   // The known-entities guards (2026-10-11): pass 1 is checked against the entities the source's
   // earlier groups named. A known name the guard could not support is counted whether it was
   // demoted or kept as written and flagged.

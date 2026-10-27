@@ -26,7 +26,7 @@ def _build_settings() -> MagicMock:
     return settings
 
 
-def _make_service(captured: list[dict]):
+def _make_service(captured: list[dict], staged: Path):
     from chaoscypher_cortex.features.sources.upload_service import UploadService
 
     async def _capture_upload_file(**kwargs):
@@ -41,14 +41,14 @@ def _make_service(captured: list[dict]):
     )
     service.preflight_disk_for_upload = MagicMock()
     service.validate_content_type = MagicMock()
-    service.stream_upload_to_temp = AsyncMock(return_value=(Path("/tmp/x"), "hash", 5))
+    service.stream_upload_to_temp = AsyncMock(return_value=(staged, "hash", 5))
     return service
 
 
 @pytest.mark.asyncio
-async def test_upload_single_forwards_auto_confirm() -> None:
+async def test_upload_single_forwards_auto_confirm(tmp_path: Path) -> None:
     captured: list[dict] = []
-    service = _make_service(captured)
+    service = _make_service(captured, tmp_path / "staged")
     upload_file = MagicMock()
     upload_file.filename = "t.txt"
 
@@ -69,9 +69,9 @@ async def test_upload_single_forwards_auto_confirm() -> None:
 
 
 @pytest.mark.asyncio
-async def test_upload_batch_forwards_auto_confirm() -> None:
+async def test_upload_batch_forwards_auto_confirm(tmp_path: Path) -> None:
     captured: list[dict] = []
-    service = _make_service(captured)
+    service = _make_service(captured, tmp_path / "staged")
     f = MagicMock()
     f.filename = "a.txt"
     f.size = 5

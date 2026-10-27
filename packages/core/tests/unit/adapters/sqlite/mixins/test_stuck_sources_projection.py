@@ -35,6 +35,7 @@ PROJECTED_COLUMNS = {
     "current_extraction_job_id",
     "error_message",
     "error_stage",
+    "source_type",  # the worker's recovery leaves a memory to the link step
 }
 
 

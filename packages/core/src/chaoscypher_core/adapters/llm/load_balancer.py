@@ -8,7 +8,7 @@ health monitoring, and automatic failover.
 
 Architecture:
     Settings Change → reload_config() → Rebuild instance pool
-    Request → acquire_instance() → Get available instance → Execute → release_instance()
+    Request → async with acquire_instance() as (instance_id, provider) → Execute → released on exit
 """
 
 from __future__ import annotations
@@ -44,11 +44,11 @@ logger = structlog.get_logger(__name__)
 _ACQUIRE_MAX_ATTEMPTS = 3
 
 
-_POOL_SIZING_KEYS: frozenset[str] = frozenset(
-    {"llm_max_concurrent", "llm_reserved_interactive", "llm_enable_priority"}
-)
+_POOL_SIZING_KEYS: frozenset[str] = frozenset({"llm_max_concurrent", "llm_reserved_interactive"})
 """Provider config keys that size the pool, not the request: the global semaphore owns them,
-so a change in the instance count does not rebuild every provider."""
+so a change in the instance count does not rebuild every provider. ``llm_enable_priority`` is
+not one of them: every provider stores it and branches on it, so a flip must rebuild them
+(2026-10-19 audit — a reload that turned priority off left every provider on True)."""
 
 
 def balancer_provider_config(llm_settings: LLMSettings, instance_count: int) -> dict[str, Any]:
@@ -129,11 +129,8 @@ class OllamaLoadBalancer:
     Example:
         >>> balancer = OllamaLoadBalancer()
         >>> await balancer.reload_config(settings.llm)
-        >>> instance_id, provider = await balancer.acquire_instance(high_priority=True)
-        >>> try:
+        >>> async with balancer.acquire_instance(high_priority=True) as (instance_id, provider):
         ...     result = await provider.chat(messages)
-        ... finally:
-        ...     balancer.release_instance(instance_id)
     """
 
     def __init__(self, drain_max_iterations: int | None = None) -> None:
@@ -475,7 +472,7 @@ class OllamaLoadBalancer:
             ...     result = await provider.chat(messages)
         """
         if not self._providers:
-            raise RuntimeError("No Ollama instances configured")
+            raise self._unavailable_error("No Ollama instances configured")
 
         for attempt in range(1, _ACQUIRE_MAX_ATTEMPTS + 1):
             # Select instance based on strategy

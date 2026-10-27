@@ -28,6 +28,10 @@ function writeDismissed(backup: string): void {
  * one-click rollback to the pre-upgrade backup. Stays until dismissed (the
  * Alert close button), keyed by the backup path so a later upgrade re-shows
  * it. The MCP analog is the upgrade_status tool; this is the web surface.
+ *
+ * A first install is not an upgrade: the backend builds a new database's
+ * schema without a backup or a record. Without a backup there is also nothing
+ * to roll back to, so the notice never shows without one.
  */
 export function PostUpgradeNotice() {
   const { data } = usePendingUpgrades();
@@ -39,6 +43,7 @@ export function PostUpgradeNotice() {
   const lastBackup = data?.last_backup ?? null;
   const show =
     !!data &&
+    !!lastBackup &&
     data.ready &&
     data.data_changing &&
     data.last_applied.length > 0 &&

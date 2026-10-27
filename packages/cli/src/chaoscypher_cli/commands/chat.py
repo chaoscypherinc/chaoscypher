@@ -372,6 +372,8 @@ def _create_tool_infrastructure(
         source_ids=source_ids,
         source_storage=ctx.storage_adapter,
         llm_chat_callback_override=provider_chat_callback(llm_provider) if llm_provider else None,
+        # the context's provider: None with vector search off (keyword-only search tools)
+        embedding_provider=ctx.embedding_service,
     )
     return chat_provider, tool_executor, tools
 

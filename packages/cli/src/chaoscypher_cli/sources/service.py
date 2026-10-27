@@ -31,6 +31,7 @@ import structlog
 
 from chaoscypher_cli.context import cli_release_embedder
 from chaoscypher_cli.utils.event_loops import cancel_pending_tasks
+from chaoscypher_core.adapters.embedding import require_embedding_provider
 from chaoscypher_core.models import ReleasedRows, SourceErrorStage, SourceStatus
 from chaoscypher_core.services.graph.management.release import refresh_after_release
 from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
@@ -685,6 +686,8 @@ class CLISourceProcessingService:
 
             if skip_embeddings:
                 logger.info("embeddings_skipped", file_id=file_id, reason="skip_embeddings flag")
+            elif self.ctx.embedding_service is None:
+                logger.info("embeddings_skipped", file_id=file_id, reason="vector search off")
             else:
                 logger.info("generating_embeddings", file_id=file_id, chunk_count=chunks_count)
                 embedding_model, embedding_dimensions, failed_embeddings = (
@@ -929,7 +932,7 @@ class CLISourceProcessingService:
         Returns:
             Tuple of (model_name, dimensions, failed_chunks_count)
         """
-        embedding_service = self.ctx.embedding_service
+        embedding_service = require_embedding_provider(self.ctx.embedding_service, "Embedding")
         model_name = embedding_service.model_name
         batch_size = self.ctx.settings.batching.embedding_api_batch_size
         dimensions = 0
@@ -1585,7 +1588,7 @@ class CLISourceProcessingService:
         finalized = await extraction_service.finalize_distributed_extraction(
             raw_entities=aggregated["entities"],
             raw_relationships=aggregated["relationships"],
-            generate_embeddings=True,
+            generate_embeddings=self.ctx.embedding_service is not None,
             file_info=file_record,
             detected_domain=detected_domain_name,
             forced_domain=forced_domain,

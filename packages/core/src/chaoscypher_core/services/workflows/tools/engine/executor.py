@@ -32,6 +32,7 @@ from chaoscypher_core.services.workflows.tools.engine.handlers.summarize_handler
 from chaoscypher_core.services.workflows.tools.engine.handlers.template_handlers import (
     TemplateToolHandlers,
 )
+from chaoscypher_core.utils.tool_failure import discard_failed_work, log_tool_failure
 
 
 if TYPE_CHECKING:
@@ -111,6 +112,7 @@ class ToolExecutorService:
         """
         self.scope = scope or {}
         self.llm_chat_callback = llm_chat_callback
+        self.graph = graph_repository  # the session a failed tool's work is discarded from
         # Initialize handler classes
         analytics_service = GraphAnalyticsService(graph_repository)
 
@@ -243,7 +245,8 @@ class ToolExecutorService:
 
         """
         try:
-            logger.info("tool_executing", tool_name=tool_name, parameters=parameters)
+            # the parameters' names, never their values: they are a client's words
+            logger.info("tool_executing", tool_name=tool_name, parameter_names=sorted(parameters))
 
             # Apply scope constraints
             if self.scope:
@@ -269,13 +272,8 @@ class ToolExecutorService:
             )
             return {"error": f"Invalid parameters for {tool_name}"}
         except Exception as e:
-            logger.exception(
-                "tool_execution_failed",
-                tool_name=tool_name,
-                error_type=type(e).__name__,
-                error_message=str(e),
-            )
-            return {"error": "Tool execution failed"}
+            discard_failed_work(self.graph)
+            return log_tool_failure(logger, "tool_execution_failed", e, tool=tool_name)
 
 
 # Global registry instance (initialized on first use)

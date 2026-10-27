@@ -5,13 +5,15 @@
  * useSigmaEvents: Centralizes sigma event registration.
  *
  * Maps sigma click/right-click events to selection, context menu,
- * and panel-opening callbacks.
+ * and panel-opening callbacks. An edge the canvas made up (a hub's
+ * synthetic edge) is not data: clicks on it are ignored.
  */
 
 import { useEffect } from 'react';
 import { useSigma } from '@react-sigma/core';
 import type { SigmaNodeEventPayload, SigmaEdgeEventPayload, SigmaStageEventPayload } from 'sigma/types';
 import type { GraphNodeData, GraphEdgeData, NodeAttributes, EdgeAttributes } from '../types';
+import { isSyntheticEdge } from '../types';
 
 function extractNodeData(attrs: NodeAttributes): GraphNodeData {
   return {
@@ -72,6 +74,7 @@ export function useSigmaEvents({
     };
 
     const handleClickEdge = (payload: SigmaEdgeEventPayload) => {
+      if (isSyntheticEdge(payload.edge)) return;
       const attrs = graph.getEdgeAttributes(payload.edge) as EdgeAttributes;
       onEdgeClick(payload.edge, extractEdgeData(attrs));
     };
@@ -90,6 +93,7 @@ export function useSigmaEvents({
 
     const handleRightClickEdge = (payload: SigmaEdgeEventPayload) => {
       payload.event.original.preventDefault();
+      if (isSyntheticEdge(payload.edge)) return;
       const orig = payload.event.original;
       if (!(orig instanceof MouseEvent)) return;
       const attrs = graph.getEdgeAttributes(payload.edge) as EdgeAttributes;

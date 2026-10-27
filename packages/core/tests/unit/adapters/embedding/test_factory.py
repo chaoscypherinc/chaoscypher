@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from chaoscypher_core.adapters.embedding import factory
 from chaoscypher_core.adapters.embedding.factory import (
     create_embedding_provider,
     validate_embedding_model,
@@ -21,6 +22,8 @@ from chaoscypher_core.adapters.embedding.models import ModelValidationResult
 from chaoscypher_core.adapters.embedding.ollama_provider import OllamaEmbeddingProvider
 from chaoscypher_core.adapters.embedding.openai_provider import OpenAIEmbeddingProvider
 from chaoscypher_core.cache.embedding import CachedEmbeddingProvider
+from chaoscypher_core.exceptions import InvalidStateError, VectorSearchOff
+from chaoscypher_core.settings import EngineSettings
 
 
 def _make_settings(
@@ -331,6 +334,47 @@ class TestEmbeddingCacheWiring:
         try:
             provider = create_embedding_provider(settings)
             assert isinstance(provider, CachedEmbeddingProvider)
-            assert await provider._build.get() is None
+            assert await provider._model_build() is None
         finally:
             close_stores()
+
+
+def _raise(*_args: Any, **_kwargs: Any) -> Any:
+    raise AssertionError("create_embedding_provider was called behind the vector switch")
+
+
+class TestEmbeddingProviderFor:
+    """``embedding_provider_for`` is the one reader of ``search.enable_vector_search``."""
+
+    def test_embedding_provider_for_is_none_with_vector_search_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = EngineSettings()
+        settings.search.enable_vector_search = False
+        monkeypatch.setattr(factory, "create_embedding_provider", _raise)
+        assert factory.embedding_provider_for(settings) is None
+
+    def test_embedding_provider_for_builds_the_configured_provider_with_vector_search_on(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        built = object()
+        calls: list[EngineSettings] = []
+        monkeypatch.setattr(
+            factory, "create_embedding_provider", lambda s: calls.append(s) or built
+        )
+        settings = EngineSettings()
+        assert factory.embedding_provider_for(settings) is built
+        assert calls == [settings]
+
+    def test_require_embedding_provider_names_the_action(self) -> None:
+        with pytest.raises(VectorSearchOff) as err:
+            factory.require_embedding_provider(None, "Semantic search")
+        assert err.value.message == (
+            "Semantic search needs vectors, and vector search is off "
+            "(search.enable_vector_search is false). Keyword search still works."
+        )
+        assert isinstance(err.value, InvalidStateError)
+        assert err.value.code == "INVALID_STATE"
+        assert err.value.action == "Semantic search"
+        provider = object()
+        assert factory.require_embedding_provider(provider, "Embedding") is provider  # type: ignore[arg-type]

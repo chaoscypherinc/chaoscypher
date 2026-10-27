@@ -205,8 +205,13 @@ class CcxExporter:
             # and never emits empty Source/Lens/Workflow stats members).
             source_records: list[dict[str, Any]] = []
             if include_sources and self.sources is not None:
+                # One identity rule: every reference to an exported node (edge
+                # ends, entity citations) names the node's own ``@id``.
+                nodes_iri = {
+                    node["id"]: ccx_identity.resolve_iri("node", node) for node in knowledge_nodes
+                }
                 source_records = self._collect_source_records(
-                    source_ids, self._edge_references(knowledge_nodes, knowledge_edges)
+                    source_ids, nodes_iri, self._edge_references(nodes_iri, knowledge_edges)
                 )
                 self._add_sources(builder, source_records)
                 # Fold the in-scope sources' tags into the package-level manifest
@@ -434,8 +439,15 @@ class CcxExporter:
             page += 1
         return chunks
 
-    def _collect_citations_by_chunk(self, source_id: str) -> dict[str, list[dict[str, Any]]]:
-        """Group a source's citations by ``chunk_id`` for chunk-record attachment."""
+    def _collect_citations_by_chunk(
+        self, source_id: str, nodes_iri: dict[str, str]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Group a source's citations by ``chunk_id`` for chunk-record attachment.
+
+        Each citation of an exported node carries that node's ``@id`` as
+        ``entity_iri`` (``nodes_iri``), so a re-exported imported node — whose
+        ``@id`` is its foreign ``ccx_iri`` — and its citations name the same IRI.
+        """
         by_chunk: dict[str, list[dict[str, Any]]] = {}
         page = 1
         while True:
@@ -449,7 +461,10 @@ class CcxExporter:
             for citation in citations:
                 chunk_id = citation.get("chunk_id")
                 if chunk_id is not None:
-                    by_chunk.setdefault(chunk_id, []).append(citation)
+                    entity_iri = nodes_iri.get(str(citation.get("entity_uri")))
+                    by_chunk.setdefault(chunk_id, []).append(
+                        citation if entity_iri is None else {**citation, "entity_iri": entity_iri}
+                    )
             if sum(len(v) for v in by_chunk.values()) >= total:
                 break
             page += 1
@@ -457,10 +472,9 @@ class CcxExporter:
 
     @staticmethod
     def _edge_references(
-        knowledge_nodes: list[dict[str, Any]], knowledge_edges: list[dict[str, Any]]
+        nodes_iri: dict[str, str], knowledge_edges: list[dict[str, Any]]
     ) -> dict[str, dict[str, Any]]:
         """Each exported edge's :func:`ccx_mapping.edge_reference`, by local edge id."""
-        nodes_iri = {node["id"]: ccx_identity.resolve_iri("node", node) for node in knowledge_nodes}
         refs: dict[str, dict[str, Any]] = {}
         for edge in knowledge_edges:
             ref = ccx_mapping.edge_reference(edge, nodes_iri)
@@ -512,7 +526,8 @@ class CcxExporter:
     def _collect_source_records(
         self,
         source_ids: list[str] | None,
-        edge_refs: dict[str, dict[str, Any]] | None = None,
+        nodes_iri: dict[str, str],
+        edge_refs: dict[str, dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """Read each in-scope source once, with its chunks + citations attached.
 
@@ -526,9 +541,9 @@ class CcxExporter:
         chunk's ``relationship_citations`` of those edges and each source's
         ``closes``: the evidence and memberships of the relations, and the facts
         a memory closed, so an imported memory reads, forgets and supersedes as
-        the exported one did.
+        the exported one did. ``nodes_iri`` (local node id -> ``@id`` of the
+        exported nodes) names each entity citation's node.
         """
-        edge_refs = edge_refs or {}
         records: list[dict[str, Any]] = []
         sources = self._list_sources(source_ids)
         # Attach tag NAMES so they ride along as ccx:Source ``keywords`` and
@@ -540,7 +555,7 @@ class CcxExporter:
             source_id = source["id"]
             source["tags"] = [t["name"] for t in tags_by_source.get(source_id, [])]
             chunks = self._collect_chunks(source_id)
-            citations_by_chunk = self._collect_citations_by_chunk(source_id)
+            citations_by_chunk = self._collect_citations_by_chunk(source_id, nodes_iri)
             relationship_citations = self._collect_relationship_citations(source_id, edge_refs)
             for chunk in chunks:
                 chunk_citations = citations_by_chunk.get(chunk["id"])

@@ -7,6 +7,7 @@ import Graph from 'graphology';
 import type { NodeAttributes, EdgeAttributes } from '../../types';
 import { SOURCE_GROUP_PREFIX, SOURCE_PROVENANCE_PREFIX } from '../../types';
 import { useSourceGroups } from '../useSourceGroups';
+import { syncUnresolvedBuckets } from '../../utils/unresolvedBucket';
 import type { SourceGroup } from '../../../../types/graph';
 
 // ---------------------------------------------------------------------------
@@ -259,6 +260,22 @@ describe('useSourceGroups', () => {
       expect(state?.externalNodeIds.has('node-a')).toBe(true);
       // node-b only connected inside the group or via provenance → not external
       expect(state?.externalNodeIds.has('node-b')).toBe(false);
+    });
+
+    it('does not count the link to the Unresolved hub as an outside connection', async () => {
+      const group = makeSourceGroup({ entity_node_ids: ['node-a', 'node-b'] });
+      vi.mocked(graphApi.fetchSourceGroups).mockResolvedValueOnce({ groups: [group] });
+
+      const graph = buildGraphWithMembers(['node-a', 'node-b']);
+      graph.setNodeAttribute('node-a', 'content', { orphan: true });
+      syncUnresolvedBuckets(graph);
+
+      const { result } = renderHook(() => useSourceGroups());
+      await act(async () => {
+        await result.current.loadSourceGroups(graph);
+      });
+
+      expect(result.current.groups.get('src-1')?.externalNodeIds.has('node-a')).toBe(false);
     });
 
     it('only includes member nodes that actually exist in the graph', async () => {

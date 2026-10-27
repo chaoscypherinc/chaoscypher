@@ -66,9 +66,9 @@ If you're using the multi-container dev setup (`make docker-dev`), the UI is at 
 
 :::
 
-:::note[API port in curl examples]
+:::note[Calling the API from curl]
 
-The `curl` examples below use `localhost:8080`, which is the direct Cortex API port used in dev mode. If you are running the **all-in-one** deployment, replace `8080` with port `80` — i.e., use `http://localhost/api/v1/...` instead.
+Every API request is authenticated: mint an API key in **Settings → General → API Keys**, export it as `CHAOSCYPHER_API_KEY`, and pass it as a Bearer header as the examples below do. They call `http://localhost/api/v1/...`, the nginx edge of the all-in-one container, which checks the key. The dev stack's direct Cortex port (`localhost:8080`) accepts only the edge's own token and answers `401` to a bare `curl`; use the key through the edge there too.
 
 :::
 
@@ -118,7 +118,8 @@ print(f"Created {len(result.nodes)} nodes, {len(result.edges)} edges")
 
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources \
+curl -X POST http://localhost/api/v1/sources \
+  -H "Authorization: Bearer $CHAOSCYPHER_API_KEY" \
   -F "file=@document.pdf"
 ```
 
@@ -203,7 +204,7 @@ for r in results:
 
 
 ```bash
-curl "http://localhost:8080/api/v1/search?q=your+query+here&search_type=hybrid"
+curl "http://localhost/api/v1/search?q=your+query+here&search_type=hybrid" -H "Authorization: Bearer $CHAOSCYPHER_API_KEY"
 ```
 
 **Response** `200 OK`:
@@ -286,10 +287,10 @@ with Engine("./data/databases/default") as engine:
 
 ```bash
 # List all nodes
-curl "http://localhost:8080/api/v1/nodes?page=1&page_size=20&include_stats=true"
+curl "http://localhost/api/v1/nodes?page=1&page_size=20&include_stats=true" -H "Authorization: Bearer $CHAOSCYPHER_API_KEY"
 
 # Get a specific node with its connections
-curl http://localhost:8080/api/v1/nodes/{node_id}/connections
+curl http://localhost/api/v1/nodes/{node_id}/connections -H "Authorization: Bearer $CHAOSCYPHER_API_KEY"
 ```
 
 **Response** `200 OK` (list nodes):
@@ -376,18 +377,20 @@ async with Engine("./data/databases/default") as engine:
 
 ```bash
 # 1. Create a conversation
-curl -X POST http://localhost:8080/api/v1/chats \
+curl -X POST http://localhost/api/v1/chats \
+  -H "Authorization: Bearer $CHAOSCYPHER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"title": "Quick Start Chat"}'
 
 # 2. Submit a message for processing
-curl -X POST http://localhost:8080/api/v1/chats/{chat_id}/send \
+curl -X POST http://localhost/api/v1/chats/{chat_id}/send \
+  -H "Authorization: Bearer $CHAOSCYPHER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"content": "What are the key findings?"}'
 
 # 3. Watch the live response (SSE) — survives disconnects; the answer
 #    is persisted to the conversation either way
-curl -N http://localhost:8080/api/v1/chats/{chat_id}/events
+curl -N http://localhost/api/v1/chats/{chat_id}/events -H "Authorization: Bearer $CHAOSCYPHER_API_KEY"
 ```
 
 The events endpoint returns Server-Sent Events with `content`, `tool_calls`, `tool_result`, and `done` events. The `done` event includes the final response with citations:
@@ -449,15 +452,17 @@ with Engine("./data/databases/research-project") as engine:
 
 ```bash
 # List all databases
-curl http://localhost:8080/api/v1/databases
+curl http://localhost/api/v1/databases -H "Authorization: Bearer $CHAOSCYPHER_API_KEY"
 
 # Create a new database
-curl -X POST http://localhost:8080/api/v1/databases \
+curl -X POST http://localhost/api/v1/databases \
+  -H "Authorization: Bearer $CHAOSCYPHER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name": "research-project"}'
 
 # Switch to it
-curl -X PATCH http://localhost:8080/api/v1/databases/current \
+curl -X PATCH http://localhost/api/v1/databases/current \
+  -H "Authorization: Bearer $CHAOSCYPHER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name": "research-project"}'
 ```

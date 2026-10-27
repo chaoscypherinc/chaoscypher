@@ -133,6 +133,12 @@ class GraphRepository(
         the stale fold over the rebuild (#795). Inside this block the lock
         is taken before the first read.
 
+        Taking the lock also reloads the rows the session cached: pending
+        changes are flushed first, then every cached row is expired, so what
+        is read inside is the database as of the lock. A long-lived session
+        would otherwise hand back a row it loaded before another process
+        changed it (SQLAlchemy's identity map; spec 2026-10-24 § 3).
+
         On this repository's session, sharing ``adapter.transaction()``'s
         depth: the outermost block commits on a clean exit and rolls back on
         an exception. Inside a caller's transaction it only takes the lock
@@ -146,6 +152,8 @@ class GraphRepository(
             connection = session.connection()
             if not connection.connection.driver_connection.in_transaction:  # type: ignore[union-attr]
                 connection.exec_driver_sql("BEGIN IMMEDIATE")
+                session.flush()
+                session.expire_all()
             yield
             if outermost:
                 session.commit()  # noqa: CC011 — this block is the transaction boundary
@@ -159,6 +167,10 @@ class GraphRepository(
     def _generate_id(self, prefix: str = "node") -> str:
         """Generate a unique ID with prefix."""
         return generate_id(prefix)
+
+    def discard_failed_work(self) -> None:
+        """Roll back what a failed call left in this repository's session (``SafeSession``)."""
+        self.session.discard_failed_work()
 
     def _get_graph_name_for_template(self, template_id: str) -> str:
         """Determine which graph to use based on template ID."""

@@ -43,11 +43,17 @@ from __future__ import annotations
 
 import logging as _stdlib_logging
 import sys
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import structlog
 import structlog._config as _structlog_config
+
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 
 def _reenable_disabled_stdlib_loggers() -> None:
@@ -79,6 +85,34 @@ def _reenable_disabled_stdlib_loggers() -> None:
             logger.disabled = False
 
 
+# Module -> the lazy proxies among its attributes, found the first time the module is seen.
+_proxies_by_module: dict[str, tuple[ModuleType, tuple[Any, ...]]] = {}
+
+
+def _module_level_proxies() -> Iterator[Any]:
+    """Yield every ``BoundLoggerLazyProxy`` held as a module attribute in ``sys.modules``.
+
+    A module is scanned once, the first time it is seen (again if its name now holds another
+    module object), so the per-test sweep costs a pass over ``sys.modules`` and not over every
+    module's attributes: the full walk took 11 ms with cortex loaded, on every test. ``type() is``
+    rather than ``isinstance`` so a lazy module attribute (dynaconf's settings) is not woken.
+    """
+    proxy_cls = _structlog_config.BoundLoggerLazyProxy
+    # Snapshot ``sys.modules``: scanning a module may import another.
+    for name, module in list(sys.modules.items()):
+        seen = _proxies_by_module.get(name)
+        if seen is None or seen[0] is not module:
+            # ``sys.modules`` values are typed ``ModuleType`` in stubs but can be ``None`` in
+            # practice (a failed import's sentinel), so ``__dict__`` is read with ``getattr``.
+            module_dict = getattr(module, "__dict__", None) or {}
+            found = tuple(v for v in list(module_dict.values()) if type(v) is proxy_cls)
+            seen = (module, found)
+            # A module still importing (on another thread) may not have its logger yet.
+            if not getattr(getattr(module, "__spec__", None), "_initializing", False):
+                _proxies_by_module[name] = seen
+        yield from seen[1]
+
+
 def _clear_bound_logger_lazy_proxy_caches() -> None:
     """Drop any per-proxy ``bind`` overrides cached on module-level loggers.
 
@@ -88,34 +122,14 @@ def _clear_bound_logger_lazy_proxy_caches() -> None:
     ``wrapper_class`` / ``processors`` / ``logger_factory`` that were
     active at first-use time, so changing the global ``_CONFIG`` later
     has no effect on a logger that's already cached. ``structlog`` has
-    no public API to invalidate that cache, so we walk ``sys.modules``
-    and clear the instance-level ``bind`` attribute on every proxy we
-    find. This is cheap (one ``isinstance`` per module attribute and a
-    single ``__dict__`` lookup per matching proxy) and only runs when
-    a test explicitly requests this fixture — i.e., never on the hot
-    path of tests that don't touch ``caplog``.
+    no public API to invalidate that cache, so we find every module-level
+    proxy (:func:`_module_level_proxies`) and clear its instance-level
+    ``bind``: method resolution then falls back to the class-level
+    ``bind``, and the next call assembles a fresh ``BoundLogger`` from the
+    current ``_CONFIG``.
     """
-    proxy_cls = _structlog_config.BoundLoggerLazyProxy
-    # Snapshot ``sys.modules`` to avoid "dict changed size during iteration"
-    # if a logger emission during teardown triggers a deferred import.
-    # ``sys.modules`` values are typed ``ModuleType`` in stubs but can
-    # be ``None`` in practice (Python uses None as a sentinel for failed
-    # imports), so we tolerate either via ``getattr`` for ``__dict__``.
-    for module in list(sys.modules.values()):
-        module_dict = getattr(module, "__dict__", None)
-        if module_dict is None:
-            continue
-        # Snapshot attribute names too — a getattr below may import a
-        # submodule and mutate ``module_dict`` mid-iteration.
-        for attr_name in list(module_dict):
-            value = module_dict.get(attr_name)
-            if isinstance(value, proxy_cls) and "bind" in value.__dict__:
-                # The cache lives at the instance level (closure assignment
-                # in BoundLoggerLazyProxy.bind). Deleting the instance
-                # attribute restores method resolution to the class-level
-                # bind, so the next call re-assembles a fresh BoundLogger
-                # from the current _CONFIG.
-                del value.__dict__["bind"]
+    for proxy in _module_level_proxies():
+        proxy.__dict__.pop("bind", None)
 
 
 def use_plain_tracebacks() -> None:
@@ -187,3 +201,86 @@ def structlog_for_caplog() -> Generator[None]:
         # at the bridge's wrapper_class/processors. Clear them so the
         # next test sees a clean slate.
         _clear_bound_logger_lazy_proxy_caches()
+
+
+def _is_pytests(handler: _stdlib_logging.Handler) -> bool:
+    """Whether pytest's logging plugin owns ``handler`` (it adds and removes its own per phase)."""
+    return type(handler).__module__.startswith("_pytest")
+
+
+@dataclass(frozen=True)
+class _LoggingState:
+    """What a test can change about logging, process-wide, without meaning to keep it."""
+
+    structlog_config: dict[str, Any]
+    contextvars: dict[str, Any]
+    root_level: int
+    root_handlers: tuple[_stdlib_logging.Handler, ...]
+    disable_level: int
+    disabled_loggers: frozenset[str]
+
+
+def _stdlib_loggers() -> Iterator[tuple[str, _stdlib_logging.Logger]]:
+    # ``loggerDict`` holds ``Logger`` and ``PlaceHolder`` instances; only loggers can be disabled.
+    for name, logger in list(_stdlib_logging.Logger.manager.loggerDict.items()):
+        if isinstance(logger, _stdlib_logging.Logger):
+            yield name, logger
+
+
+def _logging_state() -> _LoggingState:
+    config = structlog.get_config()
+    root = _stdlib_logging.getLogger()
+    return _LoggingState(
+        # A copy: ``capture_logs`` edits the configured processor list in place.
+        structlog_config={**config, "processors": list(config["processors"])},
+        contextvars=structlog.contextvars.get_contextvars(),
+        root_level=root.level,
+        root_handlers=tuple(h for h in root.handlers if not _is_pytests(h)),
+        disable_level=_stdlib_logging.root.manager.disable,
+        disabled_loggers=frozenset(name for name, lg in _stdlib_loggers() if lg.disabled),
+    )
+
+
+def _restore_logging_state(state: _LoggingState) -> None:
+    """Put back ``state``, leaving pytest's own capture handlers where they are."""
+    if structlog.get_config() != state.structlog_config:
+        structlog.configure(
+            **{**state.structlog_config, "processors": list(state.structlog_config["processors"])}
+        )
+    # A proxy cached during the test holds the config it was first used under, even when the
+    # test put the config itself back (``cache_logger_on_first_use`` and no invalidation API).
+    _clear_bound_logger_lazy_proxy_caches()
+    if structlog.contextvars.get_contextvars() != state.contextvars:
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(**state.contextvars)
+    root = _stdlib_logging.getLogger()
+    if root.level != state.root_level:  # each set clears every logger's level cache
+        root.setLevel(state.root_level)
+    for handler in list(root.handlers):
+        if not _is_pytests(handler) and handler not in state.root_handlers:
+            root.removeHandler(handler)  # not closed: its stream may belong to someone else
+    for handler in state.root_handlers:
+        if handler not in root.handlers:
+            root.addHandler(handler)
+    if _stdlib_logging.root.manager.disable != state.disable_level:
+        _stdlib_logging.disable(state.disable_level)
+    for name, logger in _stdlib_loggers():
+        logger.disabled = name in state.disabled_loggers
+
+
+@pytest.fixture(autouse=True)
+def logging_left_as_found() -> Iterator[None]:
+    """Put structlog and stdlib logging back as they were before the test, whatever it did.
+
+    Logging is process-wide and an xdist worker runs thousands of tests, so a change one test
+    leaves behind decides what a later one, sharing the worker by the luck of the shard packing,
+    can see. On 2026-10-26 a structlog test left the stdlib bridge on with caching (and the
+    engine module's logger cached against it), and an in-process Alembic run left every existing
+    logger disabled; together they swallowed ``test_schema_updates.py``'s drift warning in CI.
+    Restored after each test: the structlog configuration and the loggers cached under it, the
+    structlog contextvars, the root logger's level and handlers (not pytest's), ``logging.disable``
+    and each logger's ``disabled`` flag. Every package's test ``conftest.py`` imports this.
+    """
+    state = _logging_state()
+    yield
+    _restore_logging_state(state)

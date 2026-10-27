@@ -171,14 +171,10 @@ def test_the_notice_is_the_one_message_and_is_logged_once_per_database(db: Path)
 
 
 def test_opening_a_database_from_before_the_core_types_warns_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     """``init_database`` (the product's open) upgrades it, rewrites no node, and warns."""
-    from chaoscypher_core.database import engine as database_engine
     from chaoscypher_core.database.engine import get_db_path, init_database
-
-    # The default seeds read the settings' own data directory; not this file's.
-    monkeypatch.setattr(database_engine, "seed_default_data", lambda _name: None)
 
     path = get_db_path("old", data_dir=str(tmp_path))
     path.parent.mkdir(parents=True)

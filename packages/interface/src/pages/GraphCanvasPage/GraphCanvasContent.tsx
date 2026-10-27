@@ -12,6 +12,7 @@
  * - useSpotlightHover — debounced hover highlighting
  * - useZoomIcons — zoom-adaptive icon visibility
  * - useGraphReducers — sigma node/edge visual reducers
+ * - useUnresolvedBucket — the synthetic "Unresolved (N)" hubs, one per source
  */
 
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
@@ -62,13 +63,13 @@ import {
   useZoomIcons,
   useGraphReducers,
 } from './hooks';
+import { searchMatches } from './hooks/useSearchHighlight';
 import { useMenuState } from '../../hooks';
 import type { NodeAttributes, EdgeAttributes, LayoutType, GraphNodeData, GraphEdgeData } from './types';
-import { isSourceGroupNode, SOURCE_GROUP_PREFIX } from './types';
 import { useSourceGroups } from './hooks/useSourceGroups';
-import { useUnresolvedRegion } from './hooks/useUnresolvedRegion';
-import { useUnresolvedRegionLayer } from './hooks/useUnresolvedRegionLayer';
-import { UnresolvedRegionToggle } from './components/UnresolvedRegionToggle';
+import { useUnresolvedBucket } from './hooks/useUnresolvedBucket';
+import { useNodeDoubleClick } from './hooks/useNodeDoubleClick';
+import { useFocusNode } from './hooks/useFocusNode';
 import { ChaosCypherBackground } from '../../theme/palette';
 import { canvasOverlaySx } from '../../theme/cardStyles';
 import ConfirmDialog from '../../components/ConfirmDialog';
@@ -127,12 +128,34 @@ export const GraphCanvasContent: React.FC<GraphCanvasContentProps> = ({ graph })
     setError: (err) => setError(err),
   });
 
+  // Source Groups
+  const {
+    groups: sourceGroups,
+    collapsedMemberIds,
+    collapsedSourceIds,
+    loadSourceGroups,
+    toggleGroup,
+    expandAll: expandAllGroups,
+    collapseAll: collapseAllGroups,
+    getNodeSourceGroup,
+  } = useSourceGroups();
+
+  // Rebuild the document roots after every load: a reload (a source-filter
+  // change) clears the graph, roots and all.
+  const reloadSourceGroups = useCallback(
+    (loaded: Graph<NodeAttributes, EdgeAttributes>) => {
+      if (loaded.order > 0) void loadSourceGroups(loaded);
+    },
+    [loadSourceGroups],
+  );
+
   // Graph Data Loader
   const { loading, reloading, error, setError, loadGraphData } = useGraphDataLoader({
     graph,
     applyLayout,
     layoutType,
     sourceIds: sourceFilters.length > 0 ? sourceFilters : undefined,
+    onLoaded: reloadSourceGroups,
   });
 
   // Selection
@@ -185,27 +208,6 @@ export const GraphCanvasContent: React.FC<GraphCanvasContentProps> = ({ graph })
     handleNodeDuplicate,
   });
 
-  // Source Groups
-  const {
-    groups: sourceGroups,
-    collapsedMemberIds,
-    collapsedSourceIds,
-    loadSourceGroups,
-    toggleGroup,
-    expandAll: expandAllGroups,
-    collapseAll: collapseAllGroups,
-    getNodeSourceGroup,
-  } = useSourceGroups();
-
-  // Load source groups after graph data finishes loading
-  const sourceGroupsLoadedRef = useRef(false);
-  useEffect(() => {
-    if (!loading && graph.order > 0 && !sourceGroupsLoadedRef.current) {
-      sourceGroupsLoadedRef.current = true;
-      loadSourceGroups(graph);
-    }
-  }, [loading, graph, loadSourceGroups]);
-
   // Context menus
   const nodeMenu = useNodeContextMenu();
   const edgeMenu = useEdgeContextMenu();
@@ -234,18 +236,37 @@ export const GraphCanvasContent: React.FC<GraphCanvasContentProps> = ({ graph })
     [canvasMenu, sigma],
   );
 
-  const onNodeDoubleClick = useCallback(
-    (nodeId: string, data: GraphNodeData) => {
-      if (isSourceGroupNode(nodeId)) {
-        const sourceId = nodeId.slice(SOURCE_GROUP_PREFIX.length);
-        toggleGroup(graph, sourceId);
-      } else {
-        setSelectedNodeData(data);
-        setIsPropertiesPanelOpen(true);
-      }
+  // "Unresolved (N)": one synthetic hub per source document, hanging off its
+  // root, linking that document's pipeline-flagged nodes; collapsed (members
+  // hidden) until double-clicked, and hidden with its collapsed document.
+  const unresolvedBucket = useUnresolvedBucket(graph, collapsedSourceIds);
+
+  // The one "focus node" path: opens the hub when the node is hidden in it.
+  const focusNode = useFocusNode({ graph, bucket: unresolvedBucket, onSelect: handleNodeClick });
+  const focusFirstMatch = useCallback(
+    (query: string) => {
+      const [first] = searchMatches(graph, query);
+      if (first) focusNode(first);
     },
-    [graph, toggleGroup, setSelectedNodeData, setIsPropertiesPanelOpen],
+    [graph, focusNode],
   );
+
+  const toggleSourceGroup = useCallback(
+    (sourceId: string) => toggleGroup(graph, sourceId),
+    [graph, toggleGroup],
+  );
+  const openNode = useCallback(
+    (data: GraphNodeData) => {
+      setSelectedNodeData(data);
+      setIsPropertiesPanelOpen(true);
+    },
+    [setSelectedNodeData, setIsPropertiesPanelOpen],
+  );
+  const onNodeDoubleClick = useNodeDoubleClick({
+    onToggleSourceGroup: toggleSourceGroup,
+    onToggleUnresolved: unresolvedBucket.toggle,
+    onOpenNode: openNode,
+  });
 
   // Register sigma events
   useSigmaEvents({
@@ -264,24 +285,16 @@ export const GraphCanvasContent: React.FC<GraphCanvasContentProps> = ({ graph })
   // Zoom-adaptive icon visibility
   const iconVisibleBySizeRef = useZoomIcons();
 
-  // "Unresolved" region: every pipeline-flagged node, corralled together.
-  // Collapsing it is presentation only — members are hidden by the reducer
-  // and the summary node is drawn on a canvas layer, never added to the graph.
-  const { region: unresolvedRegion, toggle: toggleUnresolvedRegion } = useUnresolvedRegion(graph);
-  const expandUnresolvedRegion = useCallback(() => {
-    if (!unresolvedRegion.expanded) toggleUnresolvedRegion();
-  }, [unresolvedRegion.expanded, toggleUnresolvedRegion]);
-  useUnresolvedRegionLayer({ graph, region: unresolvedRegion, onExpand: expandUnresolvedRegion });
-
   // Merge template-filtered hidden nodes with collapsed source group members
-  // and the collapsed Unresolved region's members
+  // and the collapsed Unresolved hubs' members
+  const unresolvedHiddenIds = unresolvedBucket.hiddenIds;
   const allHiddenNodeIds = useMemo(() => {
-    if (collapsedMemberIds.size === 0 && unresolvedRegion.hiddenIds.size === 0) return hiddenNodeIds;
+    if (collapsedMemberIds.size === 0 && unresolvedHiddenIds.size === 0) return hiddenNodeIds;
     const merged = new Set(hiddenNodeIds);
     for (const id of collapsedMemberIds) merged.add(id);
-    for (const id of unresolvedRegion.hiddenIds) merged.add(id);
+    for (const id of unresolvedHiddenIds) merged.add(id);
     return merged;
-  }, [hiddenNodeIds, collapsedMemberIds, unresolvedRegion.hiddenIds]);
+  }, [hiddenNodeIds, collapsedMemberIds, unresolvedHiddenIds]);
 
   // Node & edge reducers for visual effects
   useGraphReducers({
@@ -456,7 +469,7 @@ export const GraphCanvasContent: React.FC<GraphCanvasContentProps> = ({ graph })
             },
           }}
         >
-          <SearchBar onSearch={handleSearch} />
+          <SearchBar onSearch={handleSearch} onSubmit={focusFirstMatch} />
           <Tooltip title="Filters" placement="bottom">
             <IconButton
               aria-label="Filters"
@@ -468,11 +481,6 @@ export const GraphCanvasContent: React.FC<GraphCanvasContentProps> = ({ graph })
             </IconButton>
           </Tooltip>
         </Box>
-        <UnresolvedRegionToggle
-          count={unresolvedRegion.count}
-          expanded={unresolvedRegion.expanded}
-          onToggle={toggleUnresolvedRegion}
-        />
       </Box>
 
       {/* Layout Selector SpeedDial - Top Right */}
@@ -518,13 +526,11 @@ export const GraphCanvasContent: React.FC<GraphCanvasContentProps> = ({ graph })
         onNodeDelete={handleNodeDelete}
         onEdgeDelete={handleEdgeDelete}
         getNodeSourceGroup={getNodeSourceGroup}
-        onToggleSourceGroup={(sourceId) => toggleGroup(graph, sourceId)}
+        onToggleSourceGroup={toggleSourceGroup}
         onNavigate={(path) => navigate(path)}
-        onSelectNode={(nodeId) => {
-          const data = graph.hasNode(nodeId) ? graph.getNodeAttributes(nodeId) : null;
-          if (data) handleNodeClick(nodeId, data);
-        }}
+        onSelectNode={focusNode}
         graph={graph}
+        unresolvedCount={selectedNodeId ? unresolvedBucket.hubs.get(selectedNodeId)?.length ?? 0 : 0}
       />
 
       {/* Item Creation Modal */}
@@ -555,9 +561,11 @@ export const GraphCanvasContent: React.FC<GraphCanvasContentProps> = ({ graph })
         onDuplicate={(nodeId, data) => handleNodeDuplicate(nodeId, data)}
         onCopyId={(nodeId) => handleCopyNodeId(nodeId)}
         onViewSourceDocument={(_nodeId, data) => handleViewSourceDocument(data)}
-        onToggleSourceGroup={(sourceId) => toggleGroup(graph, sourceId)}
+        onToggleSourceGroup={toggleSourceGroup}
         onNavigateToSource={(sourceId) => navigate(`/sources/${sourceId}`)}
         isSourceGroupExpanded={(sourceId) => sourceGroups.get(sourceId)?.expanded ?? false}
+        onToggleUnresolved={unresolvedBucket.toggle}
+        isUnresolvedExpanded={unresolvedBucket.isExpanded}
       />
       <EdgeContextMenu
         menuState={edgeMenu}

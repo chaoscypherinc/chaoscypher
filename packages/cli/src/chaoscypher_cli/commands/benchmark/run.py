@@ -172,7 +172,8 @@ def run(
     except FileNotFoundError as exc:
         console.print(f"[red]{exc}[/red]")
         raise click.Abort from exc
-    except ValueError as exc:
+    except (ValueError, TypeError) as exc:
+        # a wrong shape (`extractors: {…}`) raises TypeError from the loader
         console.print(f"[red]Bad config:[/red] {exc}")
         raise click.Abort from exc
 
@@ -192,7 +193,7 @@ def run(
     except FileNotFoundError as exc:
         console.print(f"[red]{exc}[/red]")
         raise click.Abort from exc
-    except ValueError as exc:
+    except (ValueError, TypeError) as exc:
         # A malformed manifest, or a dataset kind the bundle loader does not
         # accept as a primary dataset (e.g. `probes`), used to escape as a
         # raw traceback.
@@ -246,6 +247,8 @@ def run(
         from dataclasses import replace
 
         from chaoscypher_cli.benchmark.graph_cache import (
+            GraphCacheMismatchError,
+            GraphCacheMissError,
             dedup_embedder_for,
             default_workspace,
             resolution_for,
@@ -299,20 +302,32 @@ def run(
             landed_full.append(row)
             dump_results(landed_full, partial_full)
 
-        with replay_context:
-            rows = asyncio.run(
-                run_full_benchmark(
-                    filtered_cfg,
-                    bundles,
-                    wiring=wiring,
-                    model_timeout=model_timeout,
-                    on_row=_persist_full,
-                    reuse_cached_graph=reuse_graph,
+        try:
+            with replay_context:
+                rows = asyncio.run(
+                    run_full_benchmark(
+                        filtered_cfg,
+                        bundles,
+                        wiring=wiring,
+                        model_timeout=model_timeout,
+                        on_row=_persist_full,
+                        reuse_cached_graph=reuse_graph,
+                    )
                 )
-            )
+        except (GraphCacheMissError, GraphCacheMismatchError) as exc:
+            console.print(f"[red]Graph cache:[/red] {exc}")
+            raise click.Abort from exc
         partial_full.unlink(missing_ok=True)
     else:
         # Extractors-only path: existing run_benchmark + per-bundle ExtractionDataset.
+        if reuse_graph or rebuild_graphs:
+            # Neither flag is read on this path (the graph cache serves the
+            # embedding and chat stages); refusing beats a silent no-op.
+            console.print(
+                f"[red]--reuse-graph / --rebuild-graphs apply to a full config[/red] "
+                f"(embedders or chats); '{config_name}' runs extractors only."
+            )
+            raise click.Abort
         models = filter_models(cfg.extractors or [], local_only=local_only)
         if not models:
             console.print(

@@ -17,6 +17,8 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm.session import SessionTransactionState
 from sqlmodel import Session
 
+from chaoscypher_core.utils.retry import is_sqlite_lock_error
+
 
 logger = structlog.get_logger(__name__)
 
@@ -112,6 +114,13 @@ class SafeSession(Session):
         transaction is re-armed and the COMMIT re-issued, leaving the flushed
         writes in place. See ``_rearm_busy_commit()``.
 
+        A commit outside any ``adapter.transaction()`` (depth 0) that raises
+        rolls the session back before the error goes on: nobody else owns
+        that transaction, and a session left needing a rollback raises
+        ``PendingRollbackError`` on every later use (and, after a COMMIT that
+        stayed busy, keeps holding the writer lock). Inside a transaction the
+        enclosing block rolls back.
+
         Args:
             **kw: Keyword arguments passed to parent commit()
 
@@ -121,6 +130,15 @@ class SafeSession(Session):
                 errors. Never returns normally once writes have been lost.
 
         """
+        try:
+            self._commit_with_retry(**kw)
+        except BaseException:
+            if self._transaction_depth == 0:
+                self.rollback()
+            raise
+
+    def _commit_with_retry(self, **kw: Any) -> None:
+        """:meth:`commit`'s retry loop."""
         for attempt in range(self._max_attempts):
             try:
                 super().commit(**kw)
@@ -132,8 +150,7 @@ class SafeSession(Session):
                     )
                 return
             except OperationalError as e:
-                error_msg = str(e).lower()
-                is_lock_error = "database is locked" in error_msg or "sqlite_busy" in error_msg
+                is_lock_error = is_sqlite_lock_error(e)
 
                 retryable = is_lock_error and attempt < self._max_attempts - 1
                 if retryable:
@@ -286,3 +303,17 @@ class SafeSession(Session):
         asyncio.to_thread() to avoid blocking the event loop.
         """
         time.sleep(delay)
+
+    def discard_failed_work(self) -> None:
+        """Roll back what a failed call left in this session, unless a block owns the transaction.
+
+        SQLAlchemy keeps a session whose flush failed in ``PendingRollbackError`` until
+        ``rollback()`` is called, and one whose read failed holds its transaction open. A
+        long-lived session (an Engine's, which every tool call of ``chaoscypher mcp`` shares)
+        that a catch-and-continue left that way broke every later call in the process. The
+        catch calls this: outside an ``adapter.transaction()`` or ``write_locked()`` block and
+        a savepoint, the failed call's work is this session's own and is rolled back; inside
+        one, the block rolls back on its way out.
+        """
+        if self._transaction_depth == 0 and not self.in_nested_transaction():
+            self.rollback()

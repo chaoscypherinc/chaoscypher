@@ -112,3 +112,30 @@ def test_every_nested_sub_section_flag_loads_from_the_environment(
     )
     loaded = Settings.load_from_yaml(path)
     assert getattr(getattr(getattr(loaded, section), sub), flag) is flipped
+
+
+def test_a_nested_value_of_a_listed_section_loads_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A section the loader names itself (mcp) normalises its sub-sections' keys too."""
+    from chaoscypher_core.app_config import Settings
+
+    path = tmp_path / "settings.yaml"
+    path.write_text("app_name: t\n", encoding="utf-8")
+    monkeypatch.setenv("CHAOSCYPHER_MCP__MEMORY__WAIT_SECONDS", "7")
+    monkeypatch.setenv("CHAOSCYPHER_MCP__MEMORY__RELINK_ON_START", "false")
+    memory = Settings.load_from_yaml(path).mcp.memory
+    assert (memory.wait_seconds, memory.relink_on_start) == (7, False)
+
+
+def test_a_scope_map_loads_from_the_environment_with_its_scope_names_as_written(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``mcp.memory.scope_nodes`` (a dict a person writes) loads from a TOML inline table."""
+    from chaoscypher_core.app_config import Settings
+
+    path = tmp_path / "settings.yaml"
+    path.write_text("app_name: t\n", encoding="utf-8")
+    monkeypatch.setenv("CHAOSCYPHER_MCP__MEMORY__SCOPE_NODES", '{Trader = ["Trading journal"]}')
+    memory = Settings.load_from_yaml(path).mcp.memory
+    assert memory.scope_nodes == {"Trader": ["Trading journal"]}

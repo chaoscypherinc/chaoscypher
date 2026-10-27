@@ -268,6 +268,32 @@ class TestSearchCommand:
         assert long_content not in result.output
 
 
+class TestSearchWithVectorSearchOff:
+    """With vector search off the context has no embedding provider (None)."""
+
+    def test_semantic_search_with_vector_search_off_names_the_switch(self) -> None:
+        ctx = _make_ctx(embedding_service=None)
+        ctx.search_repository.semantic_search = AsyncMock(return_value=[])
+
+        with patch("chaoscypher_cli.commands.source.search.get_context", return_value=ctx):
+            result = CliRunner().invoke(search, ["Lyon", "--mode", "semantic"])
+
+        assert result.exit_code == 1
+        assert "Semantic search needs vectors, and vector search is off" in result.output
+        ctx.search_repository.semantic_search.assert_not_called()
+
+    def test_hybrid_search_with_vector_search_off_passes_no_embedding_callback(self) -> None:
+        ctx = _make_ctx(embedding_service=None)
+        ctx.search_repository.hybrid_search = AsyncMock(return_value=[])
+
+        with patch("chaoscypher_cli.commands.source.search.get_context", return_value=ctx):
+            result = CliRunner().invoke(search, ["Lyon"])
+
+        assert result.exit_code == 0, result.output
+        kwargs = ctx.search_repository.hybrid_search.call_args.kwargs
+        assert kwargs["embedding_provider_callback"] is None
+
+
 class TestGetEmbeddingCallbackUnit:
     """Unit test for _get_embedding_callback — exercises the inner async callback body."""
 
@@ -767,6 +793,34 @@ class TestRebuildSearchCommand:
                 runner.invoke(rebuild_search, ["--database", "mydb"])
 
         mock_gc.assert_called_once_with(database_name="mydb")
+
+    def test_regeneration_with_vector_search_off_is_refused(self) -> None:
+        """Re-embedding with no provider would clear the reindex flag without re-embedding."""
+        ctx = _make_ctx(embedding_service=None)
+        ctx.search_repository.needs_full_reindex = True
+        mock_search_service = MagicMock()
+        mock_search_service.rebuild_with_regeneration = AsyncMock()
+
+        with patch("chaoscypher_cli.commands.source.rebuild_search.get_context", return_value=ctx):
+            with patch(
+                "chaoscypher_core.services.search.engine.search.SearchService",
+                return_value=mock_search_service,
+            ):
+                result = CliRunner().invoke(rebuild_search, [])
+
+        assert result.exit_code == 1
+        assert "Re-embedding needs vectors" in result.output
+        mock_search_service.rebuild_with_regeneration.assert_not_called()
+
+    def test_embed_missing_after_a_model_change_is_refused(self) -> None:
+        ctx = _make_ctx()
+        ctx.search_repository.needs_full_reindex = True
+
+        with patch("chaoscypher_cli.commands.source.rebuild_search.get_context", return_value=ctx):
+            result = CliRunner().invoke(rebuild_search, ["--embed-missing"])
+
+        assert result.exit_code == 1
+        assert "Embedding mismatch detected" in result.output
 
     def test_help_exits_0(self) -> None:
         runner = CliRunner()

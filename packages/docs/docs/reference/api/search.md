@@ -40,7 +40,7 @@ Run a search query using keyword, semantic, or hybrid strategies.
 |------------|----------------------------------------------------------|
 | `keyword`  | Full-text keyword search against the FTS index           |
 | `semantic` | Vector similarity search using embeddings                |
-| `hybrid`   | Runs keyword and semantic search together and keeps each result's higher score; very short queries (under 3 characters) or a search error fall back to keyword-only. The keyword arm only matches graph nodes, so chunk results always come from the semantic arm. |
+| `hybrid`   | Runs a keyword arm over nodes and over chunks and a semantic arm, and fuses their rankings by reciprocal rank (rank, not score, is merged; a result ranked first in every arm scores 1.0, so `score` is a fused rank score, not a BM25 or cosine value). Semantic matches below the minimum similarity (default 0.55) are dropped. Very short queries (under 3 characters) or a search error fall back to keyword-only. |
 
 :::note[Limit behavior]
 
@@ -58,7 +58,7 @@ curl "http://localhost/api/v1/search?q=machine+learning&search_type=keyword"
 # Semantic search
 curl "http://localhost/api/v1/search?q=artificial+intelligence&search_type=semantic"
 
-# Hybrid search (keyword + semantic, higher score wins)
+# Hybrid search (keyword + semantic rankings fused by reciprocal rank)
 curl "http://localhost/api/v1/search?q=neural+networks&search_type=hybrid"
 
 # Hybrid search with a custom result limit

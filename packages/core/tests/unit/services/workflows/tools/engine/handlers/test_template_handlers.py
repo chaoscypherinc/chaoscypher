@@ -19,6 +19,7 @@ from chaoscypher_core.models import PropertyType
 from chaoscypher_core.services.workflows.tools.engine.handlers.template_handlers import (
     TemplateToolHandlers,
 )
+from chaoscypher_core.utils.tool_failure import TOOL_FAILURES
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +248,7 @@ class TestListTemplates:
         result = await handler.list_templates()
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
 
 # ===========================================================================
@@ -359,7 +360,7 @@ class TestCreateTemplate:
         )
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
 
 # ===========================================================================
@@ -405,7 +406,7 @@ class TestDeleteTemplate:
         result = await handler.delete_template("t1")
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
 
 # ===========================================================================
@@ -821,7 +822,7 @@ class TestSearchTemplatesSemantic:
         result = await handler.search_templates("anything")
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
 
 # ===========================================================================

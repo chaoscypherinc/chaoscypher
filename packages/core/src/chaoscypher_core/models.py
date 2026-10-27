@@ -9,7 +9,7 @@ suggestions, and other entities.
 """
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from enum import StrEnum
@@ -131,6 +131,40 @@ class SourceStatus(StrEnum):
     ERROR = "error"
 
 
+MEMORY_SOURCE_TYPE = "memory"
+"""``sources.source_type`` of a memory (spec 2026-10-20 decision 2): ``remember`` writes it,
+the memory tools, the link step and the pack import read it."""
+
+
+def is_memory_source(row: Mapping[str, Any] | object) -> bool:
+    """Whether a source row (a dict, or an ORM row) is a memory.
+
+    A row whose ``source_type`` is NULL or missing (most rows predate the column, and a
+    projection may not read it) is not: it reads as a document.
+    """
+    if isinstance(row, Mapping):
+        return row.get("source_type") == MEMORY_SOURCE_TYPE
+    return getattr(row, "source_type", None) == MEMORY_SOURCE_TYPE
+
+
+class MemoryLinkState(StrEnum):
+    """What happened to a memory's link into the graph (``sources.memory_link_state``).
+
+    Set on memory sources only (``source_type = "memory"``; migration 0024); a
+    document keeps NULL. ``LINKING`` is live while its claim's heartbeat
+    (``last_activity_at``) is fresh and reads as interrupted once it goes stale.
+    ``NO_MODEL`` is never counted as an attempt; ``FAILED`` is. ``LINKED_EMPTY``
+    linked but attests no node, and is retried only on request.
+    """
+
+    PENDING = "pending"
+    LINKING = "linking"
+    NO_MODEL = "no_model"
+    FAILED = "failed"
+    LINKED = "linked"
+    LINKED_EMPTY = "linked_empty"
+
+
 class SourceErrorStage(StrEnum):
     """Stage at which a source's pipeline failed.
 
@@ -150,6 +184,9 @@ class SourceErrorStage(StrEnum):
     COMMIT = "commit"
     URL_FETCH = "url_fetch"
     RECOVERY_EXHAUSTED = "recovery_exhausted"
+    # A memory's commit stood but its identity pass or supersession failed
+    # (``mcp/memory_link.py``); the next link finishes them.
+    AFTER_COMMIT = "after_commit"
 
 
 class SiteStatus(StrEnum):
@@ -257,6 +294,10 @@ class Node(BaseModel):
         default=None,
         description="Home source: one of the sources that attest this node (#795)",
     )
+    person_made: bool = Field(
+        default=False,
+        description="Made by a person (create_node), not a source: no release deletes or rewrites it",
+    )
     member_source_ids: list[str] = Field(
         default_factory=list,
         exclude=True,
@@ -346,6 +387,10 @@ class Edge(BaseModel):
     )
     closed_by_source_id: str | None = Field(
         default=None, description="The memory source that closed it (no foreign key)"
+    )
+    person_made: bool = Field(
+        default=False,
+        description="Made by a person (create_edge), not a source: no release deletes or rewrites it",
     )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC), description="Creation timestamp"
@@ -797,6 +842,13 @@ class ProcessingResult(BaseModel):
             "domain-confirmation gate parked the source before extraction."
         ),
     )
+    followups_complete: bool = Field(
+        default=True,
+        description=(
+            "False when the commit stood but its identity pass or a memory's "
+            "supersession failed; the memory link step finishes them."
+        ),
+    )
 
     model_config = ConfigDict(extra="forbid")
 
@@ -942,6 +994,7 @@ class HealthReport(BaseModel):
 # ============================================================================
 
 __all__ = [
+    "MEMORY_SOURCE_TYPE",
     "AnalysisDepth",
     "BatchEmbedResult",
     "ChunkingResult",
@@ -958,6 +1011,7 @@ __all__ = [
     "HealthResult",
     "IndexingResult",
     "LLMChatResponse",
+    "MemoryLinkState",
     "Node",
     "NodeCreate",
     "NodePosition",
@@ -980,6 +1034,7 @@ __all__ = [
     "TemplateUpdate",
     "TokenUsage",
     "ToolResult",
+    "is_memory_source",
 ]
 
 

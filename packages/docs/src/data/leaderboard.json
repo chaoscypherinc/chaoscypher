@@ -2890,7 +2890,7 @@
          }
         },
         "hybrid": {
-         "citation_accuracy": 93.1,
+         "citation_accuracy": 94.1,
          "cross_chapter_join": {
           "passed": 6,
           "total": 10
@@ -4351,7 +4351,7 @@
        "harness": null,
        "modes": {
         "graphrag": {
-         "citation_accuracy": 94.1,
+         "citation_accuracy": 95.1,
          "cross_chapter_join": {
           "passed": 8,
           "total": 10
@@ -7353,7 +7353,7 @@
            "total": 37
           },
           "original": {
-           "passed": 73,
+           "passed": 74,
            "total": 80
           }
          },
@@ -7475,10 +7475,10 @@
            ]
           },
           "hybrid": {
-           "value": 4,
+           "value": 3,
            "ci90": [
             0,
-            8
+            7
            ]
           }
          }
@@ -7889,7 +7889,7 @@
           }
          },
          "hybrid": {
-          "citation_accuracy": 93.1,
+          "citation_accuracy": 94.1,
           "cross_chapter_join": {
            "passed": 6,
            "total": 10
@@ -9350,7 +9350,7 @@
         "harness": null,
         "modes": {
          "graphrag": {
-          "citation_accuracy": 94.1,
+          "citation_accuracy": 95.1,
           "cross_chapter_join": {
            "passed": 8,
            "total": 10
@@ -9849,7 +9849,7 @@
            "ollama/gpt-oss:20b": -1.3,
            "ollama/granite4.2:30b": 0.0,
            "ollama/llama3.1:8b": -1.3,
-           "ollama/mistral-small3.2:24b": 5.0,
+           "ollama/mistral-small3.2:24b": 3.7,
            "ollama/muse-glimmer:30b": 1.3,
            "ollama/nemotron-3.5-lightning:30b-a3b": 3.8,
            "ollama/phi4:14b": 1.2,
@@ -9863,14 +9863,14 @@
            "ollama/qwen3:30b-instruct": 3.8,
            "ollama/qwen3:8b": -2.4
           },
-          "mean": 0.9,
+          "mean": 0.8,
           "models_improved": 12,
           "models": 22
          }
         },
         "differential": {
          "naive": 27.8,
-         "hybrid": 4.5
+         "hybrid": 4.6
         }
        },
        "errors_removed": {
@@ -9981,7 +9981,7 @@
            "ollama/gpt-oss:20b": -16.7,
            "ollama/granite4.2:30b": 0.0,
            "ollama/llama3.1:8b": -7.1,
-           "ollama/mistral-small3.2:24b": 57.1,
+           "ollama/mistral-small3.2:24b": 50.0,
            "ollama/muse-glimmer:30b": 50.0,
            "ollama/nemotron-3.5-lightning:30b-a3b": 37.5,
            "ollama/phi4:14b": 11.1,
@@ -9998,7 +9998,7 @@
           "median_pct": 15.6,
           "models_above_bar": 9,
           "bar_pct": 25.0,
-          "fail_pct_baseline": 7.2,
+          "fail_pct_baseline": 7.1,
           "fail_pct_graphrag": 6.3
          }
         },
@@ -10045,7 +10045,7 @@
            "ollama/gpt-oss:20b": 15.0,
            "ollama/granite4.2:30b": 7.7,
            "ollama/llama3.1:8b": -5.9,
-           "ollama/mistral-small3.2:24b": 26.3,
+           "ollama/mistral-small3.2:24b": 22.2,
            "ollama/muse-glimmer:30b": 42.9,
            "ollama/nemotron-3.5-lightning:30b-a3b": 10.0,
            "ollama/phi4:14b": 22.7,
@@ -10059,8 +10059,8 @@
            "ollama/qwen3:30b-instruct": 36.8,
            "ollama/qwen3:8b": 14.3
           },
-          "median_pct": 24.5,
-          "models_above_bar": 11,
+          "median_pct": 22.4,
+          "models_above_bar": 10,
           "bar_pct": 25.0,
           "fail_pct_baseline": 14.1,
           "fail_pct_graphrag": 11.8
@@ -10403,7 +10403,7 @@
      "runs": 1,
      "timed_out": false,
      "unsupported_names": 0,
-     "citation_accuracy": 90.8,
+     "citation_accuracy": 92.3,
      "verdicts": {
       "q001": 1.0,
       "q002": 1.0,
@@ -12454,17 +12454,14 @@
    "fixture_total": 39
   },
   "chat": {
-   "total": 77,
+   "total": 79,
    "fixture": "war_and_peace_book1",
-   "retrieval_floor": 2,
+   "retrieval_floor": 1,
    "retrieval_floor_ids": [
-    "q022",
     "q023"
    ],
    "excluded_ids": [
-    "q030",
-    "q040",
-    "q041"
+    "q040"
    ],
    "questions": [
     {
@@ -12675,7 +12672,7 @@
      "section": "multi_hop",
      "tier": "medium",
      "question": "Pierre gave Prince Andrew his word of honor not to go somewhere that night. Where did he go instead, and where was he sent afterwards?",
-     "answerable": false
+     "answerable": true
     },
     {
      "id": "q031",
@@ -12752,7 +12749,7 @@
      "section": "multi_hop",
      "tier": "medium",
      "question": "With which man did the Countess Rost\u00f3va once act in theatricals, and at whose house?",
-     "answerable": false
+     "answerable": true
     },
     {
      "id": "q042",
@@ -17560,14 +17557,14 @@
         "fail_pct_graphrag": 13.4,
         "scorer": {
          "holds": true,
-         "median_pct": 33.3,
+         "median_pct": 28.6,
          "models": 22,
-         "models_above_bar": 19,
-         "models_fewer": 22,
+         "models_above_bar": 17,
+         "models_fewer": 21,
          "majority": 12,
          "questions": 80,
-         "fail_pct_baseline": 19.1,
-         "fail_pct_graphrag": 12.6
+         "fail_pct_baseline": 19.5,
+         "fail_pct_graphrag": 13.5
         }
        }
       },
@@ -17583,10 +17580,10 @@
         "majority": 12,
         "scorer": {
          "holds": true,
-         "median_pct": 50.0,
+         "median_pct": 40.0,
          "models": 22,
-         "models_above_bar_naive": 21,
-         "models_above_bar_hybrid": 18,
+         "models_above_bar_naive": 22,
+         "models_above_bar_hybrid": 14,
          "majority": 12
         }
        }
@@ -17625,19 +17622,19 @@
         "models_matching": 12,
         "scorer": {
          "holds": true,
-         "small": "ollama/llama3.1:8b",
-         "small_label": "Llama 3.1 8B",
-         "small_vram_gb": 4.9,
-         "big": "ollama/qwen3.6:27b",
-         "big_label": "Qwen3.6 27B",
-         "big_vram_gb": 18.0,
-         "ratio": 3.7,
-         "small_graphrag_pct": 86.2,
-         "small_naive_pct": 80.0,
+         "small": "ollama/phi4:14b",
+         "small_label": "Phi-4 14B",
+         "small_vram_gb": 9.1,
+         "big": "ollama/qwen3.6:35b-a3b",
+         "big_label": "Qwen3.6 35B-A3B MoE",
+         "big_vram_gb": 23.0,
+         "ratio": 2.5,
+         "small_graphrag_pct": 87.5,
+         "small_naive_pct": 77.5,
          "big_naive_pct": 86.2,
-         "big_hybrid_pct": 87.5,
-         "beats_hybrid_too": false,
-         "models_matching": 15
+         "big_hybrid_pct": 86.2,
+         "beats_hybrid_too": true,
+         "models_matching": 12
         }
        }
       }
@@ -17957,7 +17954,7 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 7,
+          "passed": 8,
           "total": 10
          },
          "cast_aggregate": {
@@ -17969,7 +17966,7 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 30,
+          "passed": 31,
           "total": 40
          },
          "original": {
@@ -17984,7 +17981,7 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 5,
+          "passed": 8,
           "total": 10
          },
          "cast_aggregate": {
@@ -17992,15 +17989,15 @@
           "total": 10
          },
          "disambiguation": {
-          "passed": 7,
+          "passed": 6,
           "total": 10
          },
          "graph_advantage": {
-          "passed": 22,
+          "passed": 24,
           "total": 40
          },
          "original": {
-          "passed": 70,
+          "passed": 67,
           "total": 80
          }
         },
@@ -18011,11 +18008,11 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 7,
+          "passed": 5,
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 4,
+          "passed": 5,
           "total": 10
          },
          "disambiguation": {
@@ -18023,7 +18020,7 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 23,
+          "passed": 22,
           "total": 40
          },
          "original": {
@@ -18051,26 +18048,26 @@
         },
         "relationship_path": {
          "naive": {
-          "value": 0,
+          "value": 3,
           "ci90": [
-           -2,
-           2
+           0,
+           6
           ]
          },
          "hybrid": {
-          "value": 2,
+          "value": 0,
           "ci90": [
-           0,
-           4
+           -3,
+           3
           ]
          }
         },
         "cast_aggregate": {
          "naive": {
-          "value": 2,
+          "value": 1,
           "ci90": [
-           -2,
-           6
+           -3,
+           5
           ]
          },
          "hybrid": {
@@ -18090,25 +18087,25 @@
           ]
          },
          "hybrid": {
-          "value": 2,
+          "value": 3,
           "ci90": [
-           0,
-           4
+           1,
+           5
           ]
          }
         },
         "graph_advantage": {
          "naive": {
-          "value": 7,
+          "value": 9,
           "ci90": [
-           1,
-           13
+           2,
+           15
           ]
          },
          "hybrid": {
-          "value": 8,
+          "value": 7,
           "ci90": [
-           4,
+           2,
            12
           ]
          }
@@ -18122,10 +18119,10 @@
           ]
          },
          "hybrid": {
-          "value": -4,
+          "value": -1,
           "ci90": [
-           -10,
-           2
+           -8,
+           6
           ]
          }
         }
@@ -18147,19 +18144,19 @@
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 6,
+          "passed": 5,
           "total": 10
          },
          "disambiguation": {
-          "passed": 10,
+          "passed": 9,
           "total": 10
          },
          "graph_advantage": {
-          "passed": 30,
+          "passed": 28,
           "total": 40
          },
          "original": {
-          "passed": 69,
+          "passed": 68,
           "total": 80
          }
         },
@@ -18170,11 +18167,11 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 6,
+          "passed": 5,
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 6,
+          "passed": 5,
           "total": 10
          },
          "disambiguation": {
@@ -18182,18 +18179,18 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 27,
+          "passed": 25,
           "total": 40
          },
          "original": {
-          "passed": 68,
+          "passed": 67,
           "total": 80
          }
         },
         "naive": {
          "citation_accuracy": 97.9,
          "cross_chapter_join": {
-          "passed": 7,
+          "passed": 6,
           "total": 10
          },
          "relationship_path": {
@@ -18201,7 +18198,7 @@
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 4,
+          "passed": 2,
           "total": 10
          },
          "disambiguation": {
@@ -18209,7 +18206,7 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 23,
+          "passed": 20,
           "total": 40
          },
          "original": {
@@ -18221,10 +18218,10 @@
        "lift": {
         "cross_chapter_join": {
          "naive": {
-          "value": 0,
+          "value": 1,
           "ci90": [
            -2,
-           2
+           4
           ]
          },
          "hybrid": {
@@ -18244,18 +18241,18 @@
           ]
          },
          "hybrid": {
-          "value": 1,
+          "value": 2,
           "ci90": [
-           -3,
+           -1,
            5
           ]
          }
         },
         "cast_aggregate": {
          "naive": {
-          "value": 2,
+          "value": 3,
           "ci90": [
-           -2,
+           -1,
            6
           ]
          },
@@ -18269,10 +18266,382 @@
         },
         "disambiguation": {
          "naive": {
+          "value": 3,
+          "ci90": [
+           0,
+           6
+          ]
+         },
+         "hybrid": {
+          "value": 1,
+          "ci90": [
+           0,
+           3
+          ]
+         }
+        },
+        "graph_advantage": {
+         "naive": {
+          "value": 8,
+          "ci90": [
+           1,
+           15
+          ]
+         },
+         "hybrid": {
+          "value": 3,
+          "ci90": [
+           -2,
+           8
+          ]
+         }
+        },
+        "original": {
+         "naive": {
+          "value": 3,
+          "ci90": [
+           -2,
+           9
+          ]
+         },
+         "hybrid": {
+          "value": 1,
+          "ci90": [
+           -4,
+           6
+          ]
+         }
+        }
+       }
+      },
+      {
+       "id": "ollama/gemma4:26b",
+       "label": "Gemma 4 26B",
+       "harness": null,
+       "modes": {
+        "graphrag": {
+         "citation_accuracy": 95.1,
+         "cross_chapter_join": {
+          "passed": 5,
+          "total": 10
+         },
+         "relationship_path": {
+          "passed": 6,
+          "total": 10
+         },
+         "cast_aggregate": {
+          "passed": 7,
+          "total": 10
+         },
+         "disambiguation": {
+          "passed": 10,
+          "total": 10
+         },
+         "graph_advantage": {
+          "passed": 28,
+          "total": 40
+         },
+         "original": {
+          "passed": 70,
+          "total": 80
+         }
+        },
+        "hybrid": {
+         "citation_accuracy": 97.0,
+         "cross_chapter_join": {
+          "passed": 6,
+          "total": 10
+         },
+         "relationship_path": {
+          "passed": 8,
+          "total": 10
+         },
+         "cast_aggregate": {
+          "passed": 5,
+          "total": 10
+         },
+         "disambiguation": {
+          "passed": 8,
+          "total": 10
+         },
+         "graph_advantage": {
+          "passed": 27,
+          "total": 40
+         },
+         "original": {
+          "passed": 66,
+          "total": 80
+         }
+        },
+        "naive": {
+         "citation_accuracy": 96.9,
+         "cross_chapter_join": {
+          "passed": 7,
+          "total": 10
+         },
+         "relationship_path": {
+          "passed": 6,
+          "total": 10
+         },
+         "cast_aggregate": {
+          "passed": 3,
+          "total": 10
+         },
+         "disambiguation": {
+          "passed": 4,
+          "total": 10
+         },
+         "graph_advantage": {
+          "passed": 20,
+          "total": 40
+         },
+         "original": {
+          "passed": 66,
+          "total": 80
+         }
+        }
+       },
+       "lift": {
+        "cross_chapter_join": {
+         "naive": {
+          "value": -2,
+          "ci90": [
+           -5,
+           1
+          ]
+         },
+         "hybrid": {
+          "value": -1,
+          "ci90": [
+           -3,
+           0
+          ]
+         }
+        },
+        "relationship_path": {
+         "naive": {
+          "value": 0,
+          "ci90": [
+           -3,
+           3
+          ]
+         },
+         "hybrid": {
+          "value": -2,
+          "ci90": [
+           -6,
+           2
+          ]
+         }
+        },
+        "cast_aggregate": {
+         "naive": {
           "value": 4,
           "ci90": [
            2,
-           6
+           7
+          ]
+         },
+         "hybrid": {
+          "value": 2,
+          "ci90": [
+           0,
+           4
+          ]
+         }
+        },
+        "disambiguation": {
+         "naive": {
+          "value": 6,
+          "ci90": [
+           3,
+           8
+          ]
+         },
+         "hybrid": {
+          "value": 2,
+          "ci90": [
+           0,
+           4
+          ]
+         }
+        },
+        "graph_advantage": {
+         "naive": {
+          "value": 8,
+          "ci90": [
+           1,
+           14
+          ]
+         },
+         "hybrid": {
+          "value": 1,
+          "ci90": [
+           -4,
+           7
+          ]
+         }
+        },
+        "original": {
+         "naive": {
+          "value": 4,
+          "ci90": [
+           -3,
+           11
+          ]
+         },
+         "hybrid": {
+          "value": 4,
+          "ci90": [
+           -1,
+           9
+          ]
+         }
+        }
+       }
+      },
+      {
+       "id": "ollama/gemma4:31b",
+       "label": "Gemma 4 31B",
+       "harness": null,
+       "modes": {
+        "graphrag": {
+         "citation_accuracy": 96.1,
+         "cross_chapter_join": {
+          "passed": 6,
+          "total": 10
+         },
+         "relationship_path": {
+          "passed": 9,
+          "total": 10
+         },
+         "cast_aggregate": {
+          "passed": 7,
+          "total": 10
+         },
+         "disambiguation": {
+          "passed": 10,
+          "total": 10
+         },
+         "graph_advantage": {
+          "passed": 32,
+          "total": 40
+         },
+         "original": {
+          "passed": 76,
+          "total": 80
+         }
+        },
+        "hybrid": {
+         "citation_accuracy": 97.1,
+         "cross_chapter_join": {
+          "passed": 6,
+          "total": 10
+         },
+         "relationship_path": {
+          "passed": 9,
+          "total": 10
+         },
+         "cast_aggregate": {
+          "passed": 6,
+          "total": 10
+         },
+         "disambiguation": {
+          "passed": 8,
+          "total": 10
+         },
+         "graph_advantage": {
+          "passed": 29,
+          "total": 40
+         },
+         "original": {
+          "passed": 70,
+          "total": 80
+         }
+        },
+        "naive": {
+         "citation_accuracy": 97.0,
+         "cross_chapter_join": {
+          "passed": 7,
+          "total": 10
+         },
+         "relationship_path": {
+          "passed": 8,
+          "total": 10
+         },
+         "cast_aggregate": {
+          "passed": 5,
+          "total": 10
+         },
+         "disambiguation": {
+          "passed": 5,
+          "total": 10
+         },
+         "graph_advantage": {
+          "passed": 25,
+          "total": 40
+         },
+         "original": {
+          "passed": 69,
+          "total": 80
+         }
+        }
+       },
+       "lift": {
+        "cross_chapter_join": {
+         "naive": {
+          "value": -1,
+          "ci90": [
+           -3,
+           0
+          ]
+         },
+         "hybrid": {
+          "value": 0,
+          "ci90": [
+           -2,
+           2
+          ]
+         }
+        },
+        "relationship_path": {
+         "naive": {
+          "value": 1,
+          "ci90": [
+           -2,
+           4
+          ]
+         },
+         "hybrid": {
+          "value": 0,
+          "ci90": [
+           -2,
+           2
+          ]
+         }
+        },
+        "cast_aggregate": {
+         "naive": {
+          "value": 2,
+          "ci90": [
+           -1,
+           5
+          ]
+         },
+         "hybrid": {
+          "value": 1,
+          "ci90": [
+           -2,
+           4
+          ]
+         }
+        },
+        "disambiguation": {
+         "naive": {
+          "value": 5,
+          "ci90": [
+           2,
+           8
           ]
          },
          "hybrid": {
@@ -18295,202 +18664,16 @@
           "value": 3,
           "ci90": [
            -2,
-           9
-          ]
-         }
-        },
-        "original": {
-         "naive": {
-          "value": 4,
-          "ci90": [
-           -1,
-           9
-          ]
-         },
-         "hybrid": {
-          "value": 1,
-          "ci90": [
-           -3,
-           5
-          ]
-         }
-        }
-       }
-      },
-      {
-       "id": "ollama/gemma4:26b",
-       "label": "Gemma 4 26B",
-       "harness": null,
-       "modes": {
-        "graphrag": {
-         "citation_accuracy": 95.1,
-         "cross_chapter_join": {
-          "passed": 6,
-          "total": 10
-         },
-         "relationship_path": {
-          "passed": 9,
-          "total": 10
-         },
-         "cast_aggregate": {
-          "passed": 7,
-          "total": 10
-         },
-         "disambiguation": {
-          "passed": 10,
-          "total": 10
-         },
-         "graph_advantage": {
-          "passed": 32,
-          "total": 40
-         },
-         "original": {
-          "passed": 74,
-          "total": 80
-         }
-        },
-        "hybrid": {
-         "citation_accuracy": 97.0,
-         "cross_chapter_join": {
-          "passed": 6,
-          "total": 10
-         },
-         "relationship_path": {
-          "passed": 8,
-          "total": 10
-         },
-         "cast_aggregate": {
-          "passed": 5,
-          "total": 10
-         },
-         "disambiguation": {
-          "passed": 9,
-          "total": 10
-         },
-         "graph_advantage": {
-          "passed": 28,
-          "total": 40
-         },
-         "original": {
-          "passed": 68,
-          "total": 80
-         }
-        },
-        "naive": {
-         "citation_accuracy": 96.9,
-         "cross_chapter_join": {
-          "passed": 7,
-          "total": 10
-         },
-         "relationship_path": {
-          "passed": 6,
-          "total": 10
-         },
-         "cast_aggregate": {
-          "passed": 4,
-          "total": 10
-         },
-         "disambiguation": {
-          "passed": 5,
-          "total": 10
-         },
-         "graph_advantage": {
-          "passed": 22,
-          "total": 40
-         },
-         "original": {
-          "passed": 66,
-          "total": 80
-         }
-        }
-       },
-       "lift": {
-        "cross_chapter_join": {
-         "naive": {
-          "value": -1,
-          "ci90": [
-           -4,
-           2
-          ]
-         },
-         "hybrid": {
-          "value": 0,
-          "ci90": [
-           0,
-           0
-          ]
-         }
-        },
-        "relationship_path": {
-         "naive": {
-          "value": 3,
-          "ci90": [
-           1,
-           5
-          ]
-         },
-         "hybrid": {
-          "value": 1,
-          "ci90": [
-           0,
-           3
-          ]
-         }
-        },
-        "cast_aggregate": {
-         "naive": {
-          "value": 3,
-          "ci90": [
-           1,
-           5
-          ]
-         },
-         "hybrid": {
-          "value": 2,
-          "ci90": [
-           0,
-           4
-          ]
-         }
-        },
-        "disambiguation": {
-         "naive": {
-          "value": 5,
-          "ci90": [
-           2,
            8
           ]
-         },
-         "hybrid": {
-          "value": 1,
-          "ci90": [
-           0,
-           3
-          ]
-         }
-        },
-        "graph_advantage": {
-         "naive": {
-          "value": 10,
-          "ci90": [
-           4,
-           15
-          ]
-         },
-         "hybrid": {
-          "value": 4,
-          "ci90": [
-           1,
-           7
-          ]
          }
         },
         "original": {
          "naive": {
-          "value": 8,
+          "value": 7,
           "ci90": [
            2,
-           14
+           13
           ]
          },
          "hybrid": {
@@ -18498,192 +18681,6 @@
           "ci90": [
            2,
            11
-          ]
-         }
-        }
-       }
-      },
-      {
-       "id": "ollama/gemma4:31b",
-       "label": "Gemma 4 31B",
-       "harness": null,
-       "modes": {
-        "graphrag": {
-         "citation_accuracy": 96.1,
-         "cross_chapter_join": {
-          "passed": 7,
-          "total": 10
-         },
-         "relationship_path": {
-          "passed": 9,
-          "total": 10
-         },
-         "cast_aggregate": {
-          "passed": 7,
-          "total": 10
-         },
-         "disambiguation": {
-          "passed": 9,
-          "total": 10
-         },
-         "graph_advantage": {
-          "passed": 32,
-          "total": 40
-         },
-         "original": {
-          "passed": 76,
-          "total": 80
-         }
-        },
-        "hybrid": {
-         "citation_accuracy": 97.1,
-         "cross_chapter_join": {
-          "passed": 7,
-          "total": 10
-         },
-         "relationship_path": {
-          "passed": 9,
-          "total": 10
-         },
-         "cast_aggregate": {
-          "passed": 6,
-          "total": 10
-         },
-         "disambiguation": {
-          "passed": 8,
-          "total": 10
-         },
-         "graph_advantage": {
-          "passed": 30,
-          "total": 40
-         },
-         "original": {
-          "passed": 71,
-          "total": 80
-         }
-        },
-        "naive": {
-         "citation_accuracy": 97.0,
-         "cross_chapter_join": {
-          "passed": 8,
-          "total": 10
-         },
-         "relationship_path": {
-          "passed": 7,
-          "total": 10
-         },
-         "cast_aggregate": {
-          "passed": 5,
-          "total": 10
-         },
-         "disambiguation": {
-          "passed": 6,
-          "total": 10
-         },
-         "graph_advantage": {
-          "passed": 26,
-          "total": 40
-         },
-         "original": {
-          "passed": 68,
-          "total": 80
-         }
-        }
-       },
-       "lift": {
-        "cross_chapter_join": {
-         "naive": {
-          "value": -1,
-          "ci90": [
-           -3,
-           0
-          ]
-         },
-         "hybrid": {
-          "value": 0,
-          "ci90": [
-           -2,
-           2
-          ]
-         }
-        },
-        "relationship_path": {
-         "naive": {
-          "value": 2,
-          "ci90": [
-           -1,
-           5
-          ]
-         },
-         "hybrid": {
-          "value": 0,
-          "ci90": [
-           -2,
-           2
-          ]
-         }
-        },
-        "cast_aggregate": {
-         "naive": {
-          "value": 2,
-          "ci90": [
-           -1,
-           5
-          ]
-         },
-         "hybrid": {
-          "value": 1,
-          "ci90": [
-           -2,
-           4
-          ]
-         }
-        },
-        "disambiguation": {
-         "naive": {
-          "value": 3,
-          "ci90": [
-           0,
-           6
-          ]
-         },
-         "hybrid": {
-          "value": 1,
-          "ci90": [
-           -2,
-           4
-          ]
-         }
-        },
-        "graph_advantage": {
-         "naive": {
-          "value": 6,
-          "ci90": [
-           0,
-           12
-          ]
-         },
-         "hybrid": {
-          "value": 2,
-          "ci90": [
-           -3,
-           7
-          ]
-         }
-        },
-        "original": {
-         "naive": {
-          "value": 8,
-          "ci90": [
-           3,
-           13
-          ]
-         },
-         "hybrid": {
-          "value": 5,
-          "ci90": [
-           2,
-           9
           ]
          }
         }
@@ -18705,7 +18702,7 @@
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 8,
+          "passed": 7,
           "total": 10
          },
          "disambiguation": {
@@ -18713,11 +18710,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 33,
+          "passed": 32,
           "total": 40
          },
          "original": {
-          "passed": 69,
+          "passed": 70,
           "total": 80
          }
         },
@@ -18728,7 +18725,7 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 6,
+          "passed": 5,
           "total": 10
          },
          "cast_aggregate": {
@@ -18740,11 +18737,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 27,
+          "passed": 26,
           "total": 40
          },
          "original": {
-          "passed": 68,
+          "passed": 66,
           "total": 80
          }
         },
@@ -18771,7 +18768,7 @@
           "total": 40
          },
          "original": {
-          "passed": 61,
+          "passed": 62,
           "total": 80
          }
         }
@@ -18802,26 +18799,26 @@
           ]
          },
          "hybrid": {
-          "value": 2,
+          "value": 3,
           "ci90": [
-           0,
-           4
+           1,
+           5
           ]
          }
         },
         "cast_aggregate": {
          "naive": {
-          "value": 3,
+          "value": 2,
           "ci90": [
-           0,
-           6
+           -1,
+           5
           ]
          },
          "hybrid": {
-          "value": 3,
+          "value": 2,
           "ci90": [
-           1,
-           5
+           0,
+           4
           ]
          }
         },
@@ -18843,9 +18840,9 @@
         },
         "graph_advantage": {
          "naive": {
-          "value": 9,
+          "value": 8,
           "ci90": [
-           3,
+           2,
            14
           ]
          },
@@ -18862,14 +18859,14 @@
           "value": 8,
           "ci90": [
            1,
-           14
+           15
           ]
          },
          "hybrid": {
-          "value": 1,
+          "value": 4,
           "ci90": [
-           -4,
-           6
+           -1,
+           9
           ]
          }
         }
@@ -18887,7 +18884,7 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 8,
+          "passed": 5,
           "total": 10
          },
          "cast_aggregate": {
@@ -18895,22 +18892,22 @@
           "total": 10
          },
          "disambiguation": {
-          "passed": 8,
+          "passed": 7,
           "total": 10
          },
          "graph_advantage": {
-          "passed": 24,
+          "passed": 20,
           "total": 40
          },
          "original": {
-          "passed": 65,
+          "passed": 66,
           "total": 80
          }
         },
         "hybrid": {
          "citation_accuracy": 87.3,
          "cross_chapter_join": {
-          "passed": 5,
+          "passed": 4,
           "total": 10
          },
          "relationship_path": {
@@ -18926,7 +18923,7 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 18,
+          "passed": 17,
           "total": 40
          },
          "original": {
@@ -18937,11 +18934,11 @@
         "naive": {
          "citation_accuracy": 79.4,
          "cross_chapter_join": {
-          "passed": 7,
+          "passed": 6,
           "total": 10
          },
          "relationship_path": {
-          "passed": 3,
+          "passed": 2,
           "total": 10
          },
          "cast_aggregate": {
@@ -18953,11 +18950,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 14,
+          "passed": 12,
           "total": 40
          },
          "original": {
-          "passed": 62,
+          "passed": 61,
           "total": 80
          }
         }
@@ -18965,33 +18962,33 @@
        "lift": {
         "cross_chapter_join": {
          "naive": {
-          "value": -1,
+          "value": 0,
           "ci90": [
-           -3,
-           0
+           -2,
+           2
           ]
          },
          "hybrid": {
-          "value": 1,
+          "value": 2,
           "ci90": [
            0,
-           3
+           4
           ]
          }
         },
         "relationship_path": {
          "naive": {
-          "value": 5,
+          "value": 3,
           "ci90": [
-           2,
-           7
+           0,
+           6
           ]
          },
          "hybrid": {
-          "value": 1,
+          "value": -2,
           "ci90": [
-           -3,
-           4
+           -6,
+           2
           ]
          }
         },
@@ -19013,48 +19010,48 @@
         },
         "disambiguation": {
          "naive": {
-          "value": 5,
+          "value": 4,
           "ci90": [
-           3,
-           8
+           1,
+           7
           ]
          },
          "hybrid": {
-          "value": 4,
+          "value": 3,
           "ci90": [
-           2,
-           7
+           1,
+           5
           ]
          }
         },
         "graph_advantage": {
          "naive": {
-          "value": 10,
+          "value": 8,
           "ci90": [
-           5,
-           15
+           2,
+           14
           ]
          },
          "hybrid": {
-          "value": 6,
-          "ci90": [
-           0,
-           11
-          ]
-         }
-        },
-        "original": {
-         "naive": {
           "value": 3,
           "ci90": [
            -3,
            9
           ]
+         }
+        },
+        "original": {
+         "naive": {
+          "value": 5,
+          "ci90": [
+           0,
+           10
+          ]
          },
          "hybrid": {
-          "value": 1,
+          "value": 2,
           "ci90": [
-           -4,
+           -3,
            7
           ]
          }
@@ -19073,11 +19070,11 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 7,
+          "passed": 6,
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 5,
+          "passed": 4,
           "total": 10
          },
          "disambiguation": {
@@ -19085,11 +19082,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 27,
+          "passed": 25,
           "total": 40
          },
          "original": {
-          "passed": 64,
+          "passed": 65,
           "total": 80
          }
         },
@@ -19100,11 +19097,11 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 7,
+          "passed": 5,
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 3,
+          "passed": 2,
           "total": 10
          },
          "disambiguation": {
@@ -19112,11 +19109,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 22,
+          "passed": 19,
           "total": 40
          },
          "original": {
-          "passed": 63,
+          "passed": 64,
           "total": 80
          }
         },
@@ -19127,11 +19124,11 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 4,
+          "passed": 3,
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 2,
+          "passed": 3,
           "total": 10
          },
          "disambiguation": {
@@ -19143,7 +19140,7 @@
           "total": 40
          },
          "original": {
-          "passed": 61,
+          "passed": 59,
           "total": 80
          }
         }
@@ -19174,19 +19171,19 @@
           ]
          },
          "hybrid": {
-          "value": 0,
+          "value": 1,
           "ci90": [
-           -4,
+           -2,
            4
           ]
          }
         },
         "cast_aggregate": {
          "naive": {
-          "value": 3,
+          "value": 1,
           "ci90": [
-           1,
-           5
+           -2,
+           4
           ]
          },
          "hybrid": {
@@ -19215,26 +19212,26 @@
         },
         "graph_advantage": {
          "naive": {
-          "value": 11,
+          "value": 9,
           "ci90": [
-           6,
-           16
+           4,
+           14
           ]
          },
          "hybrid": {
-          "value": 5,
+          "value": 6,
           "ci90": [
-           -1,
+           1,
            11
           ]
          }
         },
         "original": {
          "naive": {
-          "value": 3,
+          "value": 6,
           "ci90": [
-           -3,
-           9
+           0,
+           13
           ]
          },
          "hybrid": {
@@ -19259,7 +19256,7 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 9,
+          "passed": 8,
           "total": 10
          },
          "cast_aggregate": {
@@ -19271,7 +19268,7 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 31,
+          "passed": 30,
           "total": 40
          },
          "original": {
@@ -19286,7 +19283,7 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 8,
+          "passed": 7,
           "total": 10
          },
          "cast_aggregate": {
@@ -19298,11 +19295,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 26,
+          "passed": 25,
           "total": 40
          },
          "original": {
-          "passed": 66,
+          "passed": 67,
           "total": 80
          }
         },
@@ -19329,7 +19326,7 @@
           "total": 40
          },
          "original": {
-          "passed": 63,
+          "passed": 64,
           "total": 80
          }
         }
@@ -19353,9 +19350,9 @@
         },
         "relationship_path": {
          "naive": {
-          "value": 3,
+          "value": 2,
           "ci90": [
-           1,
+           -1,
            5
           ]
          },
@@ -19401,10 +19398,10 @@
         },
         "graph_advantage": {
          "naive": {
-          "value": 10,
+          "value": 9,
           "ci90": [
-           4,
-           16
+           3,
+           15
           ]
          },
          "hybrid": {
@@ -19417,17 +19414,17 @@
         },
         "original": {
          "naive": {
-          "value": 5,
+          "value": 4,
           "ci90": [
-           0,
+           -2,
            11
           ]
          },
          "hybrid": {
-          "value": 2,
+          "value": 1,
           "ci90": [
-           -3,
-           7
+           -4,
+           6
           ]
          }
         }
@@ -19445,11 +19442,11 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 6,
+          "passed": 8,
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 5,
+          "passed": 4,
           "total": 10
          },
          "disambiguation": {
@@ -19457,26 +19454,26 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 25,
+          "passed": 26,
           "total": 40
          },
          "original": {
-          "passed": 69,
+          "passed": 62,
           "total": 80
          }
         },
         "hybrid": {
          "citation_accuracy": 92.9,
          "cross_chapter_join": {
-          "passed": 6,
+          "passed": 5,
           "total": 10
          },
          "relationship_path": {
-          "passed": 8,
+          "passed": 7,
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 4,
+          "passed": 2,
           "total": 10
          },
          "disambiguation": {
@@ -19484,18 +19481,18 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 25,
+          "passed": 21,
           "total": 40
          },
          "original": {
-          "passed": 65,
+          "passed": 60,
           "total": 80
          }
         },
         "naive": {
          "citation_accuracy": 91.8,
          "cross_chapter_join": {
-          "passed": 7,
+          "passed": 6,
           "total": 10
          },
          "relationship_path": {
@@ -19503,7 +19500,7 @@
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 5,
+          "passed": 3,
           "total": 10
          },
          "disambiguation": {
@@ -19511,11 +19508,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 23,
+          "passed": 20,
           "total": 40
          },
          "original": {
-          "passed": 64,
+          "passed": 63,
           "total": 80
          }
         }
@@ -19523,49 +19520,49 @@
        "lift": {
         "cross_chapter_join": {
          "naive": {
-          "value": -1,
-          "ci90": [
-           -4,
-           2
-          ]
-         },
-         "hybrid": {
           "value": 0,
           "ci90": [
            -2,
            2
           ]
+         },
+         "hybrid": {
+          "value": 1,
+          "ci90": [
+           -2,
+           4
+          ]
          }
         },
         "relationship_path": {
          "naive": {
-          "value": -1,
+          "value": 1,
           "ci90": [
-           -4,
-           2
-          ]
-         },
-         "hybrid": {
-          "value": -2,
-          "ci90": [
-           -4,
-           0
-          ]
-         }
-        },
-        "cast_aggregate": {
-         "naive": {
-          "value": 0,
-          "ci90": [
-           -4,
-           4
+           -3,
+           5
           ]
          },
          "hybrid": {
           "value": 1,
           "ci90": [
+           -2,
+           4
+          ]
+         }
+        },
+        "cast_aggregate": {
+         "naive": {
+          "value": 1,
+          "ci90": [
+           -2,
+           4
+          ]
+         },
+         "hybrid": {
+          "value": 2,
+          "ci90": [
            0,
-           3
+           4
           ]
          }
         },
@@ -19587,32 +19584,32 @@
         },
         "graph_advantage": {
          "naive": {
-          "value": 2,
-          "ci90": [
-           -5,
-           9
-          ]
-         },
-         "hybrid": {
-          "value": 0,
-          "ci90": [
-           -5,
-           5
-          ]
-         }
-        },
-        "original": {
-         "naive": {
-          "value": 5,
+          "value": 6,
           "ci90": [
            -1,
            12
           ]
          },
          "hybrid": {
-          "value": 4,
+          "value": 5,
           "ci90": [
            -1,
+           10
+          ]
+         }
+        },
+        "original": {
+         "naive": {
+          "value": -1,
+          "ci90": [
+           -8,
+           6
+          ]
+         },
+         "hybrid": {
+          "value": 2,
+          "ci90": [
+           -5,
            9
           ]
          }
@@ -19631,19 +19628,19 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 9,
-          "total": 10
-         },
-         "cast_aggregate": {
           "passed": 7,
           "total": 10
          },
+         "cast_aggregate": {
+          "passed": 5,
+          "total": 10
+         },
          "disambiguation": {
-          "passed": 8,
+          "passed": 9,
           "total": 10
          },
          "graph_advantage": {
-          "passed": 32,
+          "passed": 29,
           "total": 40
          },
          "original": {
@@ -19725,25 +19722,41 @@
         },
         "relationship_path": {
          "naive": {
-          "value": 3,
+          "value": 1,
           "ci90": [
-           1,
-           5
+           -2,
+           4
           ]
          },
          "hybrid": {
-          "value": 2,
+          "value": 0,
           "ci90": [
-           -1,
-           5
+           -3,
+           3
           ]
          }
         },
         "cast_aggregate": {
          "naive": {
-          "value": 2,
+          "value": 0,
           "ci90": [
-           -1,
+           -2,
+           2
+          ]
+         },
+         "hybrid": {
+          "value": -1,
+          "ci90": [
+           -4,
+           2
+          ]
+         }
+        },
+        "disambiguation": {
+         "naive": {
+          "value": 3,
+          "ci90": [
+           1,
            5
           ]
          },
@@ -19755,35 +19768,19 @@
           ]
          }
         },
-        "disambiguation": {
-         "naive": {
-          "value": 2,
-          "ci90": [
-           0,
-           4
-          ]
-         },
-         "hybrid": {
-          "value": 0,
-          "ci90": [
-           -2,
-           2
-          ]
-         }
-        },
         "graph_advantage": {
          "naive": {
-          "value": 8,
+          "value": 5,
           "ci90": [
-           3,
-           13
+           0,
+           10
           ]
          },
          "hybrid": {
-          "value": 4,
+          "value": 1,
           "ci90": [
-           -1,
-           8
+           -4,
+           6
           ]
          }
         },
@@ -19813,11 +19810,11 @@
         "graphrag": {
          "citation_accuracy": 95.2,
          "cross_chapter_join": {
-          "passed": 8,
+          "passed": 6,
           "total": 10
          },
          "relationship_path": {
-          "passed": 7,
+          "passed": 9,
           "total": 10
          },
          "cast_aggregate": {
@@ -19833,14 +19830,14 @@
           "total": 40
          },
          "original": {
-          "passed": 73,
+          "passed": 74,
           "total": 80
          }
         },
         "hybrid": {
          "citation_accuracy": 95.2,
          "cross_chapter_join": {
-          "passed": 6,
+          "passed": 5,
           "total": 10
          },
          "relationship_path": {
@@ -19856,11 +19853,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 28,
+          "passed": 27,
           "total": 40
          },
          "original": {
-          "passed": 71,
+          "passed": 72,
           "total": 80
          }
         },
@@ -19871,7 +19868,7 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 7,
+          "passed": 8,
           "total": 10
          },
          "cast_aggregate": {
@@ -19883,7 +19880,7 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 26,
+          "passed": 27,
           "total": 40
          },
          "original": {
@@ -19895,33 +19892,33 @@
        "lift": {
         "cross_chapter_join": {
          "naive": {
-          "value": 0,
+          "value": -2,
           "ci90": [
-           -2,
-           2
+           -5,
+           1
           ]
          },
          "hybrid": {
-          "value": 2,
+          "value": 1,
           "ci90": [
-           0,
+           -2,
            4
           ]
          }
         },
         "relationship_path": {
          "naive": {
-          "value": 0,
+          "value": 1,
           "ci90": [
-           -4,
+           -2,
            4
           ]
          },
          "hybrid": {
-          "value": -2,
+          "value": 0,
           "ci90": [
-           -5,
-           1
+           -2,
+           2
           ]
          }
         },
@@ -19959,26 +19956,26 @@
         },
         "graph_advantage": {
          "naive": {
-          "value": 6,
+          "value": 5,
           "ci90": [
-           -1,
-           12
+           -2,
+           11
           ]
          },
          "hybrid": {
-          "value": 4,
+          "value": 5,
           "ci90": [
-           -1,
-           9
+           0,
+           10
           ]
          }
         },
         "original": {
          "naive": {
-          "value": 6,
+          "value": 7,
           "ci90": [
-           1,
-           12
+           2,
+           13
           ]
          },
          "hybrid": {
@@ -19999,11 +19996,11 @@
         "graphrag": {
          "citation_accuracy": 91.2,
          "cross_chapter_join": {
-          "passed": 8,
+          "passed": 7,
           "total": 10
          },
          "relationship_path": {
-          "passed": 8,
+          "passed": 6,
           "total": 10
          },
          "cast_aggregate": {
@@ -20011,11 +20008,11 @@
           "total": 10
          },
          "disambiguation": {
-          "passed": 9,
+          "passed": 8,
           "total": 10
          },
          "graph_advantage": {
-          "passed": 31,
+          "passed": 27,
           "total": 40
          },
          "original": {
@@ -20030,7 +20027,7 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 9,
+          "passed": 6,
           "total": 10
          },
          "cast_aggregate": {
@@ -20038,15 +20035,15 @@
           "total": 10
          },
          "disambiguation": {
-          "passed": 6,
+          "passed": 5,
           "total": 10
          },
          "graph_advantage": {
-          "passed": 24,
+          "passed": 20,
           "total": 40
          },
          "original": {
-          "passed": 64,
+          "passed": 62,
           "total": 80
          }
         },
@@ -20073,7 +20070,7 @@
           "total": 40
          },
          "original": {
-          "passed": 61,
+          "passed": 62,
           "total": 80
          }
         }
@@ -20081,33 +20078,33 @@
        "lift": {
         "cross_chapter_join": {
          "naive": {
-          "value": 0,
+          "value": -1,
           "ci90": [
-           -2,
+           -4,
            2
           ]
          },
          "hybrid": {
-          "value": 2,
-          "ci90": [
-           0,
-           4
-          ]
-         }
-        },
-        "relationship_path": {
-         "naive": {
           "value": 1,
           "ci90": [
            0,
            3
           ]
-         },
-         "hybrid": {
+         }
+        },
+        "relationship_path": {
+         "naive": {
           "value": -1,
           "ci90": [
-           -3,
-           0
+           -4,
+           2
+          ]
+         },
+         "hybrid": {
+          "value": 0,
+          "ci90": [
+           -2,
+           2
           ]
          }
         },
@@ -20129,26 +20126,26 @@
         },
         "disambiguation": {
          "naive": {
-          "value": 5,
+          "value": 4,
           "ci90": [
-           3,
+           2,
            7
           ]
          },
          "hybrid": {
           "value": 3,
           "ci90": [
-           0,
-           6
+           1,
+           5
           ]
          }
         },
         "graph_advantage": {
          "naive": {
-          "value": 9,
+          "value": 5,
           "ci90": [
-           3,
-           14
+           -2,
+           11
           ]
          },
          "hybrid": {
@@ -20161,17 +20158,17 @@
         },
         "original": {
          "naive": {
-          "value": 5,
+          "value": 4,
           "ci90": [
-           -1,
-           11
+           -2,
+           10
           ]
          },
          "hybrid": {
-          "value": 2,
+          "value": 4,
           "ci90": [
-           -3,
-           8
+           -1,
+           10
           ]
          }
         }
@@ -20189,7 +20186,7 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 7,
+          "passed": 3,
           "total": 10
          },
          "cast_aggregate": {
@@ -20197,11 +20194,11 @@
           "total": 10
          },
          "disambiguation": {
-          "passed": 10,
+          "passed": 9,
           "total": 10
          },
          "graph_advantage": {
-          "passed": 31,
+          "passed": 26,
           "total": 40
          },
          "original": {
@@ -20224,15 +20221,15 @@
           "total": 10
          },
          "disambiguation": {
-          "passed": 9,
+          "passed": 7,
           "total": 10
          },
          "graph_advantage": {
-          "passed": 27,
+          "passed": 25,
           "total": 40
          },
          "original": {
-          "passed": 68,
+          "passed": 65,
           "total": 80
          }
         },
@@ -20243,7 +20240,7 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 6,
+          "passed": 5,
           "total": 10
          },
          "cast_aggregate": {
@@ -20251,15 +20248,15 @@
           "total": 10
          },
          "disambiguation": {
-          "passed": 6,
+          "passed": 5,
           "total": 10
          },
          "graph_advantage": {
-          "passed": 22,
+          "passed": 20,
           "total": 40
          },
          "original": {
-          "passed": 65,
+          "passed": 62,
           "total": 80
          }
         }
@@ -20283,17 +20280,17 @@
         },
         "relationship_path": {
          "naive": {
-          "value": 1,
+          "value": -2,
           "ci90": [
-           -2,
-           4
+           -5,
+           1
           ]
          },
          "hybrid": {
-          "value": 1,
+          "value": -3,
           "ci90": [
-           0,
-           3
+           -5,
+           -1
           ]
          }
         },
@@ -20322,42 +20319,42 @@
           ]
          },
          "hybrid": {
-          "value": 1,
+          "value": 2,
           "ci90": [
            0,
-           3
+           4
           ]
          }
         },
         "graph_advantage": {
          "naive": {
-          "value": 9,
+          "value": 6,
           "ci90": [
-           3,
-           15
+           0,
+           12
           ]
          },
          "hybrid": {
-          "value": 4,
+          "value": 1,
           "ci90": [
-           1,
-           7
+           -3,
+           5
           ]
          }
         },
         "original": {
          "naive": {
-          "value": 5,
+          "value": 8,
           "ci90": [
-           0,
-           10
+           2,
+           14
           ]
          },
          "hybrid": {
-          "value": 2,
+          "value": 5,
           "ci90": [
-           -3,
-           7
+           0,
+           11
           ]
          }
         }
@@ -20379,7 +20376,7 @@
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 6,
+          "passed": 5,
           "total": 10
          },
          "disambiguation": {
@@ -20387,11 +20384,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 32,
+          "passed": 31,
           "total": 40
          },
          "original": {
-          "passed": 70,
+          "passed": 67,
           "total": 80
          }
         },
@@ -20418,7 +20415,7 @@
           "total": 40
          },
          "original": {
-          "passed": 67,
+          "passed": 65,
           "total": 80
          }
         },
@@ -20429,7 +20426,7 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 5,
+          "passed": 4,
           "total": 10
          },
          "cast_aggregate": {
@@ -20441,7 +20438,7 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 21,
+          "passed": 20,
           "total": 40
          },
          "original": {
@@ -20469,10 +20466,10 @@
         },
         "relationship_path": {
          "naive": {
-          "value": 4,
+          "value": 5,
           "ci90": [
            2,
-           7
+           8
           ]
          },
          "hybrid": {
@@ -20485,17 +20482,17 @@
         },
         "cast_aggregate": {
          "naive": {
-          "value": 3,
-          "ci90": [
-           -1,
-           6
-          ]
-         },
-         "hybrid": {
           "value": 2,
           "ci90": [
            -1,
            5
+          ]
+         },
+         "hybrid": {
+          "value": 1,
+          "ci90": [
+           -2,
+           4
           ]
          }
         },
@@ -20524,25 +20521,25 @@
           ]
          },
          "hybrid": {
-          "value": 8,
+          "value": 7,
           "ci90": [
-           3,
-           13
+           2,
+           12
           ]
          }
         },
         "original": {
          "naive": {
-          "value": 4,
+          "value": 1,
           "ci90": [
-           -2,
-           10
+           -5,
+           8
           ]
          },
          "hybrid": {
-          "value": 3,
+          "value": 2,
           "ci90": [
-           -2,
+           -4,
            9
           ]
          }
@@ -20557,7 +20554,7 @@
         "graphrag": {
          "citation_accuracy": 96.2,
          "cross_chapter_join": {
-          "passed": 8,
+          "passed": 7,
           "total": 10
          },
          "relationship_path": {
@@ -20573,11 +20570,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 36,
+          "passed": 35,
           "total": 40
          },
          "original": {
-          "passed": 72,
+          "passed": 74,
           "total": 80
          }
         },
@@ -20596,11 +20593,11 @@
           "total": 10
          },
          "disambiguation": {
-          "passed": 8,
+          "passed": 7,
           "total": 10
          },
          "graph_advantage": {
-          "passed": 29,
+          "passed": 28,
           "total": 40
          },
          "original": {
@@ -20610,378 +20607,6 @@
         },
         "naive": {
          "citation_accuracy": 94.3,
-         "cross_chapter_join": {
-          "passed": 8,
-          "total": 10
-         },
-         "relationship_path": {
-          "passed": 7,
-          "total": 10
-         },
-         "cast_aggregate": {
-          "passed": 6,
-          "total": 10
-         },
-         "disambiguation": {
-          "passed": 6,
-          "total": 10
-         },
-         "graph_advantage": {
-          "passed": 27,
-          "total": 40
-         },
-         "original": {
-          "passed": 68,
-          "total": 80
-         }
-        }
-       },
-       "lift": {
-        "cross_chapter_join": {
-         "naive": {
-          "value": 0,
-          "ci90": [
-           -2,
-           2
-          ]
-         },
-         "hybrid": {
-          "value": 1,
-          "ci90": [
-           0,
-           3
-          ]
-         }
-        },
-        "relationship_path": {
-         "naive": {
-          "value": 3,
-          "ci90": [
-           1,
-           5
-          ]
-         },
-         "hybrid": {
-          "value": 2,
-          "ci90": [
-           0,
-           4
-          ]
-         }
-        },
-        "cast_aggregate": {
-         "naive": {
-          "value": 2,
-          "ci90": [
-           -1,
-           5
-          ]
-         },
-         "hybrid": {
-          "value": 2,
-          "ci90": [
-           0,
-           4
-          ]
-         }
-        },
-        "disambiguation": {
-         "naive": {
-          "value": 4,
-          "ci90": [
-           2,
-           6
-          ]
-         },
-         "hybrid": {
-          "value": 2,
-          "ci90": [
-           0,
-           4
-          ]
-         }
-        },
-        "graph_advantage": {
-         "naive": {
-          "value": 9,
-          "ci90": [
-           4,
-           14
-          ]
-         },
-         "hybrid": {
-          "value": 7,
-          "ci90": [
-           3,
-           11
-          ]
-         }
-        },
-        "original": {
-         "naive": {
-          "value": 4,
-          "ci90": [
-           -2,
-           10
-          ]
-         },
-         "hybrid": {
-          "value": 1,
-          "ci90": [
-           -4,
-           6
-          ]
-         }
-        }
-       }
-      },
-      {
-       "id": "ollama/qwen3.5:9b",
-       "label": "Qwen3.5 9B",
-       "harness": null,
-       "modes": {
-        "graphrag": {
-         "citation_accuracy": 93.3,
-         "cross_chapter_join": {
-          "passed": 7,
-          "total": 10
-         },
-         "relationship_path": {
-          "passed": 9,
-          "total": 10
-         },
-         "cast_aggregate": {
-          "passed": 4,
-          "total": 10
-         },
-         "disambiguation": {
-          "passed": 9,
-          "total": 10
-         },
-         "graph_advantage": {
-          "passed": 29,
-          "total": 40
-         },
-         "original": {
-          "passed": 67,
-          "total": 80
-         }
-        },
-        "hybrid": {
-         "citation_accuracy": 92.4,
-         "cross_chapter_join": {
-          "passed": 7,
-          "total": 10
-         },
-         "relationship_path": {
-          "passed": 6,
-          "total": 10
-         },
-         "cast_aggregate": {
-          "passed": 6,
-          "total": 10
-         },
-         "disambiguation": {
-          "passed": 8,
-          "total": 10
-         },
-         "graph_advantage": {
-          "passed": 27,
-          "total": 40
-         },
-         "original": {
-          "passed": 69,
-          "total": 80
-         }
-        },
-        "naive": {
-         "citation_accuracy": 94.2,
-         "cross_chapter_join": {
-          "passed": 7,
-          "total": 10
-         },
-         "relationship_path": {
-          "passed": 5,
-          "total": 10
-         },
-         "cast_aggregate": {
-          "passed": 5,
-          "total": 10
-         },
-         "disambiguation": {
-          "passed": 5,
-          "total": 10
-         },
-         "graph_advantage": {
-          "passed": 22,
-          "total": 40
-         },
-         "original": {
-          "passed": 64,
-          "total": 80
-         }
-        }
-       },
-       "lift": {
-        "cross_chapter_join": {
-         "naive": {
-          "value": 0,
-          "ci90": [
-           -2,
-           2
-          ]
-         },
-         "hybrid": {
-          "value": 0,
-          "ci90": [
-           0,
-           0
-          ]
-         }
-        },
-        "relationship_path": {
-         "naive": {
-          "value": 4,
-          "ci90": [
-           2,
-           7
-          ]
-         },
-         "hybrid": {
-          "value": 3,
-          "ci90": [
-           1,
-           5
-          ]
-         }
-        },
-        "cast_aggregate": {
-         "naive": {
-          "value": -1,
-          "ci90": [
-           -5,
-           3
-          ]
-         },
-         "hybrid": {
-          "value": -2,
-          "ci90": [
-           -5,
-           1
-          ]
-         }
-        },
-        "disambiguation": {
-         "naive": {
-          "value": 4,
-          "ci90": [
-           2,
-           6
-          ]
-         },
-         "hybrid": {
-          "value": 1,
-          "ci90": [
-           0,
-           3
-          ]
-         }
-        },
-        "graph_advantage": {
-         "naive": {
-          "value": 7,
-          "ci90": [
-           1,
-           13
-          ]
-         },
-         "hybrid": {
-          "value": 2,
-          "ci90": [
-           -2,
-           7
-          ]
-         }
-        },
-        "original": {
-         "naive": {
-          "value": 3,
-          "ci90": [
-           -3,
-           9
-          ]
-         },
-         "hybrid": {
-          "value": -2,
-          "ci90": [
-           -7,
-           3
-          ]
-         }
-        }
-       }
-      },
-      {
-       "id": "ollama/qwen3.6:27b",
-       "label": "Qwen3.6 27B",
-       "harness": null,
-       "modes": {
-        "graphrag": {
-         "citation_accuracy": 96.1,
-         "cross_chapter_join": {
-          "passed": 8,
-          "total": 10
-         },
-         "relationship_path": {
-          "passed": 8,
-          "total": 10
-         },
-         "cast_aggregate": {
-          "passed": 7,
-          "total": 10
-         },
-         "disambiguation": {
-          "passed": 10,
-          "total": 10
-         },
-         "graph_advantage": {
-          "passed": 33,
-          "total": 40
-         },
-         "original": {
-          "passed": 73,
-          "total": 80
-         }
-        },
-        "hybrid": {
-         "citation_accuracy": 95.1,
-         "cross_chapter_join": {
-          "passed": 7,
-          "total": 10
-         },
-         "relationship_path": {
-          "passed": 7,
-          "total": 10
-         },
-         "cast_aggregate": {
-          "passed": 6,
-          "total": 10
-         },
-         "disambiguation": {
-          "passed": 9,
-          "total": 10
-         },
-         "graph_advantage": {
-          "passed": 29,
-          "total": 40
-         },
-         "original": {
-          "passed": 70,
-          "total": 80
-         }
-        },
-        "naive": {
-         "citation_accuracy": 96.1,
          "cross_chapter_join": {
           "passed": 8,
           "total": 10
@@ -21011,6 +20636,378 @@
        "lift": {
         "cross_chapter_join": {
          "naive": {
+          "value": -1,
+          "ci90": [
+           -4,
+           2
+          ]
+         },
+         "hybrid": {
+          "value": 0,
+          "ci90": [
+           -2,
+           2
+          ]
+         }
+        },
+        "relationship_path": {
+         "naive": {
+          "value": 3,
+          "ci90": [
+           1,
+           5
+          ]
+         },
+         "hybrid": {
+          "value": 2,
+          "ci90": [
+           0,
+           4
+          ]
+         }
+        },
+        "cast_aggregate": {
+         "naive": {
+          "value": 3,
+          "ci90": [
+           0,
+           6
+          ]
+         },
+         "hybrid": {
+          "value": 2,
+          "ci90": [
+           0,
+           4
+          ]
+         }
+        },
+        "disambiguation": {
+         "naive": {
+          "value": 4,
+          "ci90": [
+           2,
+           6
+          ]
+         },
+         "hybrid": {
+          "value": 3,
+          "ci90": [
+           1,
+           5
+          ]
+         }
+        },
+        "graph_advantage": {
+         "naive": {
+          "value": 9,
+          "ci90": [
+           3,
+           15
+          ]
+         },
+         "hybrid": {
+          "value": 7,
+          "ci90": [
+           3,
+           12
+          ]
+         }
+        },
+        "original": {
+         "naive": {
+          "value": 5,
+          "ci90": [
+           -1,
+           11
+          ]
+         },
+         "hybrid": {
+          "value": 3,
+          "ci90": [
+           -2,
+           8
+          ]
+         }
+        }
+       }
+      },
+      {
+       "id": "ollama/qwen3.5:9b",
+       "label": "Qwen3.5 9B",
+       "harness": null,
+       "modes": {
+        "graphrag": {
+         "citation_accuracy": 93.3,
+         "cross_chapter_join": {
+          "passed": 7,
+          "total": 10
+         },
+         "relationship_path": {
+          "passed": 8,
+          "total": 10
+         },
+         "cast_aggregate": {
+          "passed": 4,
+          "total": 10
+         },
+         "disambiguation": {
+          "passed": 9,
+          "total": 10
+         },
+         "graph_advantage": {
+          "passed": 28,
+          "total": 40
+         },
+         "original": {
+          "passed": 67,
+          "total": 80
+         }
+        },
+        "hybrid": {
+         "citation_accuracy": 92.4,
+         "cross_chapter_join": {
+          "passed": 7,
+          "total": 10
+         },
+         "relationship_path": {
+          "passed": 5,
+          "total": 10
+         },
+         "cast_aggregate": {
+          "passed": 5,
+          "total": 10
+         },
+         "disambiguation": {
+          "passed": 6,
+          "total": 10
+         },
+         "graph_advantage": {
+          "passed": 23,
+          "total": 40
+         },
+         "original": {
+          "passed": 70,
+          "total": 80
+         }
+        },
+        "naive": {
+         "citation_accuracy": 94.2,
+         "cross_chapter_join": {
+          "passed": 7,
+          "total": 10
+         },
+         "relationship_path": {
+          "passed": 5,
+          "total": 10
+         },
+         "cast_aggregate": {
+          "passed": 4,
+          "total": 10
+         },
+         "disambiguation": {
+          "passed": 4,
+          "total": 10
+         },
+         "graph_advantage": {
+          "passed": 20,
+          "total": 40
+         },
+         "original": {
+          "passed": 65,
+          "total": 80
+         }
+        }
+       },
+       "lift": {
+        "cross_chapter_join": {
+         "naive": {
+          "value": 0,
+          "ci90": [
+           -2,
+           2
+          ]
+         },
+         "hybrid": {
+          "value": 0,
+          "ci90": [
+           0,
+           0
+          ]
+         }
+        },
+        "relationship_path": {
+         "naive": {
+          "value": 3,
+          "ci90": [
+           1,
+           6
+          ]
+         },
+         "hybrid": {
+          "value": 3,
+          "ci90": [
+           1,
+           5
+          ]
+         }
+        },
+        "cast_aggregate": {
+         "naive": {
+          "value": 0,
+          "ci90": [
+           -2,
+           2
+          ]
+         },
+         "hybrid": {
+          "value": -1,
+          "ci90": [
+           -4,
+           2
+          ]
+         }
+        },
+        "disambiguation": {
+         "naive": {
+          "value": 5,
+          "ci90": [
+           2,
+           7
+          ]
+         },
+         "hybrid": {
+          "value": 3,
+          "ci90": [
+           1,
+           6
+          ]
+         }
+        },
+        "graph_advantage": {
+         "naive": {
+          "value": 8,
+          "ci90": [
+           3,
+           13
+          ]
+         },
+         "hybrid": {
+          "value": 5,
+          "ci90": [
+           1,
+           10
+          ]
+         }
+        },
+        "original": {
+         "naive": {
+          "value": 2,
+          "ci90": [
+           -5,
+           9
+          ]
+         },
+         "hybrid": {
+          "value": -3,
+          "ci90": [
+           -9,
+           2
+          ]
+         }
+        }
+       }
+      },
+      {
+       "id": "ollama/qwen3.6:27b",
+       "label": "Qwen3.6 27B",
+       "harness": null,
+       "modes": {
+        "graphrag": {
+         "citation_accuracy": 96.1,
+         "cross_chapter_join": {
+          "passed": 8,
+          "total": 10
+         },
+         "relationship_path": {
+          "passed": 9,
+          "total": 10
+         },
+         "cast_aggregate": {
+          "passed": 7,
+          "total": 10
+         },
+         "disambiguation": {
+          "passed": 10,
+          "total": 10
+         },
+         "graph_advantage": {
+          "passed": 34,
+          "total": 40
+         },
+         "original": {
+          "passed": 73,
+          "total": 80
+         }
+        },
+        "hybrid": {
+         "citation_accuracy": 95.1,
+         "cross_chapter_join": {
+          "passed": 7,
+          "total": 10
+         },
+         "relationship_path": {
+          "passed": 7,
+          "total": 10
+         },
+         "cast_aggregate": {
+          "passed": 5,
+          "total": 10
+         },
+         "disambiguation": {
+          "passed": 7,
+          "total": 10
+         },
+         "graph_advantage": {
+          "passed": 26,
+          "total": 40
+         },
+         "original": {
+          "passed": 71,
+          "total": 80
+         }
+        },
+        "naive": {
+         "citation_accuracy": 96.1,
+         "cross_chapter_join": {
+          "passed": 8,
+          "total": 10
+         },
+         "relationship_path": {
+          "passed": 7,
+          "total": 10
+         },
+         "cast_aggregate": {
+          "passed": 4,
+          "total": 10
+         },
+         "disambiguation": {
+          "passed": 6,
+          "total": 10
+         },
+         "graph_advantage": {
+          "passed": 25,
+          "total": 40
+         },
+         "original": {
+          "passed": 69,
+          "total": 80
+         }
+        }
+       },
+       "lift": {
+        "cross_chapter_join": {
+         "naive": {
           "value": 0,
           "ci90": [
            -2,
@@ -21027,22 +21024,6 @@
         },
         "relationship_path": {
          "naive": {
-          "value": 1,
-          "ci90": [
-           -2,
-           4
-          ]
-         },
-         "hybrid": {
-          "value": 1,
-          "ci90": [
-           -2,
-           4
-          ]
-         }
-        },
-        "cast_aggregate": {
-         "naive": {
           "value": 2,
           "ci90": [
            -1,
@@ -21050,10 +21031,26 @@
           ]
          },
          "hybrid": {
-          "value": 1,
+          "value": 2,
+          "ci90": [
+           -1,
+           5
+          ]
+         }
+        },
+        "cast_aggregate": {
+         "naive": {
+          "value": 3,
           "ci90": [
            0,
-           3
+           6
+          ]
+         },
+         "hybrid": {
+          "value": 2,
+          "ci90": [
+           0,
+           4
           ]
          }
         },
@@ -21066,26 +21063,26 @@
           ]
          },
          "hybrid": {
-          "value": 1,
+          "value": 3,
           "ci90": [
-           0,
-           3
+           1,
+           5
           ]
          }
         },
         "graph_advantage": {
          "naive": {
-          "value": 7,
+          "value": 9,
           "ci90": [
-           1,
-           12
+           3,
+           15
           ]
          },
          "hybrid": {
-          "value": 4,
+          "value": 8,
           "ci90": [
-           0,
-           8
+           3,
+           13
           ]
          }
         },
@@ -21093,15 +21090,15 @@
          "naive": {
           "value": 4,
           "ci90": [
-           -1,
+           -2,
            10
           ]
          },
          "hybrid": {
-          "value": 3,
+          "value": 2,
           "ci90": [
-           -1,
-           8
+           -3,
+           7
           ]
          }
         }
@@ -21115,15 +21112,15 @@
         "graphrag": {
          "citation_accuracy": 94.2,
          "cross_chapter_join": {
-          "passed": 7,
+          "passed": 6,
           "total": 10
          },
          "relationship_path": {
-          "passed": 9,
+          "passed": 10,
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 8,
+          "passed": 7,
           "total": 10
          },
          "disambiguation": {
@@ -21131,11 +21128,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 33,
+          "passed": 32,
           "total": 40
          },
          "original": {
-          "passed": 75,
+          "passed": 73,
           "total": 80
          }
         },
@@ -21150,7 +21147,7 @@
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 5,
+          "passed": 4,
           "total": 10
          },
          "disambiguation": {
@@ -21158,7 +21155,7 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 28,
+          "passed": 27,
           "total": 40
          },
          "original": {
@@ -21189,7 +21186,7 @@
           "total": 40
          },
          "original": {
-          "passed": 68,
+          "passed": 69,
           "total": 80
          }
         }
@@ -21197,49 +21194,49 @@
        "lift": {
         "cross_chapter_join": {
          "naive": {
-          "value": -1,
+          "value": -2,
           "ci90": [
-           -4,
-           2
+           -5,
+           1
           ]
          },
          "hybrid": {
-          "value": 1,
+          "value": 0,
           "ci90": [
            -2,
-           4
+           2
           ]
          }
         },
         "relationship_path": {
          "naive": {
-          "value": 1,
+          "value": 2,
           "ci90": [
-           -2,
+           0,
            4
           ]
          },
          "hybrid": {
-          "value": 1,
+          "value": 2,
           "ci90": [
-           -2,
+           0,
            4
           ]
          }
         },
         "cast_aggregate": {
          "naive": {
-          "value": 5,
+          "value": 4,
           "ci90": [
            1,
-           8
+           7
           ]
          },
          "hybrid": {
           "value": 3,
           "ci90": [
            1,
-           5
+           6
           ]
          }
         },
@@ -21261,33 +21258,33 @@
         },
         "graph_advantage": {
          "naive": {
-          "value": 8,
+          "value": 7,
           "ci90": [
-           2,
-           14
+           1,
+           13
           ]
          },
          "hybrid": {
           "value": 5,
           "ci90": [
-           0,
-           10
+           1,
+           9
           ]
          }
         },
         "original": {
          "naive": {
-          "value": 7,
+          "value": 4,
           "ci90": [
-           2,
-           12
+           -2,
+           10
           ]
          },
          "hybrid": {
-          "value": 6,
+          "value": 4,
           "ci90": [
-           2,
-           11
+           0,
+           8
           ]
          }
         }
@@ -21313,11 +21310,11 @@
           "total": 10
          },
          "disambiguation": {
-          "passed": 10,
+          "passed": 9,
           "total": 10
          },
          "graph_advantage": {
-          "passed": 32,
+          "passed": 31,
           "total": 40
          },
          "original": {
@@ -21332,11 +21329,11 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 8,
+          "passed": 9,
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 5,
+          "passed": 6,
           "total": 10
          },
          "disambiguation": {
@@ -21344,11 +21341,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 29,
+          "passed": 31,
           "total": 40
          },
          "original": {
-          "passed": 69,
+          "passed": 68,
           "total": 80
          }
         },
@@ -21359,11 +21356,11 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 7,
+          "passed": 6,
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 4,
+          "passed": 5,
           "total": 10
          },
          "disambiguation": {
@@ -21375,7 +21372,7 @@
           "total": 40
          },
          "original": {
-          "passed": 69,
+          "passed": 66,
           "total": 80
          }
         }
@@ -21399,6 +21396,22 @@
         },
         "relationship_path": {
          "naive": {
+          "value": 2,
+          "ci90": [
+           -1,
+           5
+          ]
+         },
+         "hybrid": {
+          "value": -1,
+          "ci90": [
+           -3,
+           0
+          ]
+         }
+        },
+        "cast_aggregate": {
+         "naive": {
           "value": 1,
           "ci90": [
            -2,
@@ -21413,67 +21426,51 @@
           ]
          }
         },
-        "cast_aggregate": {
-         "naive": {
-          "value": 2,
-          "ci90": [
-           -1,
-           5
-          ]
-         },
-         "hybrid": {
-          "value": 1,
-          "ci90": [
-           -2,
-           4
-          ]
-         }
-        },
         "disambiguation": {
          "naive": {
-          "value": 4,
+          "value": 3,
           "ci90": [
-           2,
+           0,
            6
           ]
          },
          "hybrid": {
-          "value": 1,
+          "value": 0,
           "ci90": [
-           0,
-           3
+           -2,
+           2
           ]
          }
         },
         "graph_advantage": {
          "naive": {
-          "value": 7,
+          "value": 6,
           "ci90": [
-           1,
-           13
+           0,
+           12
           ]
          },
          "hybrid": {
-          "value": 3,
+          "value": 0,
           "ci90": [
-           -1,
-           7
+           -4,
+           4
           ]
          }
         },
         "original": {
          "naive": {
-          "value": 6,
+          "value": 9,
           "ci90": [
-           1,
-           12
+           3,
+           15
           ]
          },
          "hybrid": {
-          "value": 6,
+          "value": 7,
           "ci90": [
-           2,
-           11
+           3,
+           12
           ]
          }
         }
@@ -21487,15 +21484,15 @@
         "graphrag": {
          "citation_accuracy": 92.3,
          "cross_chapter_join": {
-          "passed": 8,
+          "passed": 6,
           "total": 10
          },
          "relationship_path": {
-          "passed": 8,
+          "passed": 4,
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 6,
+          "passed": 5,
           "total": 10
          },
          "disambiguation": {
@@ -21503,11 +21500,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 32,
+          "passed": 25,
           "total": 40
          },
          "original": {
-          "passed": 70,
+          "passed": 69,
           "total": 80
          }
         },
@@ -21522,7 +21519,7 @@
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 4,
+          "passed": 3,
           "total": 10
          },
          "disambiguation": {
@@ -21530,11 +21527,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 23,
+          "passed": 22,
           "total": 40
          },
          "original": {
-          "passed": 66,
+          "passed": 65,
           "total": 80
          }
         },
@@ -21549,15 +21546,15 @@
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 5,
+          "passed": 4,
           "total": 10
          },
          "disambiguation": {
-          "passed": 5,
+          "passed": 4,
           "total": 10
          },
          "graph_advantage": {
-          "passed": 21,
+          "passed": 19,
           "total": 40
          },
          "original": {
@@ -21569,33 +21566,33 @@
        "lift": {
         "cross_chapter_join": {
          "naive": {
-          "value": 1,
+          "value": -1,
           "ci90": [
-           -2,
-           4
+           -4,
+           2
           ]
          },
          "hybrid": {
-          "value": 1,
+          "value": -1,
           "ci90": [
-           0,
-           3
+           -3,
+           0
           ]
          }
         },
         "relationship_path": {
          "naive": {
-          "value": 4,
+          "value": 0,
           "ci90": [
-           2,
-           7
+           -4,
+           4
           ]
          },
          "hybrid": {
-          "value": 2,
+          "value": -2,
           "ci90": [
-           -1,
-           5
+           -6,
+           2
           ]
          }
         },
@@ -21610,16 +21607,16 @@
          "hybrid": {
           "value": 2,
           "ci90": [
-           -1,
-           5
+           0,
+           4
           ]
          }
         },
         "disambiguation": {
          "naive": {
-          "value": 5,
+          "value": 6,
           "ci90": [
-           2,
+           3,
            8
           ]
          },
@@ -21633,25 +21630,25 @@
         },
         "graph_advantage": {
          "naive": {
-          "value": 11,
+          "value": 6,
           "ci90": [
-           5,
-           17
+           -1,
+           13
           ]
          },
          "hybrid": {
-          "value": 9,
+          "value": 3,
           "ci90": [
-           4,
-           15
+           -3,
+           9
           ]
          }
         },
         "original": {
          "naive": {
-          "value": 5,
+          "value": 4,
           "ci90": [
-           0,
+           -2,
            10
           ]
          },
@@ -21673,15 +21670,15 @@
         "graphrag": {
          "citation_accuracy": 96.2,
          "cross_chapter_join": {
-          "passed": 8,
+          "passed": 7,
           "total": 10
          },
          "relationship_path": {
-          "passed": 10,
+          "passed": 9,
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 7,
+          "passed": 5,
           "total": 10
          },
          "disambiguation": {
@@ -21689,11 +21686,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 34,
+          "passed": 30,
           "total": 40
          },
          "original": {
-          "passed": 72,
+          "passed": 69,
           "total": 80
          }
         },
@@ -21704,11 +21701,11 @@
           "total": 10
          },
          "relationship_path": {
-          "passed": 8,
+          "passed": 7,
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 4,
+          "passed": 3,
           "total": 10
          },
          "disambiguation": {
@@ -21716,7 +21713,7 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 27,
+          "passed": 25,
           "total": 40
          },
          "original": {
@@ -21735,7 +21732,7 @@
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 5,
+          "passed": 3,
           "total": 10
          },
          "disambiguation": {
@@ -21743,11 +21740,11 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 26,
+          "passed": 24,
           "total": 40
          },
          "original": {
-          "passed": 66,
+          "passed": 65,
           "total": 80
          }
         }
@@ -21755,25 +21752,25 @@
        "lift": {
         "cross_chapter_join": {
          "naive": {
+          "value": -1,
+          "ci90": [
+           -4,
+           2
+          ]
+         },
+         "hybrid": {
           "value": 0,
           "ci90": [
            -2,
            2
           ]
-         },
-         "hybrid": {
-          "value": 1,
-          "ci90": [
-           0,
-           3
-          ]
          }
         },
         "relationship_path": {
          "naive": {
-          "value": 3,
+          "value": 2,
           "ci90": [
-           1,
+           -1,
            5
           ]
          },
@@ -21794,10 +21791,10 @@
           ]
          },
          "hybrid": {
-          "value": 3,
+          "value": 2,
           "ci90": [
-           0,
-           6
+           -1,
+           5
           ]
          }
         },
@@ -21819,33 +21816,33 @@
         },
         "graph_advantage": {
          "naive": {
-          "value": 8,
+          "value": 6,
           "ci90": [
-           3,
-           13
+           0,
+           12
           ]
          },
          "hybrid": {
-          "value": 7,
+          "value": 5,
           "ci90": [
-           3,
-           12
+           1,
+           10
           ]
          }
         },
         "original": {
          "naive": {
-          "value": 6,
+          "value": 4,
           "ci90": [
-           1,
+           -3,
            11
           ]
          },
          "hybrid": {
-          "value": 7,
+          "value": 4,
           "ci90": [
-           2,
-           12
+           -2,
+           10
           ]
          }
         }
@@ -21859,15 +21856,15 @@
         "graphrag": {
          "citation_accuracy": 94.2,
          "cross_chapter_join": {
-          "passed": 7,
+          "passed": 6,
           "total": 10
          },
          "relationship_path": {
-          "passed": 7,
+          "passed": 6,
           "total": 10
          },
          "cast_aggregate": {
-          "passed": 7,
+          "passed": 5,
           "total": 10
          },
          "disambiguation": {
@@ -21875,45 +21872,18 @@
           "total": 10
          },
          "graph_advantage": {
-          "passed": 30,
+          "passed": 26,
           "total": 40
          },
          "original": {
-          "passed": 65,
+          "passed": 64,
           "total": 80
          }
         },
         "hybrid": {
          "citation_accuracy": 94.2,
          "cross_chapter_join": {
-          "passed": 5,
-          "total": 10
-         },
-         "relationship_path": {
-          "passed": 7,
-          "total": 10
-         },
-         "cast_aggregate": {
-          "passed": 5,
-          "total": 10
-         },
-         "disambiguation": {
-          "passed": 8,
-          "total": 10
-         },
-         "graph_advantage": {
-          "passed": 25,
-          "total": 40
-         },
-         "original": {
-          "passed": 65,
-          "total": 80
-         }
-        },
-        "naive": {
-         "citation_accuracy": 92.1,
-         "cross_chapter_join": {
-          "passed": 8,
+          "passed": 6,
           "total": 10
          },
          "relationship_path": {
@@ -21925,15 +21895,42 @@
           "total": 10
          },
          "disambiguation": {
+          "passed": 8,
+          "total": 10
+         },
+         "graph_advantage": {
+          "passed": 23,
+          "total": 40
+         },
+         "original": {
+          "passed": 63,
+          "total": 80
+         }
+        },
+        "naive": {
+         "citation_accuracy": 92.1,
+         "cross_chapter_join": {
+          "passed": 7,
+          "total": 10
+         },
+         "relationship_path": {
+          "passed": 3,
+          "total": 10
+         },
+         "cast_aggregate": {
+          "passed": 4,
+          "total": 10
+         },
+         "disambiguation": {
           "passed": 5,
           "total": 10
          },
          "graph_advantage": {
-          "passed": 22,
+          "passed": 19,
           "total": 40
          },
          "original": {
-          "passed": 58,
+          "passed": 56,
           "total": 80
          }
         }
@@ -21948,41 +21945,41 @@
           ]
          },
          "hybrid": {
-          "value": 2,
+          "value": 0,
           "ci90": [
            0,
-           4
+           0
           ]
          }
         },
         "relationship_path": {
          "naive": {
-          "value": 2,
+          "value": 3,
           "ci90": [
-           0,
-           4
+           1,
+           6
           ]
          },
          "hybrid": {
-          "value": 0,
+          "value": 1,
           "ci90": [
            -2,
-           2
+           4
           ]
          }
         },
         "cast_aggregate": {
          "naive": {
-          "value": 3,
+          "value": 1,
           "ci90": [
-           -1,
-           7
+           -3,
+           5
           ]
          },
          "hybrid": {
-          "value": 2,
+          "value": 1,
           "ci90": [
-           0,
+           -2,
            4
           ]
          }
@@ -22005,33 +22002,33 @@
         },
         "graph_advantage": {
          "naive": {
-          "value": 8,
+          "value": 7,
           "ci90": [
-           2,
-           14
+           1,
+           13
           ]
          },
          "hybrid": {
-          "value": 5,
+          "value": 3,
           "ci90": [
-           1,
-           9
+           -1,
+           7
           ]
          }
         },
         "original": {
          "naive": {
-          "value": 7,
+          "value": 8,
           "ci90": [
-           1,
-           14
+           0,
+           16
           ]
          },
          "hybrid": {
-          "value": 0,
+          "value": 1,
           "ci90": [
            -6,
-           6
+           8
           ]
          }
         }
@@ -22052,8 +22049,8 @@
        "ids": [
         "q090",
         "q099",
-        "q111",
-        "q117",
+        "q104",
+        "q116",
         "q128",
         "q129",
         "q130",
@@ -22066,59 +22063,59 @@
        "graph_advantage": {
         "naive": {
          "per_model": {
-          "ollama/deepseek-r1:14b": 17.5,
-          "ollama/gemma4:12b": 17.5,
-          "ollama/gemma4:26b": 25.0,
-          "ollama/gemma4:31b": 15.0,
-          "ollama/glm-4.7-flash": 22.5,
-          "ollama/glm4:9b": 25.0,
-          "ollama/gpt-oss:20b": 27.5,
-          "ollama/granite4.2:30b": 25.0,
-          "ollama/llama3.1:8b": 5.0,
-          "ollama/mistral-small3.2:24b": 20.0,
-          "ollama/muse-glimmer:30b": 15.0,
-          "ollama/nemotron-3.5-lightning:30b-a3b": 22.5,
-          "ollama/phi4:14b": 22.5,
+          "ollama/deepseek-r1:14b": 22.5,
+          "ollama/gemma4:12b": 20.0,
+          "ollama/gemma4:26b": 20.0,
+          "ollama/gemma4:31b": 17.5,
+          "ollama/glm-4.7-flash": 20.0,
+          "ollama/glm4:9b": 20.0,
+          "ollama/gpt-oss:20b": 22.5,
+          "ollama/granite4.2:30b": 22.5,
+          "ollama/llama3.1:8b": 15.0,
+          "ollama/mistral-small3.2:24b": 12.5,
+          "ollama/muse-glimmer:30b": 12.5,
+          "ollama/nemotron-3.5-lightning:30b-a3b": 12.5,
+          "ollama/phi4:14b": 15.0,
           "ollama/qwen2.5:14b-instruct": 27.5,
           "ollama/qwen3.5:27b": 22.5,
-          "ollama/qwen3.5:9b": 17.5,
-          "ollama/qwen3.6:27b": 17.5,
-          "ollama/qwen3.6:35b-a3b": 20.0,
-          "ollama/qwen3.8:27b": 17.5,
-          "ollama/qwen3:14b": 27.5,
-          "ollama/qwen3:30b-instruct": 20.0,
-          "ollama/qwen3:8b": 20.0
+          "ollama/qwen3.5:9b": 20.0,
+          "ollama/qwen3.6:27b": 22.5,
+          "ollama/qwen3.6:35b-a3b": 17.5,
+          "ollama/qwen3.8:27b": 15.0,
+          "ollama/qwen3:14b": 15.0,
+          "ollama/qwen3:30b-instruct": 15.0,
+          "ollama/qwen3:8b": 17.5
          },
-         "mean": 20.5,
+         "mean": 18.4,
          "models_improved": 22,
          "models": 22
         },
         "hybrid": {
          "per_model": {
-          "ollama/deepseek-r1:14b": 20.0,
+          "ollama/deepseek-r1:14b": 17.5,
           "ollama/gemma4:12b": 7.5,
-          "ollama/gemma4:26b": 10.0,
-          "ollama/gemma4:31b": 5.0,
+          "ollama/gemma4:26b": 2.5,
+          "ollama/gemma4:31b": 7.5,
           "ollama/glm-4.7-flash": 15.0,
-          "ollama/glm4:9b": 15.0,
-          "ollama/gpt-oss:20b": 12.5,
+          "ollama/glm4:9b": 7.5,
+          "ollama/gpt-oss:20b": 15.0,
           "ollama/granite4.2:30b": 12.5,
-          "ollama/llama3.1:8b": 0.0,
-          "ollama/mistral-small3.2:24b": 10.0,
-          "ollama/muse-glimmer:30b": 10.0,
+          "ollama/llama3.1:8b": 12.5,
+          "ollama/mistral-small3.2:24b": 2.5,
+          "ollama/muse-glimmer:30b": 12.5,
           "ollama/nemotron-3.5-lightning:30b-a3b": 17.5,
-          "ollama/phi4:14b": 10.0,
-          "ollama/qwen2.5:14b-instruct": 20.0,
+          "ollama/phi4:14b": 2.5,
+          "ollama/qwen2.5:14b-instruct": 17.5,
           "ollama/qwen3.5:27b": 17.5,
-          "ollama/qwen3.5:9b": 5.0,
-          "ollama/qwen3.6:27b": 10.0,
+          "ollama/qwen3.5:9b": 12.5,
+          "ollama/qwen3.6:27b": 20.0,
           "ollama/qwen3.6:35b-a3b": 12.5,
-          "ollama/qwen3.8:27b": 7.5,
-          "ollama/qwen3:14b": 22.5,
-          "ollama/qwen3:30b-instruct": 17.5,
-          "ollama/qwen3:8b": 12.5
+          "ollama/qwen3.8:27b": 0.0,
+          "ollama/qwen3:14b": 7.5,
+          "ollama/qwen3:30b-instruct": 12.5,
+          "ollama/qwen3:8b": 7.5
          },
-         "mean": 12.3,
+         "mean": 10.9,
          "models_improved": 21,
          "models": 22
         }
@@ -22127,380 +22124,350 @@
         "naive": {
          "per_model": {
           "ollama/deepseek-r1:14b": 6.3,
-          "ollama/gemma4:12b": 5.0,
-          "ollama/gemma4:26b": 10.0,
-          "ollama/gemma4:31b": 10.0,
+          "ollama/gemma4:12b": 3.8,
+          "ollama/gemma4:26b": 5.0,
+          "ollama/gemma4:31b": 8.8,
           "ollama/glm-4.7-flash": 10.0,
-          "ollama/glm4:9b": 3.7,
-          "ollama/gpt-oss:20b": 3.8,
-          "ollama/granite4.2:30b": 6.2,
-          "ollama/llama3.1:8b": 6.2,
+          "ollama/glm4:9b": 6.3,
+          "ollama/gpt-oss:20b": 7.4,
+          "ollama/granite4.2:30b": 5.0,
+          "ollama/llama3.1:8b": -1.3,
           "ollama/mistral-small3.2:24b": 6.3,
-          "ollama/muse-glimmer:30b": 7.4,
-          "ollama/nemotron-3.5-lightning:30b-a3b": 6.3,
-          "ollama/phi4:14b": 6.3,
-          "ollama/qwen2.5:14b-instruct": 5.0,
-          "ollama/qwen3.5:27b": 5.0,
-          "ollama/qwen3.5:9b": 3.8,
+          "ollama/muse-glimmer:30b": 8.7,
+          "ollama/nemotron-3.5-lightning:30b-a3b": 5.0,
+          "ollama/phi4:14b": 10.0,
+          "ollama/qwen2.5:14b-instruct": 1.3,
+          "ollama/qwen3.5:27b": 6.3,
+          "ollama/qwen3.5:9b": 2.6,
           "ollama/qwen3.6:27b": 5.0,
-          "ollama/qwen3.6:35b-a3b": 8.8,
-          "ollama/qwen3.8:27b": 7.6,
-          "ollama/qwen3:14b": 6.3,
-          "ollama/qwen3:30b-instruct": 7.5,
-          "ollama/qwen3:8b": 8.7
+          "ollama/qwen3.6:35b-a3b": 5.0,
+          "ollama/qwen3.8:27b": 11.3,
+          "ollama/qwen3:14b": 5.0,
+          "ollama/qwen3:30b-instruct": 5.0,
+          "ollama/qwen3:8b": 10.0
          },
-         "mean": 6.6,
-         "models_improved": 22,
+         "mean": 6.0,
+         "models_improved": 21,
          "models": 22
         },
         "hybrid": {
          "per_model": {
-          "ollama/deepseek-r1:14b": -5.0,
+          "ollama/deepseek-r1:14b": -1.3,
           "ollama/gemma4:12b": 1.2,
-          "ollama/gemma4:26b": 7.5,
-          "ollama/gemma4:31b": 6.2,
-          "ollama/glm-4.7-flash": 1.2,
-          "ollama/glm4:9b": 1.2,
+          "ollama/gemma4:26b": 5.0,
+          "ollama/gemma4:31b": 7.5,
+          "ollama/glm-4.7-flash": 5.0,
+          "ollama/glm4:9b": 2.5,
           "ollama/gpt-oss:20b": 1.2,
-          "ollama/granite4.2:30b": 2.5,
-          "ollama/llama3.1:8b": 5.0,
+          "ollama/granite4.2:30b": 1.2,
+          "ollama/llama3.1:8b": 2.5,
           "ollama/mistral-small3.2:24b": 1.3,
-          "ollama/muse-glimmer:30b": 2.4,
-          "ollama/nemotron-3.5-lightning:30b-a3b": 2.5,
-          "ollama/phi4:14b": 2.5,
-          "ollama/qwen2.5:14b-instruct": 3.7,
-          "ollama/qwen3.5:27b": 1.2,
-          "ollama/qwen3.5:9b": -2.4,
-          "ollama/qwen3.6:27b": 3.7,
-          "ollama/qwen3.6:35b-a3b": 7.6,
-          "ollama/qwen3.8:27b": 7.6,
+          "ollama/muse-glimmer:30b": 2.5,
+          "ollama/nemotron-3.5-lightning:30b-a3b": 5.0,
+          "ollama/phi4:14b": 6.3,
+          "ollama/qwen2.5:14b-instruct": 2.6,
+          "ollama/qwen3.5:27b": 3.7,
+          "ollama/qwen3.5:9b": -3.7,
+          "ollama/qwen3.6:27b": 2.4,
+          "ollama/qwen3.6:35b-a3b": 5.0,
+          "ollama/qwen3.8:27b": 8.8,
           "ollama/qwen3:14b": 5.0,
-          "ollama/qwen3:30b-instruct": 8.8,
-          "ollama/qwen3:8b": 0.0
+          "ollama/qwen3:30b-instruct": 5.0,
+          "ollama/qwen3:8b": 1.2
          },
-         "mean": 3.0,
-         "models_improved": 19,
+         "mean": 3.2,
+         "models_improved": 20,
          "models": 22
         }
        },
        "differential": {
-        "naive": 13.9,
-        "hybrid": 9.3
+        "naive": 12.4,
+        "hybrid": 7.7
        }
       },
       "errors_removed": {
        "graph_advantage": {
         "naive": {
          "per_model": {
-          "ollama/deepseek-r1:14b": 41.2,
-          "ollama/gemma4:12b": 41.2,
-          "ollama/gemma4:26b": 55.6,
-          "ollama/gemma4:31b": 42.9,
-          "ollama/glm-4.7-flash": 56.2,
-          "ollama/glm4:9b": 38.5,
-          "ollama/gpt-oss:20b": 45.8,
-          "ollama/granite4.2:30b": 52.6,
-          "ollama/llama3.1:8b": 11.8,
-          "ollama/mistral-small3.2:24b": 50.0,
-          "ollama/muse-glimmer:30b": 42.9,
-          "ollama/nemotron-3.5-lightning:30b-a3b": 50.0,
-          "ollama/phi4:14b": 50.0,
-          "ollama/qwen2.5:14b-instruct": 57.9,
-          "ollama/qwen3.5:27b": 69.2,
-          "ollama/qwen3.5:9b": 38.9,
-          "ollama/qwen3.6:27b": 50.0,
-          "ollama/qwen3.6:35b-a3b": 53.3,
-          "ollama/qwen3.8:27b": 46.7,
-          "ollama/qwen3:14b": 57.9,
-          "ollama/qwen3:30b-instruct": 57.1,
-          "ollama/qwen3:8b": 44.4
+          "ollama/deepseek-r1:14b": 50.0,
+          "ollama/gemma4:12b": 40.0,
+          "ollama/gemma4:26b": 40.0,
+          "ollama/gemma4:31b": 46.7,
+          "ollama/glm-4.7-flash": 50.0,
+          "ollama/glm4:9b": 28.6,
+          "ollama/gpt-oss:20b": 37.5,
+          "ollama/granite4.2:30b": 47.4,
+          "ollama/llama3.1:8b": 30.0,
+          "ollama/mistral-small3.2:24b": 31.2,
+          "ollama/muse-glimmer:30b": 38.5,
+          "ollama/nemotron-3.5-lightning:30b-a3b": 27.8,
+          "ollama/phi4:14b": 30.0,
+          "ollama/qwen2.5:14b-instruct": 55.0,
+          "ollama/qwen3.5:27b": 64.3,
+          "ollama/qwen3.5:9b": 40.0,
+          "ollama/qwen3.6:27b": 60.0,
+          "ollama/qwen3.6:35b-a3b": 46.7,
+          "ollama/qwen3.8:27b": 40.0,
+          "ollama/qwen3:14b": 28.6,
+          "ollama/qwen3:30b-instruct": 37.5,
+          "ollama/qwen3:8b": 33.3
          },
-         "median_pct": 50.0,
-         "models_above_bar": 21,
+         "median_pct": 40.0,
+         "models_above_bar": 22,
          "bar_pct": 25.0,
-         "fail_pct_baseline": 43.1,
-         "fail_pct_graphrag": 22.6
+         "fail_pct_baseline": 45.9,
+         "fail_pct_graphrag": 27.5
         },
         "hybrid": {
          "per_model": {
-          "ollama/deepseek-r1:14b": 44.4,
-          "ollama/gemma4:12b": 23.1,
-          "ollama/gemma4:26b": 33.3,
-          "ollama/gemma4:31b": 20.0,
-          "ollama/glm-4.7-flash": 46.2,
-          "ollama/glm4:9b": 27.3,
-          "ollama/gpt-oss:20b": 27.8,
-          "ollama/granite4.2:30b": 35.7,
-          "ollama/llama3.1:8b": 0.0,
-          "ollama/mistral-small3.2:24b": 33.3,
-          "ollama/muse-glimmer:30b": 33.3,
-          "ollama/nemotron-3.5-lightning:30b-a3b": 43.8,
-          "ollama/phi4:14b": 30.8,
-          "ollama/qwen2.5:14b-instruct": 50.0,
-          "ollama/qwen3.5:27b": 63.6,
-          "ollama/qwen3.5:9b": 15.4,
-          "ollama/qwen3.6:27b": 36.4,
-          "ollama/qwen3.6:35b-a3b": 41.7,
-          "ollama/qwen3.8:27b": 27.3,
-          "ollama/qwen3:14b": 52.9,
-          "ollama/qwen3:30b-instruct": 53.8,
-          "ollama/qwen3:8b": 33.3
+          "ollama/deepseek-r1:14b": 43.8,
+          "ollama/gemma4:12b": 20.0,
+          "ollama/gemma4:26b": 7.7,
+          "ollama/gemma4:31b": 27.3,
+          "ollama/glm-4.7-flash": 42.9,
+          "ollama/glm4:9b": 13.0,
+          "ollama/gpt-oss:20b": 28.6,
+          "ollama/granite4.2:30b": 33.3,
+          "ollama/llama3.1:8b": 26.3,
+          "ollama/mistral-small3.2:24b": 8.3,
+          "ollama/muse-glimmer:30b": 38.5,
+          "ollama/nemotron-3.5-lightning:30b-a3b": 35.0,
+          "ollama/phi4:14b": 6.7,
+          "ollama/qwen2.5:14b-instruct": 43.8,
+          "ollama/qwen3.5:27b": 58.3,
+          "ollama/qwen3.5:9b": 29.4,
+          "ollama/qwen3.6:27b": 57.1,
+          "ollama/qwen3.6:35b-a3b": 38.5,
+          "ollama/qwen3.8:27b": 0.0,
+          "ollama/qwen3:14b": 16.7,
+          "ollama/qwen3:30b-instruct": 33.3,
+          "ollama/qwen3:8b": 17.6
          },
-         "median_pct": 33.3,
-         "models_above_bar": 18,
+         "median_pct": 29.0,
+         "models_above_bar": 14,
          "bar_pct": 25.0,
-         "fail_pct_baseline": 34.9,
-         "fail_pct_graphrag": 22.6
+         "fail_pct_baseline": 38.4,
+         "fail_pct_graphrag": 27.5
         }
        },
        "original": {
         "naive": {
          "per_model": {
           "ollama/deepseek-r1:14b": 26.3,
-          "ollama/gemma4:12b": 26.7,
-          "ollama/gemma4:26b": 57.1,
-          "ollama/gemma4:31b": 66.7,
-          "ollama/glm-4.7-flash": 42.1,
-          "ollama/glm4:9b": 16.7,
-          "ollama/gpt-oss:20b": 15.8,
-          "ollama/granite4.2:30b": 29.4,
-          "ollama/llama3.1:8b": 31.2,
+          "ollama/gemma4:12b": 20.0,
+          "ollama/gemma4:26b": 28.6,
+          "ollama/gemma4:31b": 63.6,
+          "ollama/glm-4.7-flash": 44.4,
+          "ollama/glm4:9b": 26.3,
+          "ollama/gpt-oss:20b": 28.6,
+          "ollama/granite4.2:30b": 25.0,
+          "ollama/llama3.1:8b": -5.9,
           "ollama/mistral-small3.2:24b": 35.7,
-          "ollama/muse-glimmer:30b": 46.2,
-          "ollama/nemotron-3.5-lightning:30b-a3b": 26.3,
-          "ollama/phi4:14b": 33.3,
-          "ollama/qwen2.5:14b-instruct": 28.6,
-          "ollama/qwen3.5:27b": 33.3,
-          "ollama/qwen3.5:9b": 18.8,
+          "ollama/muse-glimmer:30b": 53.8,
+          "ollama/nemotron-3.5-lightning:30b-a3b": 22.2,
+          "ollama/phi4:14b": 44.4,
+          "ollama/qwen2.5:14b-instruct": 7.1,
+          "ollama/qwen3.5:27b": 45.5,
+          "ollama/qwen3.5:9b": 13.3,
           "ollama/qwen3.6:27b": 36.4,
-          "ollama/qwen3.6:35b-a3b": 58.3,
-          "ollama/qwen3.8:27b": 54.5,
-          "ollama/qwen3:14b": 33.3,
-          "ollama/qwen3:30b-instruct": 42.9,
-          "ollama/qwen3:8b": 31.8
+          "ollama/qwen3.6:35b-a3b": 36.4,
+          "ollama/qwen3.8:27b": 64.3,
+          "ollama/qwen3:14b": 26.7,
+          "ollama/qwen3:30b-instruct": 26.7,
+          "ollama/qwen3:8b": 33.3
          },
-         "median_pct": 33.3,
-         "models_above_bar": 19,
+         "median_pct": 28.6,
+         "models_above_bar": 17,
          "bar_pct": 25.0,
-         "fail_pct_baseline": 19.1,
-         "fail_pct_graphrag": 12.6
+         "fail_pct_baseline": 19.5,
+         "fail_pct_graphrag": 13.5
         },
         "hybrid": {
          "per_model": {
-          "ollama/deepseek-r1:14b": -40.0,
-          "ollama/gemma4:12b": 8.3,
-          "ollama/gemma4:26b": 50.0,
-          "ollama/gemma4:31b": 55.6,
-          "ollama/glm-4.7-flash": 8.3,
-          "ollama/glm4:9b": 6.2,
-          "ollama/gpt-oss:20b": 5.9,
-          "ollama/granite4.2:30b": 14.3,
-          "ollama/llama3.1:8b": 26.7,
+          "ollama/deepseek-r1:14b": -7.7,
+          "ollama/gemma4:12b": 7.7,
+          "ollama/gemma4:26b": 28.6,
+          "ollama/gemma4:31b": 60.0,
+          "ollama/glm-4.7-flash": 28.6,
+          "ollama/glm4:9b": 12.5,
+          "ollama/gpt-oss:20b": 6.2,
+          "ollama/granite4.2:30b": 7.7,
+          "ollama/llama3.1:8b": 10.0,
           "ollama/mistral-small3.2:24b": 10.0,
-          "ollama/muse-glimmer:30b": 22.2,
-          "ollama/nemotron-3.5-lightning:30b-a3b": 12.5,
-          "ollama/phi4:14b": 16.7,
-          "ollama/qwen2.5:14b-instruct": 23.1,
-          "ollama/qwen3.5:27b": 11.1,
-          "ollama/qwen3.5:9b": -18.2,
-          "ollama/qwen3.6:27b": 30.0,
-          "ollama/qwen3.6:35b-a3b": 54.5,
-          "ollama/qwen3.8:27b": 54.5,
-          "ollama/qwen3:14b": 28.6,
-          "ollama/qwen3:30b-instruct": 46.7,
-          "ollama/qwen3:8b": 0.0
+          "ollama/muse-glimmer:30b": 25.0,
+          "ollama/nemotron-3.5-lightning:30b-a3b": 22.2,
+          "ollama/phi4:14b": 33.3,
+          "ollama/qwen2.5:14b-instruct": 13.3,
+          "ollama/qwen3.5:27b": 33.3,
+          "ollama/qwen3.5:9b": -30.0,
+          "ollama/qwen3.6:27b": 22.2,
+          "ollama/qwen3.6:35b-a3b": 36.4,
+          "ollama/qwen3.8:27b": 58.3,
+          "ollama/qwen3:14b": 26.7,
+          "ollama/qwen3:30b-instruct": 26.7,
+          "ollama/qwen3:8b": 5.9
          },
-         "median_pct": 15.5,
-         "models_above_bar": 8,
+         "median_pct": 22.2,
+         "models_above_bar": 10,
          "bar_pct": 25.0,
-         "fail_pct_baseline": 15.5,
-         "fail_pct_graphrag": 12.6
+         "fail_pct_baseline": 16.6,
+         "fail_pct_graphrag": 13.5
         }
        },
        "all": {
         "naive": {
          "per_model": {
-          "ollama/deepseek-r1:14b": 33.3,
-          "ollama/gemma4:12b": 34.4,
-          "ollama/gemma4:26b": 56.2,
+          "ollama/deepseek-r1:14b": 37.8,
+          "ollama/gemma4:12b": 31.4,
+          "ollama/gemma4:26b": 35.3,
           "ollama/gemma4:31b": 53.8,
-          "ollama/glm-4.7-flash": 48.6,
-          "ollama/glm4:9b": 29.5,
-          "ollama/gpt-oss:20b": 32.6,
-          "ollama/granite4.2:30b": 41.7,
-          "ollama/llama3.1:8b": 21.2,
-          "ollama/mistral-small3.2:24b": 43.3,
-          "ollama/muse-glimmer:30b": 44.4,
-          "ollama/nemotron-3.5-lightning:30b-a3b": 37.8,
-          "ollama/phi4:14b": 42.4,
-          "ollama/qwen2.5:14b-instruct": 45.5,
-          "ollama/qwen3.5:27b": 52.0,
-          "ollama/qwen3.5:9b": 29.4,
-          "ollama/qwen3.6:27b": 44.0,
-          "ollama/qwen3.6:35b-a3b": 55.6,
-          "ollama/qwen3.8:27b": 50.0,
-          "ollama/qwen3:14b": 47.1,
-          "ollama/qwen3:30b-instruct": 50.0,
-          "ollama/qwen3:8b": 37.5
+          "ollama/glm-4.7-flash": 47.1,
+          "ollama/glm4:9b": 27.7,
+          "ollama/gpt-oss:20b": 33.3,
+          "ollama/granite4.2:30b": 37.1,
+          "ollama/llama3.1:8b": 13.5,
+          "ollama/mistral-small3.2:24b": 33.3,
+          "ollama/muse-glimmer:30b": 46.2,
+          "ollama/nemotron-3.5-lightning:30b-a3b": 25.0,
+          "ollama/phi4:14b": 36.8,
+          "ollama/qwen2.5:14b-instruct": 35.3,
+          "ollama/qwen3.5:27b": 56.0,
+          "ollama/qwen3.5:9b": 28.6,
+          "ollama/qwen3.6:27b": 50.0,
+          "ollama/qwen3.6:35b-a3b": 42.3,
+          "ollama/qwen3.8:27b": 51.7,
+          "ollama/qwen3:14b": 27.8,
+          "ollama/qwen3:30b-instruct": 32.3,
+          "ollama/qwen3:8b": 33.3
          },
-         "median_pct": 43.6,
+         "median_pct": 35.3,
          "models_above_bar": 21,
          "bar_pct": 25.0,
-         "fail_pct_baseline": 27.1,
-         "fail_pct_graphrag": 15.9
+         "fail_pct_baseline": 28.3,
+         "fail_pct_graphrag": 18.1
         },
         "hybrid": {
          "per_model": {
-          "ollama/deepseek-r1:14b": 14.3,
-          "ollama/gemma4:12b": 16.0,
-          "ollama/gemma4:26b": 41.7,
-          "ollama/gemma4:31b": 36.8,
-          "ollama/glm-4.7-flash": 28.0,
-          "ollama/glm4:9b": 18.4,
-          "ollama/gpt-oss:20b": 17.1,
-          "ollama/granite4.2:30b": 25.0,
-          "ollama/llama3.1:8b": 13.3,
-          "ollama/mistral-small3.2:24b": 22.7,
-          "ollama/muse-glimmer:30b": 28.6,
-          "ollama/nemotron-3.5-lightning:30b-a3b": 28.1,
-          "ollama/phi4:14b": 24.0,
-          "ollama/qwen2.5:14b-instruct": 37.9,
-          "ollama/qwen3.5:27b": 40.0,
-          "ollama/qwen3.5:9b": 0.0,
-          "ollama/qwen3.6:27b": 33.3,
-          "ollama/qwen3.6:35b-a3b": 47.8,
-          "ollama/qwen3.8:27b": 40.9,
-          "ollama/qwen3:14b": 41.9,
-          "ollama/qwen3:30b-instruct": 50.0,
-          "ollama/qwen3:8b": 16.7
+          "ollama/deepseek-r1:14b": 20.7,
+          "ollama/gemma4:12b": 14.3,
+          "ollama/gemma4:26b": 18.5,
+          "ollama/gemma4:31b": 42.9,
+          "ollama/glm-4.7-flash": 35.7,
+          "ollama/glm4:9b": 12.8,
+          "ollama/gpt-oss:20b": 18.9,
+          "ollama/granite4.2:30b": 21.4,
+          "ollama/llama3.1:8b": 17.9,
+          "ollama/mistral-small3.2:24b": 9.1,
+          "ollama/muse-glimmer:30b": 33.3,
+          "ollama/nemotron-3.5-lightning:30b-a3b": 28.9,
+          "ollama/phi4:14b": 20.0,
+          "ollama/qwen2.5:14b-instruct": 29.0,
+          "ollama/qwen3.5:27b": 47.6,
+          "ollama/qwen3.5:9b": 7.4,
+          "ollama/qwen3.6:27b": 43.5,
+          "ollama/qwen3.6:35b-a3b": 37.5,
+          "ollama/qwen3.8:27b": 33.3,
+          "ollama/qwen3:14b": 21.2,
+          "ollama/qwen3:30b-instruct": 30.0,
+          "ollama/qwen3:8b": 11.8
          },
-         "median_pct": 28.1,
-         "models_above_bar": 13,
+         "median_pct": 21.3,
+         "models_above_bar": 10,
          "bar_pct": 25.0,
-         "fail_pct_baseline": 22.0,
-         "fail_pct_graphrag": 15.9
+         "fail_pct_baseline": 23.9,
+         "fail_pct_graphrag": 18.1
         }
        }
       },
       "size_substitution": {
        "pairs": [
         {
-         "small": "ollama/llama3.1:8b",
-         "small_label": "Llama 3.1 8B",
-         "small_vram_gb": 4.9,
-         "big": "ollama/qwen3.6:27b",
-         "big_label": "Qwen3.6 27B",
-         "big_vram_gb": 18.0,
-         "ratio": 3.7,
-         "small_graphrag_pct": 86.2,
-         "small_naive_pct": 80.0,
-         "big_naive_pct": 86.2,
-         "big_hybrid_pct": 87.5,
-         "beats_hybrid_too": false,
-         "models_matching": 15
-        },
-        {
-         "small": "ollama/gemma4:12b",
-         "small_label": "Gemma 4 12B",
-         "small_vram_gb": 7.6,
-         "big": "ollama/qwen3.6:27b",
-         "big_label": "Qwen3.6 27B",
-         "big_vram_gb": 18.0,
-         "ratio": 2.4,
-         "small_graphrag_pct": 86.2,
-         "small_naive_pct": 81.2,
-         "big_naive_pct": 86.2,
-         "big_hybrid_pct": 87.5,
-         "beats_hybrid_too": false,
-         "models_matching": 15
-        },
-        {
          "small": "ollama/phi4:14b",
          "small_label": "Phi-4 14B",
          "small_vram_gb": 9.1,
-         "big": "ollama/qwen3.6:27b",
-         "big_label": "Qwen3.6 27B",
-         "big_vram_gb": 18.0,
-         "ratio": 2.0,
+         "big": "ollama/qwen3.6:35b-a3b",
+         "big_label": "Qwen3.6 35B-A3B MoE",
+         "big_vram_gb": 23.0,
+         "ratio": 2.5,
          "small_graphrag_pct": 87.5,
-         "small_naive_pct": 81.2,
+         "small_naive_pct": 77.5,
          "big_naive_pct": 86.2,
-         "big_hybrid_pct": 87.5,
+         "big_hybrid_pct": 86.2,
          "beats_hybrid_too": true,
-         "models_matching": 15
-        },
-        {
-         "small": "ollama/qwen2.5:14b-instruct",
-         "small_label": "Qwen2.5 14B Instruct",
-         "small_vram_gb": 9.0,
-         "big": "ollama/qwen3.6:27b",
-         "big_label": "Qwen3.6 27B",
-         "big_vram_gb": 18.0,
-         "ratio": 2.0,
-         "small_graphrag_pct": 87.5,
-         "small_naive_pct": 82.5,
-         "big_naive_pct": 86.2,
-         "big_hybrid_pct": 87.5,
-         "beats_hybrid_too": true,
-         "models_matching": 15
+         "models_matching": 12
         },
         {
          "small": "ollama/qwen3:14b",
          "small_label": "Qwen3 14B",
          "small_vram_gb": 9.3,
-         "big": "ollama/qwen3.6:27b",
-         "big_label": "Qwen3.6 27B",
-         "big_vram_gb": 18.0,
-         "ratio": 1.9,
-         "small_graphrag_pct": 87.5,
+         "big": "ollama/qwen3.6:35b-a3b",
+         "big_label": "Qwen3.6 35B-A3B MoE",
+         "big_vram_gb": 23.0,
+         "ratio": 2.5,
+         "small_graphrag_pct": 86.2,
          "small_naive_pct": 81.2,
          "big_naive_pct": 86.2,
-         "big_hybrid_pct": 87.5,
+         "big_hybrid_pct": 86.2,
          "beats_hybrid_too": true,
-         "models_matching": 15
+         "models_matching": 12
+        },
+        {
+         "small": "ollama/mistral-small3.2:24b",
+         "small_label": "Mistral Small 3.2 24B",
+         "small_vram_gb": 15.0,
+         "big": "ollama/qwen3.6:35b-a3b",
+         "big_label": "Qwen3.6 35B-A3B MoE",
+         "big_vram_gb": 23.0,
+         "ratio": 1.5,
+         "small_graphrag_pct": 88.8,
+         "small_naive_pct": 82.5,
+         "big_naive_pct": 86.2,
+         "big_hybrid_pct": 86.2,
+         "beats_hybrid_too": true,
+         "models_matching": 12
         }
        ],
        "best": {
-        "small": "ollama/llama3.1:8b",
-        "small_label": "Llama 3.1 8B",
-        "small_vram_gb": 4.9,
-        "big": "ollama/qwen3.6:27b",
-        "big_label": "Qwen3.6 27B",
-        "big_vram_gb": 18.0,
-        "ratio": 3.7,
-        "small_graphrag_pct": 86.2,
-        "small_naive_pct": 80.0,
+        "small": "ollama/phi4:14b",
+        "small_label": "Phi-4 14B",
+        "small_vram_gb": 9.1,
+        "big": "ollama/qwen3.6:35b-a3b",
+        "big_label": "Qwen3.6 35B-A3B MoE",
+        "big_vram_gb": 23.0,
+        "ratio": 2.5,
+        "small_graphrag_pct": 87.5,
+        "small_naive_pct": 77.5,
         "big_naive_pct": 86.2,
-        "big_hybrid_pct": 87.5,
-        "beats_hybrid_too": false,
-        "models_matching": 15
+        "big_hybrid_pct": 86.2,
+        "beats_hybrid_too": true,
+        "models_matching": 12
        }
       },
       "headlines": [
        {
         "key": "failures_ordinary",
         "holds": true,
-        "text": "33% fewer failed answers than plain vector RAG on ordinary questions (fewer on 22 of 22 models; failed answers 19% \u2192 13%)",
+        "text": "29% fewer failed answers than plain vector RAG on ordinary questions (fewer on 21 of 22 models; failed answers 20% \u2192 14%)",
         "values": {
-         "median_pct": 33.3,
+         "median_pct": 28.6,
          "models": 22,
-         "models_above_bar": 19,
-         "models_fewer": 22,
+         "models_above_bar": 17,
+         "models_fewer": 21,
          "majority": 12,
          "questions": 80,
-         "fail_pct_baseline": 19.1,
-         "fail_pct_graphrag": 12.6
+         "fail_pct_baseline": 19.5,
+         "fail_pct_graphrag": 13.5
         }
        },
        {
         "key": "errors_removed",
         "holds": true,
-        "text": "50% fewer failed answers on graph-shaped questions than plain RAG (median over 22 models; 18 of 22 remove at least 25% against plain RAG and against hybrid search)",
+        "text": "40% fewer failed answers on graph-shaped questions than plain RAG (median over 22 models; 14 of 22 remove at least 25% against plain RAG and against hybrid search)",
         "values": {
-         "median_pct": 50.0,
+         "median_pct": 40.0,
          "models": 22,
-         "models_above_bar_naive": 21,
-         "models_above_bar_hybrid": 18,
+         "models_above_bar_naive": 22,
+         "models_above_bar_hybrid": 14,
          "majority": 12
         }
        },
@@ -22516,21 +22483,21 @@
        {
         "key": "size_substitution",
         "holds": true,
-        "text": "Llama 3.1 8B with the graph answers as well as Qwen3.6 27B, the best model on plain vector RAG (86% vs 86% on ordinary questions); 15 of 22 models match it with the graph",
+        "text": "Phi-4 14B with the graph answers better than Qwen3.6 35B-A3B MoE, the best model on plain vector RAG (88% vs 86% on ordinary questions); 12 of 22 models match it with the graph",
         "values": {
-         "small": "ollama/llama3.1:8b",
-         "small_label": "Llama 3.1 8B",
-         "small_vram_gb": 4.9,
-         "big": "ollama/qwen3.6:27b",
-         "big_label": "Qwen3.6 27B",
-         "big_vram_gb": 18.0,
-         "ratio": 3.7,
-         "small_graphrag_pct": 86.2,
-         "small_naive_pct": 80.0,
+         "small": "ollama/phi4:14b",
+         "small_label": "Phi-4 14B",
+         "small_vram_gb": 9.1,
+         "big": "ollama/qwen3.6:35b-a3b",
+         "big_label": "Qwen3.6 35B-A3B MoE",
+         "big_vram_gb": 23.0,
+         "ratio": 2.5,
+         "small_graphrag_pct": 87.5,
+         "small_naive_pct": 77.5,
          "big_naive_pct": 86.2,
-         "big_hybrid_pct": 87.5,
-         "beats_hybrid_too": false,
-         "models_matching": 15
+         "big_hybrid_pct": 86.2,
+         "beats_hybrid_too": true,
+         "models_matching": 12
         }
        }
       ]
@@ -23826,9 +23793,9 @@
     }
    },
    "chat": {
-    "passed": 65,
-    "total": 77,
-    "pct": 84.4,
+    "passed": 66,
+    "total": 79,
+    "pct": 83.5,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
@@ -23855,7 +23822,7 @@
      "q019": 1.0,
      "q020": 1.0,
      "q021": 0.0,
-     "q022": 0.0,
+     "q022": 1.0,
      "q023": 0.0,
      "q024": 1.0,
      "q025": 1.0,
@@ -23863,19 +23830,21 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
-     "q034": 1.0,
+     "q034": 0.0,
      "q035": 1.0,
      "q036": 1.0,
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 0.0,
      "q043": 1.0,
      "q044": 1.0,
-     "q045": 0.0,
+     "q045": 1.0,
      "q046": 1.0,
      "q047": 1.0,
      "q048": 1.0,
@@ -23891,7 +23860,7 @@
      "q058": 1.0,
      "q059": 1.0,
      "q060": 1.0,
-     "q061": 1.0,
+     "q061": 0.0,
      "q062": 1.0,
      "q063": 1.0,
      "q064": 1.0,
@@ -23935,19 +23904,19 @@
    ],
    "scores": {
     "extraction": 55.2,
-    "chat": 84.4,
-    "overall": 66.9,
+    "chat": 83.5,
+    "overall": 66.5,
     "extraction_ci90": [
      46.0,
      64.4
     ],
     "chat_ci90": [
-     77.9,
-     90.9
+     77.2,
+     89.9
     ],
     "overall_ci90": [
-     60.8,
-     72.9
+     60.4,
+     72.6
     ]
    }
   },
@@ -24104,12 +24073,12 @@
    },
    "chat": {
     "passed": 68,
-    "total": 77,
-    "pct": 88.3,
+    "total": 79,
+    "pct": 86.1,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 93.2,
+    "citation_accuracy": 93.4,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -24140,6 +24109,7 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 0.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -24149,6 +24119,7 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 0.0,
      "q043": 1.0,
      "q044": 1.0,
@@ -24170,7 +24141,7 @@
      "q060": 1.0,
      "q061": 1.0,
      "q062": 1.0,
-     "q063": 1.0,
+     "q063": 0.0,
      "q064": 0.0,
      "q065": 1.0,
      "q066": 1.0,
@@ -24209,19 +24180,19 @@
    ],
    "scores": {
     "extraction": 71.6,
-    "chat": 88.3,
-    "overall": 78.3,
+    "chat": 86.1,
+    "overall": 77.4,
     "extraction_ci90": [
      62.7,
      80.0
     ],
     "chat_ci90": [
-     81.8,
-     93.5
+     78.5,
+     92.4
     ],
     "overall_ci90": [
-     72.2,
-     84.1
+     71.3,
+     83.1
     ]
    }
   },
@@ -24377,13 +24348,13 @@
     }
    },
    "chat": {
-    "passed": 73,
-    "total": 77,
-    "pct": 94.8,
+    "passed": 70,
+    "total": 79,
+    "pct": 88.6,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 93.5,
+    "citation_accuracy": 93.7,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -24414,6 +24385,7 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -24423,13 +24395,14 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 1.0,
      "q043": 1.0,
      "q044": 1.0,
      "q045": 1.0,
      "q046": 1.0,
      "q047": 1.0,
-     "q048": 1.0,
+     "q048": 0.0,
      "q049": 1.0,
      "q050": 1.0,
      "q051": 1.0,
@@ -24442,8 +24415,8 @@
      "q058": 1.0,
      "q059": 1.0,
      "q060": 1.0,
-     "q061": 1.0,
-     "q062": 1.0,
+     "q061": 0.0,
+     "q062": 0.0,
      "q063": 1.0,
      "q064": 0.0,
      "q065": 1.0,
@@ -24456,7 +24429,7 @@
      "q072": 1.0,
      "q073": 1.0,
      "q074": 1.0,
-     "q075": 1.0,
+     "q075": 0.0,
      "q076": 1.0,
      "q077": 1.0,
      "q078": 1.0,
@@ -24483,19 +24456,19 @@
    ],
    "scores": {
     "extraction": 70.3,
-    "chat": 94.8,
-    "overall": 80.1,
+    "chat": 88.6,
+    "overall": 77.6,
     "extraction_ci90": [
      61.0,
      79.0
     ],
     "chat_ci90": [
-     90.9,
-     98.7
+     82.3,
+     93.7
     ],
     "overall_ci90": [
-     74.2,
-     85.4
+     71.6,
+     83.0
     ]
    }
   },
@@ -24651,13 +24624,13 @@
     }
    },
    "chat": {
-    "passed": 75,
-    "total": 77,
-    "pct": 97.4,
+    "passed": 76,
+    "total": 79,
+    "pct": 96.2,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 95.0,
+    "citation_accuracy": 95.2,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -24680,7 +24653,7 @@
      "q019": 1.0,
      "q020": 1.0,
      "q021": 1.0,
-     "q022": 0.0,
+     "q022": 1.0,
      "q023": 0.0,
      "q024": 1.0,
      "q025": 1.0,
@@ -24688,6 +24661,7 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -24697,13 +24671,14 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 1.0,
      "q043": 1.0,
      "q044": 1.0,
      "q045": 1.0,
      "q046": 1.0,
      "q047": 1.0,
-     "q048": 1.0,
+     "q048": 0.0,
      "q049": 1.0,
      "q050": 1.0,
      "q051": 1.0,
@@ -24754,19 +24729,19 @@
    "notes": [],
    "scores": {
     "extraction": 81.5,
-    "chat": 97.4,
-    "overall": 87.9,
+    "chat": 96.2,
+    "overall": 87.4,
     "extraction_ci90": [
      73.5,
      89.1
     ],
     "chat_ci90": [
-     94.8,
-     100.0
+     92.4,
+     98.7
     ],
     "overall_ci90": [
-     82.9,
-     92.5
+     82.2,
+     92.1
     ]
    }
   },
@@ -24922,13 +24897,13 @@
     }
    },
    "chat": {
-    "passed": 68,
-    "total": 77,
-    "pct": 88.3,
+    "passed": 70,
+    "total": 79,
+    "pct": 88.6,
     "runs": 1,
     "timed_out": false,
-    "unsupported_names": 0,
-    "citation_accuracy": 94.9,
+    "unsupported_names": 1,
+    "citation_accuracy": 95.1,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -24951,7 +24926,7 @@
      "q019": 1.0,
      "q020": 1.0,
      "q021": 1.0,
-     "q022": 0.0,
+     "q022": 1.0,
      "q023": 0.0,
      "q024": 1.0,
      "q025": 1.0,
@@ -24959,6 +24934,7 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -24968,13 +24944,14 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 1.0,
      "q043": 1.0,
      "q044": 1.0,
-     "q045": 0.0,
+     "q045": 1.0,
      "q046": 1.0,
      "q047": 1.0,
-     "q048": 1.0,
+     "q048": 0.0,
      "q049": 1.0,
      "q050": 1.0,
      "q051": 1.0,
@@ -25031,19 +25008,19 @@
    ],
    "scores": {
     "extraction": 19.0,
-    "chat": 88.3,
-    "overall": 46.7,
+    "chat": 88.6,
+    "overall": 46.8,
     "extraction_ci90": [
      15.9,
      22.1
     ],
     "chat_ci90": [
-     81.8,
-     93.5
+     82.3,
+     93.7
     ],
     "overall_ci90": [
-     43.5,
-     49.7
+     43.6,
+     49.9
     ]
    }
   },
@@ -25199,13 +25176,13 @@
     }
    },
    "chat": {
-    "passed": 64,
-    "total": 77,
-    "pct": 83.1,
+    "passed": 66,
+    "total": 79,
+    "pct": 83.5,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 86.8,
+    "citation_accuracy": 87.0,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -25236,6 +25213,7 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -25245,6 +25223,7 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 0.0,
      "q043": 1.0,
      "q044": 1.0,
@@ -25260,7 +25239,7 @@
      "q054": 1.0,
      "q055": 1.0,
      "q056": 1.0,
-     "q057": 0.0,
+     "q057": 1.0,
      "q058": 1.0,
      "q059": 1.0,
      "q060": 1.0,
@@ -25305,19 +25284,19 @@
    ],
    "scores": {
     "extraction": 53.7,
-    "chat": 83.1,
-    "overall": 65.5,
+    "chat": 83.5,
+    "overall": 65.6,
     "extraction_ci90": [
      44.1,
      63.2
     ],
     "chat_ci90": [
-     75.3,
-     89.6
+     75.9,
+     89.9
     ],
     "overall_ci90": [
-     59.1,
-     71.6
+     58.9,
+     71.8
     ]
    }
   },
@@ -25473,18 +25452,18 @@
     }
    },
    "chat": {
-    "passed": 63,
-    "total": 77,
-    "pct": 81.8,
+    "passed": 65,
+    "total": 79,
+    "pct": 82.3,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 91.7,
+    "citation_accuracy": 92.0,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
      "q003": 1.0,
-     "q004": 0.0,
+     "q004": 1.0,
      "q005": 1.0,
      "q006": 1.0,
      "q007": 1.0,
@@ -25505,11 +25484,12 @@
      "q022": 0.0,
      "q023": 0.0,
      "q024": 1.0,
-     "q025": 0.0,
+     "q025": 1.0,
      "q026": 1.0,
      "q027": 1.0,
      "q028": 0.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -25519,6 +25499,7 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 0.0,
      "q043": 1.0,
      "q044": 1.0,
@@ -25539,7 +25520,7 @@
      "q059": 1.0,
      "q060": 1.0,
      "q061": 0.0,
-     "q062": 1.0,
+     "q062": 0.0,
      "q063": 1.0,
      "q064": 0.0,
      "q065": 1.0,
@@ -25581,19 +25562,19 @@
    ],
    "scores": {
     "extraction": 31.1,
-    "chat": 81.8,
-    "overall": 51.4,
+    "chat": 82.3,
+    "overall": 51.6,
     "extraction_ci90": [
      25.0,
      37.9
     ],
     "chat_ci90": [
-     74.0,
-     88.3
+     74.7,
+     88.6
     ],
     "overall_ci90": [
-     46.4,
-     56.2
+     46.6,
+     56.4
     ]
    }
   },
@@ -25749,13 +25730,13 @@
     }
    },
    "chat": {
-    "passed": 67,
-    "total": 77,
-    "pct": 87.0,
+    "passed": 68,
+    "total": 79,
+    "pct": 86.1,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 93.4,
+    "citation_accuracy": 93.7,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -25784,10 +25765,11 @@
      "q025": 1.0,
      "q026": 1.0,
      "q027": 1.0,
-     "q028": 1.0,
+     "q028": 0.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
-     "q032": 0.0,
+     "q032": 1.0,
      "q033": 1.0,
      "q034": 0.0,
      "q035": 0.0,
@@ -25795,10 +25777,11 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 0.0,
      "q043": 1.0,
      "q044": 1.0,
-     "q045": 0.0,
+     "q045": 1.0,
      "q046": 1.0,
      "q047": 1.0,
      "q048": 0.0,
@@ -25815,7 +25798,7 @@
      "q059": 1.0,
      "q060": 1.0,
      "q061": 1.0,
-     "q062": 1.0,
+     "q062": 0.0,
      "q063": 1.0,
      "q064": 1.0,
      "q065": 1.0,
@@ -25858,19 +25841,19 @@
    ],
    "scores": {
     "extraction": 43.1,
-    "chat": 87.0,
-    "overall": 60.7,
+    "chat": 86.1,
+    "overall": 60.3,
     "extraction_ci90": [
      34.2,
      51.5
     ],
     "chat_ci90": [
-     80.5,
-     93.5
+     79.7,
+     92.4
     ],
     "overall_ci90": [
-     54.9,
-     66.6
+     54.5,
+     66.1
     ]
    }
   },
@@ -26026,13 +26009,13 @@
     }
    },
    "chat": {
-    "passed": 67,
-    "total": 77,
-    "pct": 87.0,
+    "passed": 62,
+    "total": 79,
+    "pct": 78.5,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 94.9,
+    "citation_accuracy": 95.1,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -26043,7 +26026,7 @@
      "q007": 1.0,
      "q008": 1.0,
      "q009": 1.0,
-     "q010": 1.0,
+     "q010": 0.0,
      "q011": 1.0,
      "q012": 0.0,
      "q013": 1.0,
@@ -26063,6 +26046,7 @@
      "q027": 1.0,
      "q028": 0.0,
      "q029": 0.0,
+     "q030": 0.0,
      "q031": 0.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -26072,6 +26056,7 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 1.0,
      "q043": 1.0,
      "q044": 1.0,
@@ -26092,20 +26077,20 @@
      "q059": 1.0,
      "q060": 1.0,
      "q061": 1.0,
-     "q062": 1.0,
+     "q062": 0.0,
      "q063": 1.0,
      "q064": 1.0,
      "q065": 1.0,
      "q066": 1.0,
-     "q067": 1.0,
+     "q067": 0.0,
      "q068": 1.0,
      "q069": 1.0,
      "q070": 1.0,
      "q071": 1.0,
      "q072": 1.0,
-     "q073": 1.0,
-     "q074": 1.0,
-     "q075": 1.0,
+     "q073": 0.0,
+     "q074": 0.0,
+     "q075": 0.0,
      "q076": 1.0,
      "q077": 1.0,
      "q078": 1.0,
@@ -26134,19 +26119,19 @@
    ],
    "scores": {
     "extraction": 35.9,
-    "chat": 87.0,
-    "overall": 56.3,
+    "chat": 78.5,
+    "overall": 52.9,
     "extraction_ci90": [
      28.4,
      44.1
     ],
     "chat_ci90": [
-     80.5,
-     93.5
+     70.9,
+     86.1
     ],
     "overall_ci90": [
-     51.0,
-     61.9
+     47.2,
+     58.6
     ]
    }
   },
@@ -26302,13 +26287,13 @@
     }
    },
    "chat": {
-    "passed": 70,
-    "total": 77,
-    "pct": 90.9,
+    "passed": 71,
+    "total": 79,
+    "pct": 89.9,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 93.4,
+    "citation_accuracy": 93.7,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -26339,6 +26324,7 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -26348,6 +26334,7 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 1.0,
      "q043": 1.0,
      "q044": 1.0,
@@ -26405,19 +26392,19 @@
    "notes": [],
    "scores": {
     "extraction": 68.2,
-    "chat": 90.9,
-    "overall": 77.3,
+    "chat": 89.9,
+    "overall": 76.9,
     "extraction_ci90": [
      59.1,
      76.8
     ],
     "chat_ci90": [
-     85.7,
-     96.1
+     83.5,
+     94.9
     ],
     "overall_ci90": [
-     71.3,
-     83.0
+     71.0,
+     82.6
     ]
    }
   },
@@ -26573,13 +26560,13 @@
     }
    },
    "chat": {
-    "passed": 72,
-    "total": 77,
-    "pct": 93.5,
+    "passed": 74,
+    "total": 79,
+    "pct": 93.7,
     "runs": 1,
     "timed_out": false,
-    "unsupported_names": 1,
-    "citation_accuracy": 93.5,
+    "unsupported_names": 0,
+    "citation_accuracy": 93.8,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -26602,7 +26589,7 @@
      "q019": 1.0,
      "q020": 1.0,
      "q021": 1.0,
-     "q022": 0.0,
+     "q022": 1.0,
      "q023": 0.0,
      "q024": 1.0,
      "q025": 1.0,
@@ -26610,6 +26597,7 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -26619,17 +26607,18 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 1.0,
      "q043": 1.0,
      "q044": 1.0,
      "q045": 1.0,
      "q046": 1.0,
      "q047": 1.0,
-     "q048": 1.0,
+     "q048": 0.0,
      "q049": 1.0,
      "q050": 1.0,
      "q051": 1.0,
-     "q052": 0.0,
+     "q052": 1.0,
      "q053": 1.0,
      "q054": 1.0,
      "q055": 1.0,
@@ -26676,18 +26665,18 @@
    "notes": [],
    "scores": {
     "extraction": 75.9,
-    "chat": 93.5,
-    "overall": 82.9,
+    "chat": 93.7,
+    "overall": 83.0,
     "extraction_ci90": [
      67.5,
      83.9
     ],
     "chat_ci90": [
-     88.3,
-     97.4
+     88.6,
+     97.5
     ],
     "overall_ci90": [
-     77.6,
+     77.5,
      88.2
     ]
    }
@@ -26845,12 +26834,12 @@
    },
    "chat": {
     "passed": 66,
-    "total": 77,
-    "pct": 85.7,
+    "total": 79,
+    "pct": 83.5,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 88.5,
+    "citation_accuracy": 88.9,
     "verdicts": {
      "q001": 0.0,
      "q002": 1.0,
@@ -26881,8 +26870,9 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 0.0,
+     "q030": 0.0,
      "q031": 1.0,
-     "q032": 0.0,
+     "q032": 1.0,
      "q033": 1.0,
      "q034": 0.0,
      "q035": 1.0,
@@ -26890,6 +26880,7 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 0.0,
      "q042": 1.0,
      "q043": 1.0,
      "q044": 1.0,
@@ -26912,7 +26903,7 @@
      "q061": 1.0,
      "q062": 1.0,
      "q063": 1.0,
-     "q064": 1.0,
+     "q064": 0.0,
      "q065": 1.0,
      "q066": 1.0,
      "q067": 1.0,
@@ -26952,19 +26943,19 @@
    ],
    "scores": {
     "extraction": 37.6,
-    "chat": 85.7,
-    "overall": 56.8,
+    "chat": 83.5,
+    "overall": 56.0,
     "extraction_ci90": [
      29.6,
      46.2
     ],
     "chat_ci90": [
-     79.2,
-     92.2
+     75.9,
+     89.9
     ],
     "overall_ci90": [
-     51.2,
-     62.6
+     50.0,
+     61.7
     ]
    }
   },
@@ -27120,13 +27111,13 @@
     }
    },
    "chat": {
-    "passed": 69,
-    "total": 77,
-    "pct": 89.6,
+    "passed": 70,
+    "total": 79,
+    "pct": 88.6,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 96.6,
+    "citation_accuracy": 96.7,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -27157,6 +27148,7 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -27166,6 +27158,7 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 1.0,
      "q043": 1.0,
      "q044": 1.0,
@@ -27223,19 +27216,19 @@
    "notes": [],
    "scores": {
     "extraction": 64.6,
-    "chat": 89.6,
-    "overall": 74.6,
+    "chat": 88.6,
+    "overall": 74.2,
     "extraction_ci90": [
      55.6,
      73.5
     ],
     "chat_ci90": [
-     83.1,
-     94.8
+     82.3,
+     93.7
     ],
     "overall_ci90": [
-     68.9,
-     80.4
+     68.3,
+     80.1
     ]
    }
   },
@@ -27391,13 +27384,13 @@
     }
    },
    "chat": {
-    "passed": 69,
-    "total": 77,
-    "pct": 89.6,
+    "passed": 67,
+    "total": 79,
+    "pct": 84.8,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 86.7,
+    "citation_accuracy": 87.1,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -27428,6 +27421,7 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -27437,6 +27431,7 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 1.0,
      "q043": 1.0,
      "q044": 1.0,
@@ -27452,7 +27447,7 @@
      "q054": 1.0,
      "q055": 1.0,
      "q056": 1.0,
-     "q057": 1.0,
+     "q057": 0.0,
      "q058": 1.0,
      "q059": 1.0,
      "q060": 1.0,
@@ -27466,10 +27461,10 @@
      "q068": 1.0,
      "q069": 1.0,
      "q070": 1.0,
-     "q071": 1.0,
+     "q071": 0.0,
      "q072": 1.0,
      "q073": 1.0,
-     "q074": 1.0,
+     "q074": 0.0,
      "q075": 1.0,
      "q076": 1.0,
      "q077": 1.0,
@@ -27497,19 +27492,19 @@
    ],
    "scores": {
     "extraction": 56.1,
-    "chat": 89.6,
-    "overall": 69.5,
+    "chat": 84.8,
+    "overall": 67.6,
     "extraction_ci90": [
      46.3,
      65.6
     ],
     "chat_ci90": [
-     83.1,
-     94.8
+     77.2,
+     91.1
     ],
     "overall_ci90": [
-     63.3,
-     75.4
+     61.2,
+     73.7
     ]
    }
   },
@@ -27665,13 +27660,13 @@
     }
    },
    "chat": {
-    "passed": 71,
-    "total": 77,
-    "pct": 92.2,
+    "passed": 74,
+    "total": 79,
+    "pct": 93.7,
     "runs": 1,
     "timed_out": false,
-    "unsupported_names": 2,
-    "citation_accuracy": 95.2,
+    "unsupported_names": 1,
+    "citation_accuracy": 95.3,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -27694,7 +27689,7 @@
      "q019": 1.0,
      "q020": 1.0,
      "q021": 1.0,
-     "q022": 0.0,
+     "q022": 1.0,
      "q023": 0.0,
      "q024": 1.0,
      "q025": 1.0,
@@ -27702,6 +27697,7 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -27711,6 +27707,7 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 1.0,
      "q043": 1.0,
      "q044": 1.0,
@@ -27732,7 +27729,7 @@
      "q060": 1.0,
      "q061": 1.0,
      "q062": 1.0,
-     "q063": 0.0,
+     "q063": 1.0,
      "q064": 1.0,
      "q065": 1.0,
      "q066": 1.0,
@@ -27768,19 +27765,19 @@
    "notes": [],
    "scores": {
     "extraction": 72.0,
-    "chat": 92.2,
-    "overall": 80.1,
+    "chat": 93.7,
+    "overall": 80.6,
     "extraction_ci90": [
      63.1,
      80.7
     ],
     "chat_ci90": [
-     87.0,
-     96.2
+     88.6,
+     97.5
     ],
     "overall_ci90": [
-     74.3,
-     85.6
+     74.8,
+     86.0
     ]
    }
   },
@@ -27936,13 +27933,13 @@
     }
    },
    "chat": {
-    "passed": 66,
-    "total": 77,
-    "pct": 85.7,
+    "passed": 67,
+    "total": 79,
+    "pct": 84.8,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 91.9,
+    "citation_accuracy": 92.2,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -27965,7 +27962,7 @@
      "q019": 1.0,
      "q020": 1.0,
      "q021": 1.0,
-     "q022": 0.0,
+     "q022": 1.0,
      "q023": 0.0,
      "q024": 1.0,
      "q025": 1.0,
@@ -27973,6 +27970,7 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 0.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -27982,6 +27980,7 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 0.0,
      "q043": 1.0,
      "q044": 1.0,
@@ -27992,7 +27991,7 @@
      "q049": 1.0,
      "q050": 1.0,
      "q051": 1.0,
-     "q052": 1.0,
+     "q052": 0.0,
      "q053": 1.0,
      "q054": 1.0,
      "q055": 1.0,
@@ -28041,19 +28040,19 @@
    ],
    "scores": {
     "extraction": 55.6,
-    "chat": 85.7,
-    "overall": 67.6,
+    "chat": 84.8,
+    "overall": 67.3,
     "extraction_ci90": [
      46.5,
      64.6
     ],
     "chat_ci90": [
-     79.2,
-     92.2
+     77.2,
+     91.1
     ],
     "overall_ci90": [
-     61.4,
-     73.7
+     61.1,
+     73.3
     ]
    }
   },
@@ -28209,13 +28208,13 @@
     }
    },
    "chat": {
-    "passed": 72,
-    "total": 77,
-    "pct": 93.5,
+    "passed": 73,
+    "total": 79,
+    "pct": 92.4,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 95.0,
+    "citation_accuracy": 95.2,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -28238,7 +28237,7 @@
      "q019": 1.0,
      "q020": 1.0,
      "q021": 1.0,
-     "q022": 0.0,
+     "q022": 1.0,
      "q023": 0.0,
      "q024": 1.0,
      "q025": 1.0,
@@ -28246,6 +28245,7 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -28255,6 +28255,7 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 1.0,
      "q043": 1.0,
      "q044": 1.0,
@@ -28293,7 +28294,7 @@
      "q077": 1.0,
      "q078": 1.0,
      "q079": 1.0,
-     "q080": 1.0
+     "q080": 0.0
     },
     "minutes": 30.8,
     "truncated": 0,
@@ -28315,19 +28316,19 @@
    ],
    "scores": {
     "extraction": 63.8,
-    "chat": 93.5,
-    "overall": 75.7,
+    "chat": 92.4,
+    "overall": 75.2,
     "extraction_ci90": [
      54.7,
      72.6
     ],
     "chat_ci90": [
-     88.3,
-     97.4
+     87.3,
+     97.5
     ],
     "overall_ci90": [
-     69.7,
-     81.4
+     69.4,
+     80.9
     ]
    }
   },
@@ -28483,13 +28484,13 @@
     }
    },
    "chat": {
-    "passed": 74,
-    "total": 77,
-    "pct": 96.1,
+    "passed": 73,
+    "total": 79,
+    "pct": 92.4,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 93.5,
+    "citation_accuracy": 93.8,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -28512,7 +28513,7 @@
      "q019": 1.0,
      "q020": 1.0,
      "q021": 1.0,
-     "q022": 0.0,
+     "q022": 1.0,
      "q023": 0.0,
      "q024": 1.0,
      "q025": 1.0,
@@ -28520,15 +28521,17 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
-     "q034": 1.0,
+     "q034": 0.0,
      "q035": 1.0,
      "q036": 1.0,
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 1.0,
      "q043": 1.0,
      "q044": 1.0,
@@ -28551,7 +28554,7 @@
      "q061": 1.0,
      "q062": 1.0,
      "q063": 1.0,
-     "q064": 1.0,
+     "q064": 0.0,
      "q065": 1.0,
      "q066": 1.0,
      "q067": 1.0,
@@ -28567,7 +28570,7 @@
      "q077": 1.0,
      "q078": 1.0,
      "q079": 1.0,
-     "q080": 1.0
+     "q080": 0.0
     },
     "minutes": 15.1,
     "truncated": 0,
@@ -28586,19 +28589,19 @@
    "notes": [],
    "scores": {
     "extraction": 62.6,
-    "chat": 96.1,
-    "overall": 76.0,
+    "chat": 92.4,
+    "overall": 74.5,
     "extraction_ci90": [
      53.3,
      71.6
     ],
     "chat_ci90": [
-     92.2,
-     98.7
+     87.3,
+     97.5
     ],
     "overall_ci90": [
-     70.1,
-     81.6
+     68.5,
+     80.2
     ]
    }
   },
@@ -28754,13 +28757,13 @@
     }
    },
    "chat": {
-    "passed": 74,
-    "total": 77,
-    "pct": 96.1,
+    "passed": 75,
+    "total": 79,
+    "pct": 94.9,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 93.5,
+    "citation_accuracy": 93.8,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -28783,7 +28786,7 @@
      "q019": 1.0,
      "q020": 1.0,
      "q021": 1.0,
-     "q022": 0.0,
+     "q022": 1.0,
      "q023": 0.0,
      "q024": 1.0,
      "q025": 1.0,
@@ -28791,6 +28794,7 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -28800,6 +28804,7 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 1.0,
      "q043": 1.0,
      "q044": 1.0,
@@ -28838,7 +28843,7 @@
      "q077": 1.0,
      "q078": 1.0,
      "q079": 1.0,
-     "q080": 1.0
+     "q080": 0.0
     },
     "minutes": 13.2,
     "truncated": 0,
@@ -28857,19 +28862,19 @@
    "notes": [],
    "scores": {
     "extraction": 70.9,
-    "chat": 96.1,
-    "overall": 81.0,
+    "chat": 94.9,
+    "overall": 80.5,
     "extraction_ci90": [
      62.0,
      79.8
     ],
     "chat_ci90": [
-     92.2,
+     89.9,
      98.7
     ],
     "overall_ci90": [
-     75.4,
-     86.5
+     75.0,
+     86.0
     ]
    }
   },
@@ -29026,12 +29031,12 @@
    },
    "chat": {
     "passed": 69,
-    "total": 77,
-    "pct": 89.6,
+    "total": 79,
+    "pct": 87.3,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 88.7,
+    "citation_accuracy": 89.1,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -29054,7 +29059,7 @@
      "q019": 1.0,
      "q020": 1.0,
      "q021": 1.0,
-     "q022": 0.0,
+     "q022": 1.0,
      "q023": 0.0,
      "q024": 1.0,
      "q025": 1.0,
@@ -29062,15 +29067,17 @@
      "q027": 1.0,
      "q028": 1.0,
      "q029": 1.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
-     "q034": 1.0,
+     "q034": 0.0,
      "q035": 0.0,
      "q036": 1.0,
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 0.0,
      "q043": 1.0,
      "q044": 1.0,
@@ -29109,7 +29116,7 @@
      "q077": 1.0,
      "q078": 1.0,
      "q079": 1.0,
-     "q080": 1.0
+     "q080": 0.0
     },
     "minutes": 27.7,
     "truncated": 0,
@@ -29131,19 +29138,19 @@
    ],
    "scores": {
     "extraction": 62.1,
-    "chat": 89.6,
-    "overall": 73.1,
+    "chat": 87.3,
+    "overall": 72.2,
     "extraction_ci90": [
      53.0,
      70.8
     ],
     "chat_ci90": [
-     84.4,
-     94.8
+     81.0,
+     93.7
     ],
     "overall_ci90": [
-     67.2,
-     78.8
+     66.1,
+     78.1
     ]
    }
   },
@@ -29299,13 +29306,13 @@
     }
    },
    "chat": {
-    "passed": 71,
-    "total": 77,
-    "pct": 92.2,
+    "passed": 69,
+    "total": 79,
+    "pct": 87.3,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 95.2,
+    "citation_accuracy": 95.3,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -29328,30 +29335,32 @@
      "q019": 1.0,
      "q020": 1.0,
      "q021": 1.0,
-     "q022": 0.0,
+     "q022": 1.0,
      "q023": 0.0,
      "q024": 1.0,
      "q025": 1.0,
      "q026": 1.0,
      "q027": 1.0,
      "q028": 1.0,
-     "q029": 1.0,
+     "q029": 0.0,
+     "q030": 0.0,
      "q031": 1.0,
      "q032": 1.0,
-     "q033": 0.0,
+     "q033": 1.0,
      "q034": 0.0,
      "q035": 1.0,
      "q036": 1.0,
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 1.0,
      "q043": 1.0,
      "q044": 1.0,
      "q045": 1.0,
      "q046": 1.0,
      "q047": 1.0,
-     "q048": 1.0,
+     "q048": 0.0,
      "q049": 1.0,
      "q050": 1.0,
      "q051": 1.0,
@@ -29360,7 +29369,7 @@
      "q054": 1.0,
      "q055": 1.0,
      "q056": 1.0,
-     "q057": 1.0,
+     "q057": 0.0,
      "q058": 1.0,
      "q059": 1.0,
      "q060": 1.0,
@@ -29374,10 +29383,10 @@
      "q068": 1.0,
      "q069": 1.0,
      "q070": 1.0,
-     "q071": 1.0,
+     "q071": 0.0,
      "q072": 1.0,
      "q073": 1.0,
-     "q074": 1.0,
+     "q074": 0.0,
      "q075": 0.0,
      "q076": 1.0,
      "q077": 1.0,
@@ -29407,19 +29416,19 @@
    ],
    "scores": {
     "extraction": 58.1,
-    "chat": 92.2,
-    "overall": 71.8,
+    "chat": 87.3,
+    "overall": 69.8,
     "extraction_ci90": [
      49.2,
      67.0
     ],
     "chat_ci90": [
-     87.0,
-     97.4
+     81.0,
+     93.7
     ],
     "overall_ci90": [
-     66.1,
-     77.7
+     63.8,
+     75.8
     ]
    }
   },
@@ -29576,12 +29585,12 @@
    },
    "chat": {
     "passed": 64,
-    "total": 77,
-    "pct": 83.1,
+    "total": 79,
+    "pct": 81.0,
     "runs": 1,
     "timed_out": false,
     "unsupported_names": 0,
-    "citation_accuracy": 91.8,
+    "citation_accuracy": 92.1,
     "verdicts": {
      "q001": 1.0,
      "q002": 1.0,
@@ -29604,14 +29613,15 @@
      "q019": 1.0,
      "q020": 1.0,
      "q021": 0.0,
-     "q022": 0.0,
+     "q022": 1.0,
      "q023": 0.0,
      "q024": 1.0,
      "q025": 1.0,
      "q026": 1.0,
      "q027": 1.0,
-     "q028": 1.0,
+     "q028": 0.0,
      "q029": 1.0,
+     "q030": 1.0,
      "q031": 1.0,
      "q032": 1.0,
      "q033": 1.0,
@@ -29621,6 +29631,7 @@
      "q037": 1.0,
      "q038": 1.0,
      "q039": 1.0,
+     "q041": 1.0,
      "q042": 0.0,
      "q043": 1.0,
      "q044": 1.0,
@@ -29641,7 +29652,7 @@
      "q059": 1.0,
      "q060": 1.0,
      "q061": 0.0,
-     "q062": 1.0,
+     "q062": 0.0,
      "q063": 1.0,
      "q064": 1.0,
      "q065": 1.0,
@@ -29653,7 +29664,7 @@
      "q071": 1.0,
      "q072": 1.0,
      "q073": 1.0,
-     "q074": 1.0,
+     "q074": 0.0,
      "q075": 0.0,
      "q076": 1.0,
      "q077": 1.0,
@@ -29683,19 +29694,19 @@
    ],
    "scores": {
     "extraction": 48.4,
-    "chat": 83.1,
-    "overall": 62.3,
+    "chat": 81.0,
+    "overall": 61.4,
     "extraction_ci90": [
      39.0,
      57.8
     ],
     "chat_ci90": [
-     76.6,
-     89.6
+     73.4,
+     87.3
     ],
     "overall_ci90": [
-     56.4,
-     68.5
+     54.8,
+     67.7
     ]
    }
   }
@@ -29704,8 +29715,8 @@
   "overrides": [],
   "findings": [],
   "dropped_models": [],
-  "scorer_version": 8,
-  "scorer_recipe": "14edff24a295",
-  "fixture_sha256": "ac715178a3dbc83a3ecd180e79bf81c99013ba2fd151af10343bf1e8e80e4ba6"
+  "scorer_version": 9,
+  "scorer_recipe": "8dea0cdb06aa",
+  "fixture_sha256": "4677a14ff992c6a2727d1afc772ca3cd7381710baae4160cc4f6581ba27ba039"
  }
 }

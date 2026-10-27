@@ -868,7 +868,10 @@ def _memory_engine() -> Engine:
     from sqlalchemy.pool import StaticPool
 
     engine = create_engine(
-        "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
+        "sqlite://",
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+        hide_parameters=True,
     )
 
     @event.listens_for(engine, "connect")

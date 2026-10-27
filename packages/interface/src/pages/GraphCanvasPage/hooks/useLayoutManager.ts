@@ -5,15 +5,23 @@
  * useLayoutManager: Applies layout algorithms to the graphology graph.
  *
  * Reads nodes/edges from graph, computes positions, writes them back.
- * Pipeline-flagged nodes sit out the chosen layout and are placed together
- * in the "Unresolved" region beside it (`utils/unresolvedRegion.ts`).
+ * Synthetic nodes and edges never enter a layout. Pipeline-flagged nodes sit
+ * out the chosen layout and are placed around their source document's
+ * "Unresolved (N)" hub, set beside that document's root
+ * (`utils/unresolvedBucket.ts`).
  */
 
 import { useCallback } from 'react';
 import { useSigma } from '@react-sigma/core';
 import type Graph from 'graphology';
 import type { NodeAttributes, EdgeAttributes, LayoutType } from '../types';
-import { isSourceGroupNode, isProvenanceEdge } from '../types';
+import {
+  SOURCE_GROUP_PREFIX,
+  bucketSourceId,
+  isSourceGroupNode,
+  isSyntheticEdge,
+  isSyntheticNode,
+} from '../types';
 import {
   applyForceLayout,
   applyGridLayout,
@@ -24,7 +32,7 @@ import {
   type LayoutNode,
   type LayoutEdge,
 } from '../utils/layoutUtils';
-import { layoutUnresolvedRegion, unresolvedMemberIds } from '../utils/unresolvedRegion';
+import { groupUnresolvedBySource, layoutUnresolvedBuckets } from '../utils/unresolvedBucket';
 import { logger } from '../../../utils/logger';
 
 interface UseLayoutManagerProps {
@@ -39,7 +47,7 @@ interface UseLayoutManagerProps {
 function extractNodes(graph: Graph<NodeAttributes, EdgeAttributes>): LayoutNode[] {
   const nodes: LayoutNode[] = [];
   graph.forEachNode((id, attrs) => {
-    if (isSourceGroupNode(id)) return; // Virtual nodes excluded from layout
+    if (isSyntheticNode(id)) return; // Synthetic hubs excluded from layout
     nodes.push({ id, x: attrs.x, y: attrs.y, templateId: attrs.templateId, size: attrs.size, sourceId: attrs.sourceDocumentId });
   });
   return nodes;
@@ -51,7 +59,7 @@ function extractNodes(graph: Graph<NodeAttributes, EdgeAttributes>): LayoutNode[
 function extractEdges(graph: Graph<NodeAttributes, EdgeAttributes>): LayoutEdge[] {
   const edges: LayoutEdge[] = [];
   graph.forEachEdge((id, _attrs, source, target) => {
-    if (isProvenanceEdge(id)) return; // Virtual edges excluded from layout
+    if (isSyntheticEdge(id)) return; // Synthetic edges excluded from layout
     edges.push({ id, source, target });
   });
   return edges;
@@ -59,9 +67,13 @@ function extractEdges(graph: Graph<NodeAttributes, EdgeAttributes>): LayoutEdge[
 
 /**
  * Reposition source group nodes to the centroid of their member entities.
- * Called after layout algorithms reposition real nodes.
+ * Called after layout algorithms reposition real nodes. Unresolved nodes
+ * (`skip`) are left out: they are placed around their hub afterwards.
  */
-function repositionSourceGroupNodes(graph: Graph<NodeAttributes, EdgeAttributes>): void {
+function repositionSourceGroupNodes(
+  graph: Graph<NodeAttributes, EdgeAttributes>,
+  skip: ReadonlySet<string> = new Set(),
+): void {
   graph.forEachNode((nodeId, attrs) => {
     if (!isSourceGroupNode(nodeId)) return;
 
@@ -72,7 +84,8 @@ function repositionSourceGroupNodes(graph: Graph<NodeAttributes, EdgeAttributes>
     let sumY = 0;
     let count = 0;
 
-    graph.forEachNode((_memberId, memberAttrs) => {
+    graph.forEachNode((memberId, memberAttrs) => {
+      if (skip.has(memberId)) return;
       if (memberAttrs.sourceGroupMembership === sourceId) {
         sumX += memberAttrs.x || 0;
         sumY += memberAttrs.y || 0;
@@ -87,6 +100,42 @@ function repositionSourceGroupNodes(graph: Graph<NodeAttributes, EdgeAttributes>
   });
 }
 
+/**
+ * Where each source's Unresolved hub goes: beside its document root, or,
+ * before the roots load, beside the centroid of the document's laid-out
+ * nodes. The no-source hub has no anchor.
+ */
+function hubAnchors(
+  graph: Graph<NodeAttributes, EdgeAttributes>,
+  hubIds: Iterable<string>,
+  laidOut: readonly LayoutNode[],
+  positions: Map<string, { x: number; y: number }>,
+): Map<string, { x: number; y: number }> {
+  const anchors = new Map<string, { x: number; y: number }>();
+  for (const hubId of hubIds) {
+    const sourceId = bucketSourceId(hubId);
+    if (!sourceId) continue;
+    const rootId = `${SOURCE_GROUP_PREFIX}${sourceId}`;
+    if (graph.hasNode(rootId)) {
+      const root = graph.getNodeAttributes(rootId);
+      anchors.set(hubId, { x: root.x, y: root.y });
+      continue;
+    }
+    let sumX = 0;
+    let sumY = 0;
+    let count = 0;
+    for (const node of laidOut) {
+      const p = positions.get(node.id);
+      if (node.sourceId !== sourceId || !p) continue;
+      sumX += p.x;
+      sumY += p.y;
+      count++;
+    }
+    if (count > 0) anchors.set(hubId, { x: sumX / count, y: sumY / count });
+  }
+  return anchors;
+}
+
 export function useLayoutManager({
   graph,
   setLayoutType,
@@ -97,12 +146,12 @@ export function useLayoutManager({
   const applyLayout = useCallback(
     async (type: LayoutType) => {
       try {
-        // The Unresolved region's members are laid out apart from the rest.
-        const regionIds = unresolvedMemberIds(graph);
-        const inRegion = new Set(regionIds);
-        const nodes = extractNodes(graph).filter((n) => !inRegion.has(n.id));
+        // The unresolved nodes are laid out around their source's hub, apart from the rest.
+        const hubs = groupUnresolvedBySource(graph);
+        const inBucket = new Set([...hubs.values()].flat());
+        const nodes = extractNodes(graph).filter((n) => !inBucket.has(n.id));
         const edges = extractEdges(graph).filter(
-          (e) => !inRegion.has(e.source) && !inRegion.has(e.target),
+          (e) => !inBucket.has(e.source) && !inBucket.has(e.target),
         );
 
         let positions;
@@ -130,8 +179,9 @@ export function useLayoutManager({
         }
 
         applyPositionsToGraph(graph, positions);
-        applyPositionsToGraph(graph, layoutUnresolvedRegion(regionIds, positions.values()));
-        repositionSourceGroupNodes(graph);
+        repositionSourceGroupNodes(graph, inBucket);
+        const anchors = hubAnchors(graph, hubs.keys(), nodes, positions);
+        applyPositionsToGraph(graph, layoutUnresolvedBuckets(hubs, anchors, positions.values()));
         setLayoutType(type);
 
         // Fit view after layout

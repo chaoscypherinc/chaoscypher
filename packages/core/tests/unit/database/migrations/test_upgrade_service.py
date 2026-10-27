@@ -9,6 +9,20 @@ from pathlib import Path
 import pytest
 
 
+def _stamp(db: Path, revision: str) -> None:
+    """Give ``db`` a version row: a database built before, so applying to it is an upgrade.
+
+    Without one, ``apply`` builds the database as a first build (no backup, no record).
+    """
+    from chaoscypher_core.adapters.sqlite.engine import get_engine
+
+    with get_engine(db).begin() as conn:
+        conn.exec_driver_sql(
+            "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)"
+        )
+        conn.exec_driver_sql(f"INSERT INTO alembic_version VALUES ('{revision}')")
+
+
 def test_pending_surfaces_silent_upgrade_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -66,6 +80,7 @@ def test_apply_failure_still_persists_fresh_backup_and_rollback_works(
 
     db = tmp_path / "app.db"
     clear_upgrade_state(db)  # creates the state table; last_backup=None
+    _stamp(db, "0001")
     backup_file = tmp_path / "pre-0042.db"
 
     def fake_backup(path: Path, label: str) -> SimpleNamespace:
@@ -106,6 +121,7 @@ def _setup_apply(
 
     db = tmp_path / "app.db"
     clear_upgrade_state(db)  # creates the state table; last_backup=None
+    _stamp(db, "0001")
     backup_file = tmp_path / "pre-0042.db"
 
     def fake_backup(path: Path, label: str) -> SimpleNamespace:

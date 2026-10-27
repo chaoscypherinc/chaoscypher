@@ -118,7 +118,7 @@ chaoscypher compose build --config research-compose.yaml
 chaoscypher compose build --no-clean
 ```
 
-A plain `chaoscypher compose build` already replaces the composed database. Use `--no-clean` only when you want to add to the existing one — note that entities from a package you have removed from `axiomatize.yaml` will still be served, because the merge is upsert-only and nothing prunes.
+A plain `chaoscypher compose build` already replaces the composed database. Use `--no-clean` only when you want to add to the existing one — note that entities from a package you have removed from `axiomatize.yaml` will still be served, because the merge is upsert-only and nothing prunes. If any package fails to merge, or you stop the build with Ctrl+C, the build restores the composition it started from rather than leaving a partial one. If the build is killed outright, the next build restores that composition first and says so. If the existing composition cannot be copied aside first (a full disk, for example), the build stops without changing it.
 
 :::note[Lexicon authentication]
 

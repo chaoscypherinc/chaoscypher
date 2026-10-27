@@ -52,6 +52,7 @@ Commands:
   health                Check system health status
   lexicon               Lexicon Hub - login, search, manage packages
   mcp                   Start MCP server over stdio
+  memory                Export and link the memories the MCP memory tools store
   mount                 Pull a knowledge package and serve it over MCP
   pull                  Download a package from Lexicon Hub
   push                  Upload a package to Lexicon Hub
@@ -114,6 +115,7 @@ See [Configuration](config.md) for details.
 | Command | Description |
 |---------|-------------|
 | [`mcp`](mcp.md) | Start [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server for AI assistant integration |
+| [`memory`](memory.md) | Export the memories the MCP memory tools store as a `.ccx` memory pack, and link the ones not linked yet (`memory relink`) |
 | [`serve`](#serve) | Start a local API server |
 | [`mount`](mount.md) | Pull a knowledge package and serve it over MCP |
 | [`compose`](#compose) | Multi-package orchestration using `axiomatize.yaml` |
@@ -127,6 +129,7 @@ See [Configuration](config.md) for details.
 | [`doctor`](utilities.md#doctor) | Run a comprehensive system diagnostic sweep (superset of `health`) |
 | `diagnostics` | Export a diagnostic bundle for bug reports |
 | [`benchmark`](benchmark.md) | Run and inspect the extraction benchmark |
+| [`render-orchestration`](utilities.md#render-orchestration) | Render the nginx, supervisord and valkey configs from the current settings |
 
 ### Shortcuts
 

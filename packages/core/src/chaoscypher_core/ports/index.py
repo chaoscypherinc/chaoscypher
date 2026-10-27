@@ -106,7 +106,7 @@ class IndexingProtocol(Protocol):
         *,
         embedding_model: str,
         embedding_dimensions: int,
-        status: str,
+        status: str | None,
     ) -> list[str]:
         """Batch form of :meth:`update_chunk_embedding` — one UPDATE, one commit.
 
@@ -115,7 +115,8 @@ class IndexingProtocol(Protocol):
                 embedding bytes.
             embedding_model: Model name that generated the embeddings.
             embedding_dimensions: Vector dimensions (e.g., 1024).
-            status: New status for every updated chunk.
+            status: New status for every updated chunk, or None to leave
+                each chunk's status as it is.
 
         Returns:
             The subset of chunk ids that do not exist (skipped) — callers

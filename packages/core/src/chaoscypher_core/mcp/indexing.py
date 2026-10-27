@@ -62,19 +62,8 @@ async def index_source_text(
         normalized = normalizer.normalize(content=text, content_type=file_type)
         text = normalized.content
 
-    # Chunk
-    await engine.chunking_service.create_chunks(full_text=text, source_id=file_id)
-
-    # Index (generate embeddings)
-    index_result = await engine.indexing_service.create_index(source_id=file_id)
-
-    # Complete indexing with proper metadata
-    engine.storage_adapter.complete_indexing(
-        file_id,
-        chunks_count=index_result.get("chunks_count", 0),
-        embedding_model=index_result.get("embedding_model", ""),
-        embedding_dimensions=index_result.get("embedding_dimensions", 0),
-    )
+    # Chunk, index (generate embeddings) and mark indexed: the engine's one store step
+    await engine.chunk_and_index(file_id, text)
 
     return {
         "source_id": file_id,

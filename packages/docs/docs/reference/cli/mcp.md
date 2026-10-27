@@ -19,11 +19,13 @@ chaoscypher mcp [OPTIONS]
 |--------|-------------|
 | `--database, -d` | Database name (default: from settings) |
 | `--mode, -m` | Tool access mode: `read` or `write` (default: from settings, usually `read`) |
-| `--profile, -p` | Tool profile to serve: `full` or `memory` (default: from settings, usually `full`); `memory` serves the five memory tools only |
+| `--profile, -p` | Tool profile to serve: `full` or `memory` (default: from settings, usually `full`); `memory` serves the memory tools only: `recall`, `list_memories` and `digest` in read mode, plus `remember` and `forget` in write mode |
 | `--server-extraction` | Use server-side LLM for extraction instead of client-driven |
 | `--help` | Show help message |
 
 By default, extraction is client-driven: the MCP client (e.g. Claude) performs entity extraction itself after indexing. Use `--server-extraction` to have the server's LLM handle extraction instead.
+
+If the database is blocked on a pending schema upgrade, the server offers its two [maintenance-mode](../../user-guide/mcp.md#maintenance-mode) tools only with `--mode write`; in read mode (the default) the command exits with an error that says to re-run with `--mode write`, because the maintenance tools include destructive repair.
 
 ## Examples
 
@@ -94,17 +96,23 @@ MCP tool access is controlled by settings in [`settings.yaml`](../../getting-sta
 mcp:
   mode: read           # "read" or "write"
   auto_extract: false  # Run extraction after document upload (default: false — MCP client drives extraction)
+  profile: full        # "full" (every tool of the mode) or "memory" (the memory tools)
+  tools: []            # Allowlist of tool names; empty serves the whole profile
 ```
 
 See [MCP Server](../../user-guide/mcp.md) for the full list of available tools and configuration details.
 
+## Several servers on one database
+
+One `chaoscypher mcp -m write` per agent may serve the same database, beside `chaoscypher` commands on it. [Memory: several processes, one database](../../user-guide/memory.md#several-processes-one-database) says what they can rely on.
+
 ## HTTP Transport
 
-For HTTP-based MCP access (web clients, remote access), use the Cortex API endpoint at `/api/v1/mcp` instead. This is available automatically when running the Docker stack with `make docker-dev`.
+For HTTP-based MCP access (web clients, remote access), use the Cortex API endpoint at `/api/v1/mcp` instead. It is available whenever Cortex runs: the all-in-one container serves it at `http://localhost/api/v1/mcp`, the `make docker-dev` stack at port 8080.
 
 ## See also
 
 - [Mount](mount.md) — pull a knowledge package and serve it over this same server in one command
 
 - [User guide: MCP Server](../../user-guide/mcp.md) — full list of available tools, write mode, client-driven extraction, and configuration details
-- [API reference: Grounding (MCP)](../../reference/api/grounding.md) — HTTP endpoints for node search, edge traversal, and neighbor discovery (used by the HTTP transport)
+- [API reference: Grounding (MCP)](../../reference/api/grounding.md) — read-only HTTP endpoints for node search, edge traversal, and neighbor discovery, an alternative to MCP for HTTP agents

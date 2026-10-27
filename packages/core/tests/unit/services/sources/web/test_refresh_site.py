@@ -303,3 +303,60 @@ async def test_a_page_deleted_during_a_refresh_fails_only_itself(
     assert harness.pages()[_url("b")]["status"] == "pending"
     site = harness.adapter.get_site(site_id, DB)
     assert site is not None and site["status"] == "imported"
+
+
+@pytest.mark.asyncio
+async def test_a_keyword_only_refresh_builds_no_embedder(
+    harness: SiteHarness, fake_site: FakeSite, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Vector search off: the release refresh re-indexes a stale node for keywords, embeds nothing."""
+    from structlog.testing import capture_logs
+
+    from chaoscypher_core.adapters.embedding import factory
+    from chaoscypher_core.operations.sources.site_in_process import run_site_import
+    from chaoscypher_core.operations.sources.site_runs import begin_site_refresh
+    from chaoscypher_core.services.graph.resolution.apply import apply_resolution
+    from chaoscypher_core.services.graph.resolution.plan import Merge, ResolutionPlan
+    from chaoscypher_core.settings import EngineSettings
+
+    _serve(fake_site, {"same": markdown_page("Same"), "edited": markdown_page("Edited")})
+    site_id = harness.create_site()
+    await harness.run(site_id)
+    _settle(harness)
+    pages = harness.pages()
+    # One node attested by both pages: releasing the edited page leaves it stale.
+    graph = GraphRepository(harness.adapter.session, database_name=DB)
+    graph.create_template(TemplateCreate(name="Topic", template_type="node"), custom_id="t")
+    for nid, page in (("keep", "same"), ("drop", "edited")):
+        graph.create_node(
+            NodeCreate(template_id="t", label="Lyon", source_id=pages[_url(page)]["id"]),
+            custom_id=nid,
+        )
+    graph.session.commit()
+    apply_resolution(graph, ResolutionPlan(merges=[Merge(keep="keep", drop="drop", why="t")]))
+    graph.session.commit()
+
+    built: list[Any] = []
+    # every name of create_embedding_provider builds through this one function
+    monkeypatch.setattr(factory, "_build_embedding_provider", built.append)
+    off = EngineSettings()
+    off.search.enable_vector_search = False
+    off.current_database = DB
+    _serve(fake_site, {"same": markdown_page("Same"), "edited": markdown_page("Edited again")})
+    begin_site_refresh(harness.adapter, site_id, DB, exclude=None)
+    with capture_logs() as logs:
+        result = await run_site_import(
+            harness.adapter,
+            site_id=site_id,
+            database_name=DB,
+            refresh=True,
+            engine_settings=off,
+            settings=harness.settings,
+        )
+
+    assert result["updated"] == 1
+    assert built == []
+    events = [e["event"] for e in logs]
+    assert "source_graph_released" in events  # the release ran and left a node stale
+    assert "nodes_reindexed_for_keywords_only" in events
+    assert "released_graph_embedder_unavailable_non_fatal" not in events

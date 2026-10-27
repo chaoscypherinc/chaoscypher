@@ -53,26 +53,45 @@ def test_rename_resolves_to_unique_name(adapter: SqliteAdapter) -> None:
 
 
 def test_rename_retries_on_integrity_error(
-    adapter: SqliteAdapter, monkeypatch: pytest.MonkeyPatch
+    adapter: SqliteAdapter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Simulate a concurrent import racing to take `Flow (imported)`."""
+    """A concurrent import takes `Flow (imported)` after the name was chosen.
+
+    The rival commits through its own connection between the name check and the
+    insert, so the first insert trips the real unique constraint; the retry must
+    re-read the names and land on `Flow (imported) (2)` on the second attempt.
+    """
     svc = WorkflowPortabilityService(repository=adapter, database_name="default")
     svc.import_workflow(_export_payload("Flow"), on_duplicate="fail")
 
-    # Pre-seed the rename-target to force one IntegrityError.
-    adapter.create_workflow(
-        {
-            "id": "squatter",
-            "database_name": "default",
-            "name": "Flow (imported)",
-            "input_schema": {"type": "object"},
-            "output_schema": {"type": "object"},
-            "created_at": datetime.now(UTC),
-            "updated_at": datetime.now(UTC),
-        }
-    )
+    real_create = adapter.create_workflow_safe
+    attempted: list[str] = []
+
+    def racing_create(*, workflow: dict[str, Any]) -> dict[str, Any]:
+        attempted.append(workflow["name"])
+        if len(attempted) == 1:
+            rival = SqliteAdapter(str(tmp_path / "app.db"), database_name="default")
+            rival.connect()
+            try:
+                rival.create_workflow(
+                    {
+                        "id": "rival",
+                        "database_name": "default",
+                        "name": workflow["name"],
+                        "input_schema": {"type": "object"},
+                        "output_schema": {"type": "object"},
+                        "created_at": datetime.now(UTC),
+                        "updated_at": datetime.now(UTC),
+                    }
+                )
+            finally:
+                rival.disconnect()
+        return real_create(workflow=workflow)
+
+    monkeypatch.setattr(adapter, "create_workflow_safe", racing_create)
 
     r = svc.import_workflow(_export_payload("Flow"), on_duplicate="rename")
     wf = adapter.get_workflow(r["workflow_id"])
     assert wf is not None
     assert wf["name"] == "Flow (imported) (2)"
+    assert attempted == ["Flow (imported)", "Flow (imported) (2)"]

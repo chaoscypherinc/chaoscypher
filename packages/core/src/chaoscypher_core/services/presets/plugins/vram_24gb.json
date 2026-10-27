@@ -2,7 +2,7 @@
   "name": "vram_24gb",
   "display_name": "24GB VRAM",
   "version": "1.0.0",
-  "description": "Enthusiast tier configuration for 30B parameter models with large context windows. Excellent for research and complex knowledge extraction.",
+  "description": "Enthusiast tier configuration for 27B-class models with large context windows. Excellent for research and complex knowledge extraction.",
   "author": "ChaosCypher Team",
   "builtin": true,
 

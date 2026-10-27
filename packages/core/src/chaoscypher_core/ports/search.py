@@ -73,13 +73,17 @@ def attesting_sources(item: object) -> list[str]:
 
 
 def item_in_source_scope(item: object, scope: Container[str]) -> bool:
-    """Whether a graph row is in a source scope: it names no source, or a source in the scope attests it."""
+    """Whether a graph row is in a source scope: a person made it, it names no source, or a source in the scope attests it."""
+    if getattr(item, "person_made", False):  # a person's row is in every lens and scope
+        return True
     sources: list[str | None] = [*attesting_sources(item)] or [None]
     return any(node_in_source_scope(sid, scope) for sid in sources)
 
 
 def item_visible(item: object, disabled: Container[str]) -> bool:
-    """Whether a graph row may answer: it names no source, or a source not switched off attests it."""
+    """Whether a graph row may answer: a person made it, it names no source, or a source not switched off attests it."""
+    if getattr(item, "person_made", False):  # a person's row is the person's: always shown
+        return True
     sources: list[str | None] = [*attesting_sources(item)] or [None]
     return any(source_visible(sid, disabled) for sid in sources)
 

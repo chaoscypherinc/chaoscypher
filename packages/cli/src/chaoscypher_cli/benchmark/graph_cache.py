@@ -375,6 +375,12 @@ def default_workspace() -> Path:
     return user_benchmark_root() / "workspace"
 
 
+def _unlink_sqlite(path: Path) -> None:
+    """Remove a SQLite file and its ``-wal`` / ``-shm`` siblings, when present."""
+    for stale in (path, *(path.with_name(f"{path.name}{s}") for s in ("-wal", "-shm"))):
+        stale.unlink(missing_ok=True)
+
+
 class GraphCacheMissError(RuntimeError):
     """``REUSE_GRAPH`` asked for a cached graph and its slot is empty."""
 
@@ -731,10 +737,20 @@ class GraphCache:
             extractor=f"{extractor.provider}/{extractor.model}",
         )
         slot.mkdir(parents=True, exist_ok=True)
-        await builder(snapshot)
-        if not snapshot.exists():
-            msg = f"builder did not produce a snapshot at {snapshot}"
-            raise RuntimeError(msg)
+        # Built under a temporary name and renamed in whole: a builder that dies
+        # mid-write (a kill, Ctrl+C, a raised error) used to leave a partial
+        # ``app.db`` that the next run served as a hit (2026-10-19 audit).
+        build_target = snapshot.with_name(f"{snapshot.name}.building")
+        _unlink_sqlite(build_target)
+        try:
+            await builder(build_target)
+            if not build_target.exists():
+                msg = f"builder did not produce a snapshot at {build_target}"
+                raise RuntimeError(msg)
+        except BaseException:
+            _unlink_sqlite(build_target)
+            raise
+        build_target.replace(snapshot)
         self.write_slot_record(key, {**record, SNAPSHOT_SHA256: memo_file_sha256(snapshot)})
         return snapshot
 

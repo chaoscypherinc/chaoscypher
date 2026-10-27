@@ -35,7 +35,9 @@ from chaoscypher_core.services.sources.engine.extraction.domains.packs import pa
 from chaoscypher_core.testing import (
     data_dir_in_tmp,  # noqa: F401 — autouse: the data directory is a tmp dir
     llm_cache_in_tmp,  # noqa: F401 — autouse: the LLM caches live in a tmp dir
+    logging_left_as_found,  # noqa: F401 — autouse: each test leaves logging as it found it
     ollama_offline,  # noqa: F401 — autouse: no test reaches Ollama
+    sqlite_engines_released,  # noqa: F401 — autouse: a test's SQLite engines are released after it
 )
 from chaoscypher_core.testing.fake_web import (
     fake_site,  # noqa: F401 — `source add --site`'s fake web

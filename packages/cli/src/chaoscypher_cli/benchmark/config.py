@@ -48,8 +48,8 @@ class BenchmarkConfig:
 
     At least one of ``extractors``, ``embedders``, ``chats`` must be
     non-empty. ``embedders`` and ``chats`` require ``extractors`` to be
-    set as well (graphs are built from extractors). ``chats`` requires
-    ``judge``.
+    set as well (graphs are built from extractors). ``chats`` without a
+    ``judge`` are probe-scored instead of judge-scored.
 
     Attributes:
         name: Display name shown in the leaderboard header.
@@ -303,13 +303,9 @@ def _parse_config(path: Path, *, source: ConfigSource) -> BenchmarkConfig:
         msg = f"{path}: {exc}"
         raise ValueError(msg) from exc
     weights = (
-        CompositeWeights(
-            extraction=float(weights_raw.get("extraction", 0.40)),
-            retrieval=float(weights_raw.get("retrieval", 0.20)),
-            chat=float(weights_raw.get("chat", 0.20)),
-            speed=float(weights_raw.get("speed", 0.10)),
-            cost=float(weights_raw.get("cost", 0.10)),
-        )
+        # the defaults live on CompositeWeights alone (one source); an unknown
+        # key is a TypeError the CLI reports as a bad config
+        CompositeWeights(**{key: float(value) for key, value in weights_raw.items()})
         if weights_raw
         else None
     )

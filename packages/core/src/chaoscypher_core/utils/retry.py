@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import sqlite3
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -102,28 +103,37 @@ def _backoff_delay(
     return float(min(base_delay * (exponential_multiplier**attempt), max_delay))
 
 
-def is_sqlite_lock_error(exc: BaseException) -> bool:
-    """Return True if this looks like SQLITE_BUSY / database-is-locked.
+_SQLITE_LOCK_CODES = frozenset({sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED})
+"""SQLite's primary result codes for a database another connection holds."""
 
-    Checks both ``OperationalError`` instances (SQLAlchemy) and plain
-    exceptions with matching messages. Errors from WAL contention,
-    busy_timeout expiry, and foreign-key lock conflicts all surface the
-    same text in SQLite.
+
+def is_sqlite_lock_error(exc: BaseException) -> bool:
+    """Return True if SQLite answered SQLITE_BUSY or SQLITE_LOCKED.
+
+    Only an ``OperationalError`` counts: SQLAlchemy's (whose driver error is read) or
+    sqlite3's own. Its result code decides (the primary code of an extended one such as
+    ``SQLITE_BUSY_SNAPSHOT``); the driver's message is read only when no code is there.
+    The text of the error as a whole is never read: it quotes the statement and its
+    parameters, so a value saying "database is locked" made a foreign-key failure, or any
+    error at all, read as busy and be retried or answered "try again".
 
     Args:
         exc: Exception to inspect.
 
     Returns:
-        True if the exception message indicates a SQLite lock error.
+        True if the exception is SQLite reporting a lock.
 
     """
-    if not isinstance(exc, OperationalError):
-        # Some drivers wrap or re-raise differently; still inspect the
-        # message as a fallback.
-        msg = str(exc).lower()
-        return "database is locked" in msg or "sqlite_busy" in msg
-
-    msg = str(exc).lower()
+    if isinstance(exc, OperationalError):
+        driver: BaseException | None = exc.orig
+    elif isinstance(exc, sqlite3.OperationalError):
+        driver = exc
+    else:
+        return False
+    code = getattr(driver, "sqlite_errorcode", None)
+    if isinstance(code, int):
+        return (code & 0xFF) in _SQLITE_LOCK_CODES
+    msg = str(driver).lower()
     return "database is locked" in msg or "sqlite_busy" in msg
 
 

@@ -18,6 +18,9 @@ import { databaseApi } from '../../services/api/databases';
 import { useSettings } from '../../contexts/useSettings';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { LLM_HEALTH_KEY } from '../../hooks/useLLMHealth';
+
+/** The prefix every settings query shares (`['settings']`, `['settings', 'cache']`, …). */
+const SETTINGS_QUERY_KEY = ['settings'] as const;
 import { getApiErrorMessage } from '../../utils/errors';
 import { logger } from '../../utils/logger';
 import { formatFileSize } from '../../utils/formatters';
@@ -183,6 +186,10 @@ export function useSettingsActions(): UseSettingsActionsReturn {
       // if the user just fixed their Ollama URL or pasted a real key,
       // the banner should clear on save, not later.
       await queryClient.invalidateQueries({ queryKey: LLM_HEALTH_KEY });
+      // The self-saved sections (cache, GraphRAG) and every other reader of
+      // the settings keep their own queries; refreshSettings() only reloads
+      // the App context, so they showed stale values until a remount.
+      await queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
       setTimeout(() => setSuccess(false), 3000);
     } catch (error) {
       logger.error('Failed to save settings:', error);
@@ -207,6 +214,9 @@ export function useSettingsActions(): UseSettingsActionsReturn {
           // Same as save: the reset changes provider + keys, so the LLM
           // health banner must re-evaluate now, not on its next interval.
           await queryClient.invalidateQueries({ queryKey: LLM_HEALTH_KEY });
+          // A reset deletes settings.yaml: the Cache and GraphRAG switches
+          // read their own queries and kept the pre-reset values.
+          await queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
         } catch (error) {
           logger.error('Failed to reset settings:', error);
           showAlert('Error', getApiErrorMessage(error) || 'Failed to reset settings');

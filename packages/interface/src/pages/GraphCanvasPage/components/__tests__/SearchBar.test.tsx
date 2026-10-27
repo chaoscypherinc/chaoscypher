@@ -99,4 +99,25 @@ describe('<SearchBar />', () => {
     flushDebounce();
     expect(onSearch).toHaveBeenCalledTimes(1);
   });
+  it('Enter selects the first match: runs the pending search now and submits the query', () => {
+    const onSearch = vi.fn();
+    const onSubmit = vi.fn();
+    render(<SearchBar onSearch={onSearch} onSubmit={onSubmit} />);
+
+    const input = typeInto('lone');
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(onSearch).toHaveBeenCalledWith('lone');
+    expect(onSubmit).toHaveBeenCalledWith('lone');
+    // The debounced rescan does not run a second time.
+    flushDebounce();
+    expect(onSearch).toHaveBeenCalledTimes(1);
+  });
+
+  it('Enter on an empty box submits nothing', () => {
+    const onSubmit = vi.fn();
+    render(<SearchBar onSearch={vi.fn()} onSubmit={onSubmit} />);
+    fireEvent.keyDown(screen.getByPlaceholderText('Search graph...'), { key: 'Enter' });
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
 });

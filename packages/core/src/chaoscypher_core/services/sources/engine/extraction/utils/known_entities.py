@@ -63,6 +63,9 @@ KNOWN_GRAPH_HEADER = (
 )
 """The header of a list seeded from the graph (the memory path, spec 2026-10-20 decision 2)."""
 MAX_RELATIONS_PER_LINE = 3
+KNOWN_LINE_LIMIT = 160
+"""The longest line of a known-entities block (``KnownEntities(line_limit=)``), and of an
+offered type's line beside the type list (``offered_types``)."""
 MIN_LINE_LIMIT = 24
 """The shortest ``line_limit`` taken: a line's head (``- Name (Type)``) of a short name fits."""
 _PHRASES_SEPARATOR = "; "
@@ -253,7 +256,7 @@ class KnownEntities:
         *,
         conventions: NameConventions = DEFAULT_NAME_CONVENTIONS,
         limit: int = 80,
-        line_limit: int = 160,
+        line_limit: int = KNOWN_LINE_LIMIT,
         header: str = KNOWN_ENTITIES_HEADER,
     ) -> None:
         """A list of at most limit lines (0: off) of at most line_limit characters (>= 24).

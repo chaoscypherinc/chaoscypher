@@ -55,6 +55,35 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+def _json_structure(text: str) -> tuple[list[str], bool]:
+    """The openers (``{`` / ``[``) still unclosed at the end of ``text``, and whether it ends inside a string.
+
+    A string-aware scan: brackets inside a quoted string are text, and a
+    backslash escapes the next character.
+    """
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "{[":
+            stack.append(char)
+        elif (char == "}" and stack and stack[-1] == "{") or (
+            char == "]" and stack and stack[-1] == "["
+        ):
+            stack.pop()
+    return stack, in_string
+
+
 class StructuredExtractor:
     """Provider-agnostic structured data extraction.
 
@@ -1499,20 +1528,18 @@ class StructuredExtractor:
         # Extract JSON portion
         text = self._extract_json_object(text)
 
-        # Count braces to detect truncation
-        open_braces = text.count("{")
-        close_braces = text.count("}")
-        open_brackets = text.count("[")
-        close_brackets = text.count("]")
-
-        is_truncated = open_braces > close_braces or open_brackets > close_brackets
+        # A string-aware scan of the nesting: braces inside strings are text,
+        # and the openers still unclosed at the end are what a truncated
+        # answer is missing, in order (2026-10-19 audit: the count-based
+        # closers appended every `}` and then every `]`, which closes `[{`
+        # as `}]` but `{[{` as `}}]`).
+        unclosed, in_string = _json_structure(text)
+        is_truncated = bool(unclosed) or in_string
         if is_truncated:
             logger.warning(
                 "structured_extraction_truncation_detected",
-                open_braces=open_braces,
-                close_braces=close_braces,
-                open_brackets=open_brackets,
-                close_brackets=close_brackets,
+                unclosed="".join(unclosed),
+                in_string=in_string,
             )
 
         # Fix unquoted string values (common with some models)
@@ -1555,31 +1582,41 @@ class StructuredExtractor:
         # Remove trailing commas
         text = re.sub(r",(\s*[}\]])", r"\1", text)
 
-        # Handle incomplete strings at the end
         if is_truncated:
-            lines = text.split("\n")
-            if lines:
-                last_line = lines[-1]
-                if last_line.count('"') % 2 == 1:
-                    logger.info("structured_extraction_closing_incomplete_string")
-                    text += '"'
-
-                if re.search(r'"[^"]*":\s*[^,}\]]*$', last_line.strip()):
-                    logger.info("structured_extraction_removing_incomplete_property")
-                    text = "\n".join(lines[:-1])
-
-        # Add missing closing braces/brackets
-        if open_braces > close_braces:
-            missing = open_braces - close_braces
-            logger.info("structured_extraction_adding_closing_braces", count=missing)
-            text += "}" * missing
-
-        if open_brackets > close_brackets:
-            missing = open_brackets - close_brackets
-            logger.info("structured_extraction_adding_closing_brackets", count=missing)
-            text += "]" * missing
+            text = self._close_truncated(text)
 
         return text, is_truncated
+
+    @staticmethod
+    def _close_truncated(text: str) -> str:
+        """``text`` with its cut-off tail dropped and every unclosed opener closed, innermost first."""
+        unclosed, in_string = _json_structure(text)
+        if in_string:
+            # The cut string is partial data: closed so the rules below see
+            # one token, then dropped with its key (a string that ended before
+            # the cut is kept — it may well be complete).
+            logger.info("structured_extraction_closing_incomplete_string")
+            text += '"'
+        value_tail = r'"[^"]*"' if in_string else r'[^,}\]"\s][^,}\]"]*'
+        # A value cut mid-token (`"b": tru`, or the cut string) goes with its key;
+        # inside an object, so does a key that never got its value (`, "b"`);
+        # inside an array, so does a cut string element.
+        trimmed = re.sub(rf',?\s*"[^"]*":\s*(?:{value_tail})$', "", text)
+        if unclosed and unclosed[-1] == "{":
+            trimmed = re.sub(r'([{,])\s*"[^"]*"\s*:?\s*$', r"\1", trimmed)
+        elif unclosed and in_string:
+            trimmed = re.sub(r',?\s*"[^"]*"$', "", trimmed)
+        if trimmed != text:
+            logger.info("structured_extraction_removing_incomplete_property")
+            # an item left with nothing in it (`, {`), then a comma left dangling
+            text = re.sub(r",\s*[{\[]\s*$", "", trimmed)
+            text = re.sub(r",(\s*[}\]]?)$", r"\1", text)
+        unclosed, _ = _json_structure(text)
+        if unclosed:
+            closers = "".join("}" if opener == "{" else "]" for opener in reversed(unclosed))
+            logger.info("structured_extraction_adding_closers", closers=closers)
+            text += closers
+        return text
 
     def _extract_json_object(self, text: str) -> str:
         """Extract the first complete JSON object or array from text.

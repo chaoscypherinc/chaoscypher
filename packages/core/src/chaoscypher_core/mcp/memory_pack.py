@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from chaoscypher_core.exceptions import ValidationError
-from chaoscypher_core.mcp.memory import memory_rows
+from chaoscypher_core.mcp.memory_seed import memory_rows
 from chaoscypher_core.services.export import CcxExporter
 
 

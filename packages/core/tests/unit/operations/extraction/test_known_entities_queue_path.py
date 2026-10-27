@@ -36,6 +36,7 @@ from chaoscypher_core.services.sources.engine.extraction.utils.known_entities im
     KnownEntities,
 )
 from chaoscypher_core.settings import EngineSettings
+from chaoscypher_core.testing.embedding import FakeEmbeddingProvider
 
 
 _SOURCE = "src_known_queue"
@@ -150,6 +151,11 @@ async def _run_chunk(
             new=AsyncMock(return_value=None),
         ),
         patch.object(service, "queue_finalize_extraction", new=AsyncMock(return_value="qid")),
+        # the chunk's entities are embedded for finalize; the default provider is the local model
+        patch(
+            "chaoscypher_core.repo_factories.get_embedding_service",
+            return_value=FakeEmbeddingProvider(),
+        ),
     ):
         result = await service._extract_chunk_handler(
             data={

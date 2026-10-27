@@ -112,7 +112,7 @@ curl http://localhost/api/v1/health
 
 ## Multi-Container (Development)
 
-For contributors working from an approved development checkout who need hot-reload and per-service logs. Requires Python 3.14+ and Node.js 24+.
+For contributors working from a clone of the repository who need hot-reload and per-service logs. Requires Python 3.14+ and Node.js 24+.
 
 ```bash
 cd chaoscypher

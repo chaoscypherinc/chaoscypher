@@ -71,9 +71,7 @@ def repo(tmp_path: Path) -> GraphRepository:
 def test_releasing_the_closing_source_reopens_the_edge_it_closed(repo: GraphRepository) -> None:
     closed = repo.get_edge("e_paris")
     assert closed is not None and closed.valid_to == date(2026, 10, 20)
-    assert (
-        repo.reopen_edges_closed_by("m_lyon") == 0 or True
-    )  # the port method exists; the release calls it
+    assert closed.closed_by_source_id == "m_lyon"
     released = repo.release_source("m_lyon")
     assert "e_lyon" in released.deleted_edge_ids
     reopened = repo.get_edge("e_paris")

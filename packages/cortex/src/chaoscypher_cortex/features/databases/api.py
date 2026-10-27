@@ -142,8 +142,8 @@ async def create_database(
 
     **Creates:**
     - Database directory
-    - app.db (SQLModel database with graph tables), via `init_database`
-    - Default node/edge templates, via `seed_default_templates`
+    - app.db (SQLModel database with graph tables) and the default node/edge
+      templates, via `init_database`
 
     **Returns:**
     - Created database metadata

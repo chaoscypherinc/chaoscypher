@@ -11,6 +11,7 @@ from sqlalchemy import func
 from sqlmodel import col, select
 
 from chaoscypher_core.adapters.sqlite.models import MemoryAuditRow
+from chaoscypher_core.exceptions import InvalidStateError
 from chaoscypher_core.utils.id import generate_hex_id
 
 
@@ -41,7 +42,18 @@ def record(
     facts_removed: int,
     facts_kept: int,
 ) -> MemoryAuditRow:
-    """Write one audit row (never the text) and commit it."""
+    """Add one audit row (never the text) to the session's transaction; its owner commits it.
+
+    A forget writes it inside the delete's own transaction, so a memory is never
+    gone without its row.
+
+    Raises:
+        InvalidStateError: The session is in no ``adapter.transaction()``: the row would
+            sit uncommitted until some later commit, or go with the next rollback.
+    """
+    if getattr(session, "_transaction_depth", 0) == 0:
+        msg = "A memory's audit row is written inside the transaction that forgets it."
+        raise InvalidStateError(msg)
     row = MemoryAuditRow(
         id=generate_hex_id(),
         database_name=database_name,
@@ -54,5 +66,4 @@ def record(
         facts_kept=facts_kept,
     )
     session.add(row)
-    session.commit()
     return row

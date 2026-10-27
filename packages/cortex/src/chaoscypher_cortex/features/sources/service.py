@@ -989,6 +989,32 @@ class SourceService:
         await queue_client.cancel_by_metadata(metadata={"job_id": job_id}, queue=QUEUE_LLM)
         adapter.update_extraction_job(job_id, {"status": "cancelled"})
         adapter.cancel_extraction(source_id)
+        await self._dispatch_next_waiting_extraction()
+
+    async def _dispatch_next_waiting_extraction(self) -> None:
+        """Dispatch the source parked behind the extraction slot just freed.
+
+        Slot-lifetime invariant (Audit fix F41): a waiter parked by
+        ``mark_extraction_waiting`` holds no queue task, only a row breadcrumb,
+        so every path that moves the slot holder out of EXTRACTING must call
+        ``trigger_next_waiting_extraction`` — the worker-side releases do, and
+        a user cancel/abort is the same release. Best-effort: the cancel has
+        already succeeded, so a dispatch failure is logged, not raised.
+        """
+        from chaoscypher_core.operations.extraction.extraction_finalizer import (
+            trigger_next_waiting_extraction,
+        )
+
+        try:
+            await trigger_next_waiting_extraction(
+                self.storage_adapter, self.database_name, self.settings
+            )
+        except Exception as exc:
+            logger.warning(
+                "trigger_next_waiting_extraction_failed",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
 
     async def abort_processing(self, source_id: str) -> None:
         """Abort all in-progress processing for a source.
@@ -1109,6 +1135,8 @@ class SourceService:
             error_stage=_ABORT_STAGE_MAP[current_status].value,
             error_message=error_message,
         )
+        if current_status == SourceStatus.EXTRACTING:
+            await self._dispatch_next_waiting_extraction()
 
     # ================================
     # Data Access (entities, relationships, llm-metrics)

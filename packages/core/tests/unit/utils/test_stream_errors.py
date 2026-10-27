@@ -22,6 +22,8 @@ from ollama._types import ResponseError
 
 from chaoscypher_core.adapters.llm.providers.ollama_provider import OllamaProvider
 from chaoscypher_core.exceptions import (
+    LLMAuthenticationError,
+    LLMContextLengthError,
     LLMError,
     LLMModelError,
     LLMRateLimitError,
@@ -281,3 +283,107 @@ def test_model_missing_text_decides_only_without_a_server_error_status(
     )
     _exact(error, kind)
     assert error.is_retryable is retryable
+
+
+_CONTEXT_400 = (
+    "This model's maximum context length is 128000 tokens. However, your messages "
+    "resulted in {n} tokens. Please reduce the length of the messages."
+)
+
+
+@pytest.mark.parametrize("tokens", ["142901", "140412", "140112", "150312"])
+def test_a_status_number_inside_a_token_count_is_not_a_status(tokens: str) -> None:
+    """A context-length 400 is a context-length error whatever digits its count contains.
+
+    Before 2026-10-19 the provider word lists' bare "429" / "404" / "401" / "403"
+    were substring-matched against the whole text, so "142901 tokens" was a
+    retryable rate limit and "140412 tokens" a fatal model error.
+    """
+    from chaoscypher_core.adapters.llm.providers.openai_provider import _PATTERNS
+
+    err = classify_provider_error(
+        _StatusError(_CONTEXT_400.format(n=tokens), 400), "gpt", _PATTERNS
+    )
+    assert isinstance(err, LLMContextLengthError), type(err)
+    assert err.is_retryable is False
+
+
+def test_a_bare_status_number_still_counts_without_a_status() -> None:
+    """A stream error chunk carries no status; "429" standing alone in its text is one."""
+    from chaoscypher_core.adapters.llm.providers.openai_provider import _PATTERNS
+
+    rate = classify_llm_failure(
+        "Error code: 429 - slow down", provider="openai", model="gpt", patterns=_PATTERNS
+    )
+    assert isinstance(rate, LLMRateLimitError)
+    count = classify_llm_failure(
+        "messages resulted in 142901 tokens", provider="openai", model="gpt", patterns=_PATTERNS
+    )
+    assert not isinstance(count, LLMRateLimitError)
+
+
+@pytest.mark.parametrize(
+    ("provider", "message", "status"),
+    [
+        ("openai", "Country, region, or territory not supported", 403),
+        ("openai", "Project `proj_abc` does not have access to model `gpt-5`", 403),
+        ("anthropic", "invalid x-api-key", 401),
+    ],
+)
+def test_a_401_or_403_status_is_an_auth_failure_whatever_its_text(
+    provider: str, message: str, status: int
+) -> None:
+    """The status names the failure when the text has no auth words (2026-10-26, #824 review).
+
+    The shared status rules cover 404, 429 and the 5xx statuses only; a 401 or
+    403 is decided by the provider's own "401" / "403" indicators. Skipping
+    every digit indicator under a status made these an unknown ``LLMError``,
+    which a cloud provider retries.
+    """
+    import importlib
+
+    patterns = importlib.import_module(
+        f"chaoscypher_core.adapters.llm.providers.{provider}_provider"
+    )._PATTERNS
+    err = classify_provider_error(_StatusError(message, status), "m", patterns)
+    assert isinstance(err, LLMAuthenticationError), type(err)
+    assert err.is_retryable is False
+
+
+def test_a_400_naming_a_status_like_count_stays_a_context_length_error() -> None:
+    """A status digit indicator compares to the status, so a 400 with "142901 tokens" is no 429."""
+    from chaoscypher_core.adapters.llm.providers.openai_provider import _PATTERNS
+
+    err = classify_provider_error(
+        _StatusError(_CONTEXT_400.format(n="142901"), 400), "gpt", _PATTERNS
+    )
+    assert type(err) is LLMContextLengthError
+
+
+def test_a_server_error_is_a_timeout_only_when_504_stands_alone() -> None:
+    """``is_timeout`` read "504" as a substring, so a request id 85041 marked a timeout."""
+    from chaoscypher_core.adapters.llm.providers.openai_provider import _PATTERNS
+
+    plain = classify_llm_failure(
+        "Internal server error (request 85041)", provider="openai", model="gpt", patterns=_PATTERNS
+    )
+    assert isinstance(plain, LLMServiceError)
+    assert plain.is_timeout is False
+    gateway = classify_llm_failure(
+        "server error: 504 gateway", provider="openai", model="gpt", patterns=_PATTERNS
+    )
+    assert isinstance(gateway, LLMServiceError)
+    assert gateway.is_timeout is True
+
+
+def test_a_regex_indicator_is_a_regex() -> None:
+    """Gemini's ``max.*token`` and ``exceeds.*limit`` never matched as substrings."""
+    from chaoscypher_core.adapters.llm.providers.gemini_provider import _PATTERNS
+
+    err = classify_llm_failure(
+        "The input token count exceeds the maximum number of tokens allowed",
+        provider="gemini",
+        model="gemini-2.5-flash",
+        patterns=_PATTERNS,
+    )
+    assert isinstance(err, LLMContextLengthError)

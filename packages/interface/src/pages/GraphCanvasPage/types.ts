@@ -97,6 +97,64 @@ export function isSourceGroupNode(nodeId: string): boolean {
 }
 
 /** Check if an edge ID is a virtual provenance edge. */
-export function isProvenanceEdge(edgeId: string): boolean {
+function isProvenanceEdge(edgeId: string): boolean {
   return edgeId.startsWith(SOURCE_PROVENANCE_PREFIX);
+}
+
+// ========================================
+// The Unresolved bucket (utils/unresolvedBucket.ts)
+// ========================================
+
+/** Prefix for the synthetic "Unresolved (N)" hub nodes, one per source document. */
+const UNRESOLVED_BUCKET_PREFIX = 'ub:';
+
+/** Prefix for the synthetic edges linking an Unresolved hub to its members. */
+export const UNRESOLVED_EDGE_PREFIX = 'ue:';
+
+/** Prefix for the synthetic edge linking a document root to its Unresolved hub. */
+export const UNRESOLVED_ROOT_EDGE_PREFIX = 'ur:';
+
+/**
+ * Id of a source document's Unresolved hub; `null` for the one hub holding
+ * the unresolved nodes with no known source.
+ */
+export function unresolvedBucketId(sourceId: string | null): string {
+  return `${UNRESOLVED_BUCKET_PREFIX}${sourceId ?? ''}`;
+}
+
+/** The source document an Unresolved hub belongs to; `null` for the no-source hub. */
+export function bucketSourceId(hubId: string): string | null {
+  return hubId.slice(UNRESOLVED_BUCKET_PREFIX.length) || null;
+}
+
+/** Check if a node ID is a synthetic Unresolved hub (any source's). */
+export function isUnresolvedBucketNode(nodeId: string): boolean {
+  return nodeId.startsWith(UNRESOLVED_BUCKET_PREFIX);
+}
+
+// ========================================
+// Synthetic elements: the one check
+// ========================================
+
+/**
+ * True for a node the canvas made up: a source's root or the Unresolved hub.
+ *
+ * A synthetic node is drawn like any other but is not graph data: it is never
+ * sent to the API, searched, filtered, laid out, sized by degree, edited,
+ * duplicated or deleted. Every data path tests this, not a per-kind check.
+ */
+export function isSyntheticNode(nodeId: string): boolean {
+  return isSourceGroupNode(nodeId) || isUnresolvedBucketNode(nodeId);
+}
+
+/**
+ * True for an edge the canvas made up: a provenance edge, an Unresolved hub's
+ * edge to a member, or a document root's edge to its Unresolved hub.
+ */
+export function isSyntheticEdge(edgeId: string): boolean {
+  return (
+    isProvenanceEdge(edgeId)
+    || edgeId.startsWith(UNRESOLVED_EDGE_PREFIX)
+    || edgeId.startsWith(UNRESOLVED_ROOT_EDGE_PREFIX)
+  );
 }

@@ -345,6 +345,7 @@ def retrieval_handlers(
         chat_callback: The shape router's model; None decides by the rules
             alone, an abstention being lookup.
     """
+    from chaoscypher_core.adapters.embedding import require_embedding_provider
     from chaoscypher_core.services.workflows.tools.engine.handlers.graphrag_handlers import (
         GraphRAGToolHandlers,
     )
@@ -354,7 +355,10 @@ def retrieval_handlers(
         search_repository=engine.search_repository,
         indexing_repository=engine.storage_adapter,
         source_storage=engine.storage_adapter,
-        embedding_callback=embedding_callback or engine.embedding_service.embed,
+        embedding_callback=embedding_callback
+        or require_embedding_provider(
+            engine.embedding_service, "The benchmark's vector retrieval"
+        ).embed,
         settings=engine.settings if settings is None else settings,
         database_name=engine.database_name,
         chat_callback=chat_callback,

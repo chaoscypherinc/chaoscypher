@@ -99,7 +99,8 @@ class ChunkTasksRecoveryMixin(ExtractionJobQueryBase):
         Returns:
             List of stuck source dicts, each carrying the projected columns
             below (``id``, ``database_name``, ``filename``, ``status``,
-            ``current_extraction_job_id``, ``error_message``, ``error_stage``)
+            ``current_extraction_job_id``, ``error_message``, ``error_stage``,
+            ``source_type``)
             plus ``extraction_job_status`` when a job was found.
         """
         self._ensure_connected()
@@ -122,6 +123,7 @@ class ChunkTasksRecoveryMixin(ExtractionJobQueryBase):
                     SourceRow.current_extraction_job_id,
                     SourceRow.error_message,
                     SourceRow.error_stage,
+                    SourceRow.source_type,  # recovery leaves memories to the link step
                     # EXCLUDE: user_metadata, cross_chunk_filtering_log,
                     # extraction_pending_file_info, llm_error_counts, etc.
                 )

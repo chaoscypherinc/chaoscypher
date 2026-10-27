@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.fakes.embedding import FakeEmbeddingProvider
+from chaoscypher_core.testing.embedding import FakeEmbeddingProvider
 
 
 @pytest.mark.asyncio

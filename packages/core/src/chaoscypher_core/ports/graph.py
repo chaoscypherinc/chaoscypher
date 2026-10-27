@@ -7,7 +7,7 @@ Defines Protocol for graph data access (nodes, edges, templates).
 Main app implements this via an adapter class that wraps its GraphRepository.
 """
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 
@@ -153,11 +153,17 @@ class GraphRepositoryProtocol(Protocol):
         """
         ...
 
-    def create_node(self, node_create: NodeCreate) -> Node:
+    def create_node(
+        self, node_create: NodeCreate, custom_id: str | None = None, *, person_made: bool = False
+    ) -> Node:
         """Create a new node in the graph.
 
         Args:
             node_create: Node creation data
+            custom_id: The row's id; None generates one.
+            person_made: A person makes it (the create tools, the API, the SDK, the
+                CLI): no release deletes or rewrites it (migration 0025). Never request
+                input: only the person paths pass it.
 
         Returns:
             Created Node object with generated ID
@@ -269,6 +275,17 @@ class GraphRepositoryProtocol(Protocol):
             template_ids: Template ids to link.
             source_id: Source id to assign.
             database_name: Database that owns the templates.
+        """
+        ...
+
+    def list_nodes_without_embeddings(
+        self, *, after_id: str | None = None, limit: int = 10000
+    ) -> list[Node]:
+        """Nodes with no embedding vector, ordered by id, after ``after_id`` when given.
+
+        Args:
+            after_id: Keyset cursor: only ids after it; None starts at the beginning.
+            limit: Maximum number of results.
         """
         ...
 
@@ -400,11 +417,17 @@ class GraphRepositoryProtocol(Protocol):
 
     # ==================== Edge Operations ====================
 
-    def create_edge(self, edge_create: EdgeCreate) -> Edge:
+    def create_edge(
+        self, edge_create: EdgeCreate, custom_id: str | None = None, *, person_made: bool = False
+    ) -> Edge:
         """Create a new edge between two nodes.
 
         Args:
             edge_create: Edge creation data
+            custom_id: The row's id; None generates one.
+            person_made: A person makes it (the create tools, the API, the SDK, the
+                CLI): no release deletes or rewrites it (migration 0025). Never request
+                input: only the person paths pass it.
 
         Returns:
             Created Edge object with generated ID
@@ -546,6 +569,16 @@ class GraphRepositoryProtocol(Protocol):
         """
         ...
 
+    def repoint_edge(self, edge_id: str, *, source_node_id: str, target_node_id: str) -> None:
+        """Move an edge to new ends in place, keeping its id, ``created_at`` and ``ccx_iri``.
+
+        Joins the caller's transaction: nothing is committed here.
+
+        Raises:
+            NotFoundError: No edge of this database has the id.
+        """
+        ...
+
     def delete_edge(self, edge_id: str) -> bool:
         """Delete an edge by ID.
 
@@ -655,6 +688,31 @@ class GraphRepositoryProtocol(Protocol):
 
         Returns:
             Created Template object
+
+        """
+        ...
+
+    def discard_failed_work(self) -> None:
+        """Roll back what a failed call left in this repository's session.
+
+        For a catch that answers a failure and goes on: the next call must not find the
+        session needing a rollback. Inside a transaction block, the block rolls back.
+        """
+        ...
+
+    def ensure_default_templates_exist(
+        self, default_templates_provider: Callable[[], list[dict[str, Any]]] | None = None
+    ) -> int:
+        """Insert each template the provider gives that the database lacks; return how many.
+
+        A template is present when a row has its id; a present one is never rewritten.
+
+        Args:
+            default_templates_provider: Returns the template definitions
+                (``templates/default_templates.py``'s shape); None inserts nothing.
+
+        Returns:
+            How many were inserted.
 
         """
         ...
@@ -1010,7 +1068,9 @@ class GraphRepositoryProtocol(Protocol):
         """A unit of work that holds the database's writer lock from its first statement.
 
         For a read-then-write that must not interleave with another writer:
-        what is read inside is what the writes inside build on. Commits on a
+        what is read inside is what the writes inside build on. The rows the
+        session cached are reloaded when the lock is taken, so what is read
+        inside is the database as of the lock. Commits on a
         clean exit and rolls back on an exception; inside a caller's
         transaction it joins it (taking the lock now if the transaction has
         not written yet) and commits nothing.
@@ -1019,6 +1079,13 @@ class GraphRepositoryProtocol(Protocol):
 
     def member_node_ids(self, source_id: str) -> list[str]:
         """The nodes ``source_id`` attests, in membership order."""
+        ...
+
+    def nodes_attested_by(self, source_ids: Collection[str], limit: int) -> list[str]:
+        """At most ``limit`` nodes ``source_ids`` attest, most memberships among them first.
+
+        Ties go by node id. A scoped memory's seed reads its scope's nodes with it.
+        """
         ...
 
     def member_edge_ids(self, source_id: str) -> list[str]:

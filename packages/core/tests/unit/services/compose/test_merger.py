@@ -11,8 +11,11 @@ embedding pass is stubbed (no model download in unit tests).
 
 from __future__ import annotations
 
+import asyncio
+import errno
 import itertools
 import json
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -26,6 +29,7 @@ from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode, GraphT
 from chaoscypher_core.adapters.sqlite.repos import GraphRepository
 from chaoscypher_core.app_config import get_settings
 from chaoscypher_core.app_config.engine_factory import build_engine_settings
+from chaoscypher_core.services.compose import merger as merger_module
 from chaoscypher_core.services.compose.merger import (
     COMPOSITION_MANIFEST_FILENAME,
     MergerError,
@@ -38,6 +42,7 @@ from chaoscypher_core.services.compose.models import (
 )
 from chaoscypher_core.services.export import CcxExporter
 from chaoscypher_core.services.package import extract_archive
+from chaoscypher_core.templates.default_templates import SHIPPED_TEMPLATE_IDS
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +149,7 @@ def _package(tmp_path: Path, name: str, people: tuple[str, ...]) -> ResolvedPack
 
 
 def _count(output_dir: Path) -> tuple[int, int, int]:
-    """(nodes, edges, templates) in the composed database."""
+    """(nodes, edges, templates) in the composed database; the shipped templates not counted."""
     db_path = output_dir / "databases" / "default" / "app.db"
     _OPENED_DBS.append(db_path)
     adapter = SqliteAdapter(str(db_path), database_name="default")
@@ -155,7 +160,10 @@ def _count(output_dir: Path) -> tuple[int, int, int]:
         return (
             repo.count_nodes(),
             repo.count_edges(),
-            repo.count_templates(database_name="default"),
+            sum(
+                t.id not in SHIPPED_TEMPLATE_IDS
+                for t in repo.list_templates(include_disabled_sources=True)
+            ),
         )
     finally:
         adapter.disconnect()
@@ -225,8 +233,11 @@ class TestMerge:
         nodes, edges, templates = _count(tmp_path / "out")
         assert (nodes, edges) == (5, 3)
         # Templates are unified by name across packages: one Person, one
-        # WorksWith, even though each package shipped its own copy.
-        assert templates == 2
+        # WorksWith, even though each package shipped its own copy. The
+        # database has the shipped templates too (``prepare_database``), and
+        # the packages' Person is unified with the shipped one by name, so one
+        # template of the packages' own remains.
+        assert templates == 1
 
         manifest = json.loads(
             (tmp_path / "out" / COMPOSITION_MANIFEST_FILENAME).read_text(encoding="utf-8")
@@ -251,7 +262,7 @@ class TestMerge:
         result = await merger.merge([alpha, beta])
 
         assert result.success is True, result.errors
-        assert _count(tmp_path / "out") == (3, 1, 2)
+        assert _count(tmp_path / "out") == (3, 1, 1)  # Person is the shipped one
         manifest = json.loads(
             (tmp_path / "out" / COMPOSITION_MANIFEST_FILENAME).read_text(encoding="utf-8")
         )
@@ -314,6 +325,223 @@ class TestMerge:
         assert (out / "cache" / "pkg.ccx").read_bytes() == b"cached"
         assert (out / "settings.yaml").exists()
         assert json.loads((out / COMPOSITION_MANIFEST_FILENAME).read_text())["total_entities"] == 1
+
+    @pytest.mark.asyncio
+    async def test_failed_upsert_build_restores_the_existing_composition(
+        self, tmp_path: Path
+    ) -> None:
+        """`compose build --no-clean` that hits one bad package keeps what was there.
+
+        The upsert merges into the composition the user already has (and
+        anything `compose mcp --mode write` added since); the failure path
+        used to rmtree that whole database. It now puts the pre-build copy
+        back, partial merges of this run included.
+        """
+        out = tmp_path / "out"
+        alpha = _package(tmp_path, "alpha", ("Alice", "Bob"))
+        first = await NamespaceMerger(output_dir=out).merge([alpha], clean=True)
+        assert first.success is True, first.errors
+        manifest_before = (out / COMPOSITION_MANIFEST_FILENAME).read_text(encoding="utf-8")
+
+        beta = _package(tmp_path, "beta", ("Carol",))
+        bad_archive = tmp_path / "bad.ccx"
+        bad_archive.write_bytes(b"PK\x03\x04 this is not a package")
+        bad = ResolvedPackage(
+            spec=PackageSpec.parse("bad:1.0.0"),
+            name="bad",
+            version="1.0.0",
+            path=bad_archive,
+            archive_path=bad_archive,
+        )
+
+        second = await NamespaceMerger(output_dir=out).merge([beta, bad], clean=False)
+
+        # The restore swaps the database file under this process's cached
+        # engine (the CLI exits here; `compose up` opens it fresh) — read it
+        # through a fresh one, as the server would.
+        evict_engine(out / "databases" / "default" / "app.db")
+        assert second.success is False
+        # Alice, Bob and their one edge, as the first build left them. One
+        # template of the package's own: since the Engine seeds the shipped
+        # templates into every database it opens (``prepare_database``), the
+        # package's Person is unified with the shipped Person by name and only
+        # WorksWith is the package's own — ``_count`` leaves the shipped ones out.
+        assert _count(out) == (2, 1, 1)
+        assert (out / COMPOSITION_MANIFEST_FILENAME).read_text(encoding="utf-8") == manifest_before
+        assert [p.name for p in out.iterdir() if p.name.endswith(".pre-build")] == []
+
+    @pytest.mark.asyncio
+    async def test_a_failed_snapshot_copy_leaves_the_composition_untouched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A `--no-clean` build that cannot copy the composition aside changes nothing.
+
+        The copy ran inside the build's error handler with the snapshot
+        still None, so a full disk (ENOSPC halfway through the copy) went
+        down the failure path with nothing to restore: the user's
+        composition was deleted and the half-written copy left behind.
+        """
+        out = tmp_path / "out"
+        alpha = _package(tmp_path, "alpha", ("Alice", "Bob"))
+        assert (await NamespaceMerger(output_dir=out).merge([alpha], clean=True)).success
+        evict_engine(out / "databases" / "default" / "app.db")
+        manifest_before = (out / COMPOSITION_MANIFEST_FILENAME).read_text(encoding="utf-8")
+
+        def _disk_full(src: Path, dst: Path, *args: object, **kwargs: object) -> None:
+            Path(dst).mkdir(parents=True)
+            (Path(dst) / "app.db").write_bytes(b"half a copy")
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        monkeypatch.setattr(merger_module.shutil, "copytree", _disk_full)
+        beta = _package(tmp_path, "beta", ("Carol",))
+
+        result = await NamespaceMerger(output_dir=out).merge([beta], clean=False)
+
+        assert result.success is False
+        assert any("No space left on device" in e for e in result.errors), result.errors
+        assert _count(out) == (2, 1, 1)
+        assert (out / COMPOSITION_MANIFEST_FILENAME).read_text(encoding="utf-8") == manifest_before
+        assert [p.name for p in out.iterdir() if "pre-build" in p.name] == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("interruption", [KeyboardInterrupt, asyncio.CancelledError])
+    async def test_an_interrupted_upsert_build_restores_the_existing_composition(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        interruption: type[BaseException],
+    ) -> None:
+        """Ctrl+C or a cancelled task mid-build puts the composition back, then re-raises.
+
+        The failure handler caught ``Exception`` only, so an interruption
+        skipped the restore: the partial database stayed live and the next
+        `--no-clean` build dropped the good copy.
+        """
+        out = tmp_path / "out"
+        alpha = _package(tmp_path, "alpha", ("Alice", "Bob"))
+        assert (await NamespaceMerger(output_dir=out).merge([alpha], clean=True)).success
+        evict_engine(out / "databases" / "default" / "app.db")
+        manifest_before = (out / COMPOSITION_MANIFEST_FILENAME).read_text(encoding="utf-8")
+
+        real_merge_package = NamespaceMerger._merge_package
+        calls = 0
+
+        async def _interrupt_on_second(
+            self: NamespaceMerger, engine: object, pkg: object
+        ) -> object:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise interruption
+            return await real_merge_package(self, engine, pkg)
+
+        monkeypatch.setattr(NamespaceMerger, "_merge_package", _interrupt_on_second)
+        beta = _package(tmp_path, "beta", ("Carol",))
+        gamma = _package(tmp_path, "gamma", ("Dave",))
+
+        with pytest.raises(interruption):
+            await NamespaceMerger(output_dir=out).merge([beta, gamma], clean=False)
+
+        evict_engine(out / "databases" / "default" / "app.db")
+        assert _count(out) == (2, 1, 1)  # beta's Carol, merged before the interruption, is gone
+        assert (out / COMPOSITION_MANIFEST_FILENAME).read_text(encoding="utf-8") == manifest_before
+        assert [p.name for p in out.iterdir() if "pre-build" in p.name] == []
+
+    @pytest.mark.asyncio
+    async def test_an_interrupted_snapshot_copy_leaves_the_composition_untouched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Ctrl+C while the composition is being copied aside re-raises and leaves no half copy."""
+        out = tmp_path / "out"
+        alpha = _package(tmp_path, "alpha", ("Alice", "Bob"))
+        assert (await NamespaceMerger(output_dir=out).merge([alpha], clean=True)).success
+        evict_engine(out / "databases" / "default" / "app.db")
+
+        def _interrupted(src: Path, dst: Path, *args: object, **kwargs: object) -> None:
+            Path(dst).mkdir(parents=True)
+            (Path(dst) / "app.db").write_bytes(b"half a copy")
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(merger_module.shutil, "copytree", _interrupted)
+        beta = _package(tmp_path, "beta", ("Carol",))
+
+        with pytest.raises(KeyboardInterrupt):
+            await NamespaceMerger(output_dir=out).merge([beta], clean=False)
+
+        assert _count(out) == (2, 1, 1)
+        assert [p.name for p in out.iterdir() if "pre-build" in p.name] == []
+
+    @pytest.mark.asyncio
+    async def test_a_snapshot_left_by_an_interrupted_build_is_restored_not_dropped(
+        self, tmp_path: Path
+    ) -> None:
+        """A pre-build copy found at the start of a build is the last good composition.
+
+        A build killed outright (SIGKILL, power loss) leaves the partial
+        database live and the pre-build copy beside it. The next upsert
+        build used to delete that copy first and snapshot the partial
+        database instead, losing the good one for good. It now restores the
+        copy, says so, and builds on it.
+        """
+        out = tmp_path / "out"
+        good = tmp_path / "good"
+        alpha = _package(tmp_path, "alpha", ("Alice", "Bob"))
+        beta = _package(tmp_path, "beta", ("Carol",))
+        assert (await NamespaceMerger(output_dir=good).merge([alpha], clean=True)).success
+        assert (await NamespaceMerger(output_dir=out).merge([alpha, beta], clean=True)).success
+        evict_engine(good / "databases" / "default" / "app.db")
+        evict_engine(out / "databases" / "default" / "app.db")
+        # What the killed build left: its partial database (Alice, Bob and
+        # Carol) live, the good composition (Alice and Bob) copied aside.
+        snapshot = out / ".default.pre-build"
+        shutil.copytree(good / "databases" / "default", snapshot / "database")
+        shutil.copy2(good / COMPOSITION_MANIFEST_FILENAME, snapshot / COMPOSITION_MANIFEST_FILENAME)
+
+        gamma = _package(tmp_path, "gamma", ("Dave",))
+        result = await NamespaceMerger(output_dir=out).merge([gamma], clean=False)
+
+        assert result.success is True, result.errors
+        evict_engine(out / "databases" / "default" / "app.db")
+        assert _count(out)[0] == 3  # Alice, Bob, Dave: not the killed build's Carol
+        assert any("interrupted" in w for w in result.warnings), result.warnings
+        assert [p.name for p in out.iterdir() if "pre-build" in p.name] == []
+
+    @pytest.mark.asyncio
+    async def test_a_restore_killed_after_putting_the_database_back_is_finished(
+        self, tmp_path: Path
+    ) -> None:
+        """A pre-build copy holding only the manifest: the database is already back.
+
+        Finishing that restore must not delete the database it put back.
+        """
+        out = tmp_path / "out"
+        alpha = _package(tmp_path, "alpha", ("Alice", "Bob"))
+        assert (await NamespaceMerger(output_dir=out).merge([alpha], clean=True)).success
+        evict_engine(out / "databases" / "default" / "app.db")
+        snapshot = out / ".default.pre-build"
+        snapshot.mkdir()
+        (out / COMPOSITION_MANIFEST_FILENAME).rename(snapshot / COMPOSITION_MANIFEST_FILENAME)
+
+        beta = _package(tmp_path, "beta", ("Carol",))
+        result = await NamespaceMerger(output_dir=out).merge([beta], clean=False)
+
+        assert result.success is True, result.errors
+        evict_engine(out / "databases" / "default" / "app.db")
+        assert _count(out)[0] == 3
+        assert [p.name for p in out.iterdir() if "pre-build" in p.name] == []
+
+    @pytest.mark.asyncio
+    async def test_successful_upsert_build_leaves_no_snapshot(self, tmp_path: Path) -> None:
+        out = tmp_path / "out"
+        alpha = _package(tmp_path, "alpha", ("Alice",))
+        assert (await NamespaceMerger(output_dir=out).merge([alpha], clean=True)).success
+
+        beta = _package(tmp_path, "beta", ("Carol",))
+        result = await NamespaceMerger(output_dir=out).merge([beta], clean=False)
+
+        assert result.success is True, result.errors
+        assert _count(out)[0] == 2
+        assert [p.name for p in out.iterdir() if p.name.endswith(".pre-build")] == []
 
     @pytest.mark.asyncio
     async def test_clean_false_keeps_existing_output(self, tmp_path: Path) -> None:

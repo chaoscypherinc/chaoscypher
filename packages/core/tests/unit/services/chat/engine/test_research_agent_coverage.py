@@ -25,6 +25,7 @@ import pytest
 
 from chaoscypher_core.services.chat.engine import research as research_mod
 from chaoscypher_core.services.chat.engine.research import ResearchAgent
+from chaoscypher_core.utils.tool_failure import tool_failure
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +169,7 @@ class TestBuildTopicHierarchy:
         agent, mocks = _make_agent()
         mocks["llm_manager"].get_chat_provider.side_effect = RuntimeError("provider down")
         result = await agent.build_topic_hierarchy("AI")
-        assert result == {"success": False, "error": "Research operation failed"}
+        assert result == tool_failure(RuntimeError())
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +238,7 @@ class TestIdentifyKnowledgeGaps:
         agent, mocks = _make_agent()
         mocks["search"].search.side_effect = RuntimeError("search down")
         result = await agent.identify_knowledge_gaps("X")
-        assert result == {"success": False, "error": "Research operation failed"}
+        assert result == tool_failure(RuntimeError())
 
 
 # ---------------------------------------------------------------------------
@@ -359,4 +360,4 @@ class TestExtractEntities:
         mocks["llm_manager"].get_chat_provider.side_effect = RuntimeError("boom")
         with _patch_extraction_settings():
             result = await agent.extract_entities_from_text("txt")
-        assert result == {"success": False, "error": "Research operation failed"}
+        assert result == tool_failure(RuntimeError())

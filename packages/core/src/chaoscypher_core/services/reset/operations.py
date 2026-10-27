@@ -166,8 +166,7 @@ async def _delete_import_files(
             / settings.paths.imports_subdir
         )
         if imports_dir.exists():
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, shutil.rmtree, imports_dir)
+            await asyncio.to_thread(shutil.rmtree, imports_dir)
             stats["imports_directory_deleted"] = True
             logger.info("imports_directory_deleted", imports_dir=str(imports_dir))
         else:

@@ -15,6 +15,9 @@ import structlog
 from chaoscypher_core.models import EdgeCreate
 from chaoscypher_core.ports.search import item_in_source_scope
 from chaoscypher_core.services.workflows.tools.engine.handlers.decorators import tool_handler
+from chaoscypher_core.services.workflows.tools.engine.handlers.template_lookup import (
+    resolve_template,
+)
 from chaoscypher_core.settings import GraphSettings
 
 
@@ -52,18 +55,34 @@ class EdgeToolHandlers:
         properties: dict[str, Any] | None = None,
         source_ids: list[str] | None = None,
     ) -> dict:
-        """Create an edge between nodes."""
+        """Create an edge between nodes; ``template_id`` may be the template's name.
+
+        The template is checked, and a shipped one the database lost restored, and both
+        nodes are checked, before the insert: an answer the client can act on, never a
+        foreign-key failure.
+        """
         if properties is None:
             properties = {}
+        resolved = resolve_template(self.graph, template_id, "edge", restore_shipped=True)
+        if isinstance(resolved, dict):
+            return resolved
+        for node_id in (source_node_id, target_node_id):
+            if self.graph.get_node(node_id, include_embedding=False) is None:
+                return {
+                    "success": False,
+                    "error": f"Unknown node: {node_id}",
+                    "code": "UNKNOWN_NODE",
+                }
 
         edge = self.graph.create_edge(
             EdgeCreate(
                 source_node_id=source_node_id,
                 target_node_id=target_node_id,
-                template_id=template_id,
+                template_id=resolved,
                 label=label,
                 properties=properties,
-            )
+            ),
+            person_made=True,  # made by a person (or an agent for one), no source
         )
 
         return {

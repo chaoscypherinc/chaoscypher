@@ -9,6 +9,11 @@ the script key the prompt contains, and serves that key's pass-1 lines on the fi
 for the key and its pass-2 lines on the second (then alternates, one pair per group). A
 prompt that contains no key is answered with nothing on both passes.
 
+Two hooks make a model that is busy or failing: ``hold_on`` maps a key to an
+``asyncio.Event`` the call awaits before it answers (a model that does not answer until
+the test says so), ``raise_on`` maps a key to the exception the call raises (a model that
+fails). Both record the prompt first.
+
 The lines are the V2 pipe-delimited format ``fakes/llm.py`` documents:
 ``E|name|type|aliases|confidence|sent_ref|description`` and
 ``R|src_idx|dst_idx|type|confidence|sent_ref|justification``.
@@ -16,8 +21,9 @@ The lines are the V2 pipe-delimited format ``fakes/llm.py`` documents:
 
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from chaoscypher_core.models import LLMChatResponse, TokenUsage
@@ -34,8 +40,17 @@ that reads the KNOWN ENTITIES block writes the name the block gives)."""
 class ScriptedExtractionLLM:
     """``LLMProviderPort``-shaped: ``chat`` answers from ``script``, and records every prompt."""
 
-    def __init__(self, script: dict[str, Script], *, provider_name: str = "scripted") -> None:
+    def __init__(
+        self,
+        script: dict[str, Script],
+        *,
+        provider_name: str = "scripted",
+        hold_on: Mapping[str, asyncio.Event] | None = None,
+        raise_on: Mapping[str, BaseException] | None = None,
+    ) -> None:
         self.script = dict(script)
+        self.hold_on: dict[str, asyncio.Event] = dict(hold_on or {})
+        self.raise_on: dict[str, BaseException] = dict(raise_on or {})
         self.provider_name = provider_name
         self.prompts: list[str] = []
         self.last_prompt: str = ""
@@ -58,6 +73,12 @@ class ScriptedExtractionLLM:
         self.prompts.append(prompt)
         self.last_prompt = prompt
         self.call_count += 1
+        for held, event in self.hold_on.items():
+            if held in prompt:
+                await event.wait()
+        for failing, error in self.raise_on.items():
+            if failing in prompt:
+                raise error
         key = self._key_for(prompt)
         self._calls_by_key[key] += 1
         entry: Script = self.script.get(key, ("", "")) if key is not None else ("", "")

@@ -35,7 +35,7 @@ pending (v1.5).
 
 For each `(model, dataset)` pair, one run produces:
 
-- **Quality** — the v8 quality grade (0–100) from
+- **Quality** — the quality grade (0–100; its version is `SCORING_VERSION` in `services/quality/scoring.py`) from
   `chaoscypher_core.services.quality.QualityScorer`, the same scorer
   ChaosCypher uses in production. The headline number per model is the
   unweighted mean across the datasets the model succeeded on.
@@ -48,7 +48,7 @@ For each `(model, dataset)` pair, one run produces:
 
 `chaoscypher benchmark run full` runs three stages and scores each:
 
-- **Extraction** — the v8 quality grade described above.
+- **Extraction** — the quality grade described above.
 - **Embedding retrieval** (scorer v1) — each `(extractor, embedder)` graph is
   queried with the dataset's labeled queries; the headline score is
   MRR × 100, with Recall@1 and Recall@3 reported alongside.
@@ -67,7 +67,7 @@ config's `weights:` key):
 
 | Dimension | Default weight | Source |
 |---|---|---|
-| Extraction | 0.40 | v8 quality grade (mean across datasets) |
+| Extraction | 0.40 | quality grade (mean across datasets) |
 | Retrieval | 0.20 | embedding-retrieval headline for the pinned `defaults.embedder` |
 | Chat | 0.20 | chat headline for the pinned `defaults.embedder` + `defaults.chat` |
 | Speed | 0.10 | per-chunk latency normalized against fixed anchors (500 ms → 100, 30,000 ms → 0) |
@@ -200,9 +200,9 @@ question whose fact never reaches that context measures nothing about the
 model: every row is guessing, and a lexical scorer passes whoever names
 the right term in passing. The fixture was audited against the retrieved
 context on 2026-10-01 and the questions it found unanswerable carry
-`answerable: false` (six at this writing — `excluded_ids` in the exported
-board is the count): they are still asked, their answers kept, but they are on
-no row's count, so every model is scored on the remaining questions (74). The page says so, draws them as
+`answerable: false` (`excluded_ids` in the exported board lists them; the
+leaderboard page shows the count): they are still asked, their answers kept, but they are on
+no row's count, so every model is scored on the remaining questions (`total` in the board). The page says so, draws them as
 dashed cells, and still reports any remaining question every scored model
 fails (the retrieval floor). `export_leaderboard.py --chat <run.json>`
 adds the column.
@@ -221,8 +221,7 @@ seeded draws; a task's verdict is one of its runs' at random), so it says
 how much the score could move if the suite had drawn other tasks of the
 same kind. Rows whose intervals overlap are not separable by this board:
 sorted by Overall, the page marks such a row with ≈ and the homepage
-teaser gives it a tied rank. On the 2026-10-01 board one in-chunks verdict
-moved Overall by 1.9 points, so most neighbouring rows are ties. Several
+teaser gives it a tied rank. One in-chunks verdict moves Overall by about a point, so most neighbouring rows are ties. Several
 runs of one model pool: the row shows the mean, says "mean of N runs" in
 its notes, and each cell is the fraction of runs that passed the task.
 Local rows at temperature 0 and seed 42 reproduce themselves, so repeats
@@ -300,7 +299,7 @@ section measures. Three worked examples follow: the questions with the
 largest lift over naive RAG, preferring different kinds, with each rung's
 retrieved context trimmed to the lines that hold an answer term plus two
 lines around them, the model's answer and its verdict, for the best local
-model by Overall and the best Claude row. Nothing in them is hand-edited.
+model by Overall (and the best Claude row once one has all three rungs). Nothing in them is hand-edited.
 
 **The headlines and their bars.** The section, and the homepage's figures, state
 a headline only when the exporter finds that it holds across the models
@@ -486,7 +485,7 @@ client, not on your GPU.
 
 ## What's *not* measured (yet)
 
-- **Factual correctness against a ground truth.** The v8 score is
+- **Factual correctness against a ground truth.** The quality score is
   *intrinsic* — it rewards rich descriptions, well-justified relationships,
   balanced graph topology, and absence of structural noise (hub skew,
   reciprocal duplicates, low-quality items). It does *not* compare extracted
@@ -494,7 +493,7 @@ client, not on your GPU.
   well-described, well-justified, but factually wrong entities can score
   well. This is a known limitation; adding gold sets per dataset is
   the v1.5 step.
-- **Raw model capability.** The v8 score is calculated on the **post-normalized,
+- **Raw model capability.** The quality score is calculated on the **post-normalized,
   pre-commit** graph — after the import pipeline's deduplication, entity
   normalization, type rescue, evidence validation, and entity cleaning
   (`enable_normalization=True`), which is what a real import commits. This

@@ -11,6 +11,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import type { GraphNodeData } from '../types';
+import { isSyntheticNode } from '../types';
 import { useTemplate } from '../../../services/api/useTemplates';
 import { useNode } from '../../../services/api/useNodes';
 import type { Template } from '../../../types';
@@ -69,8 +70,11 @@ export function useNodePropertyState(
   // Template (for property field definitions) and full node data (canvas
   // payload is minimal) are now server state via TanStack Query. Both stay
   // disabled until the relevant id is present.
-  const templateId = selectedNodeData?.templateId;
-  const nodeId = selectedNodeData?.nodeId;
+  // A synthetic node (source root, Unresolved hub) is no API node: fetch nothing for it.
+  const realNode =
+    selectedNodeData && !isSyntheticNode(selectedNodeData.nodeId) ? selectedNodeData : null;
+  const templateId = realNode?.templateId;
+  const nodeId = realNode?.nodeId;
   const { data: templateData, isFetching: loadingTemplate } = useTemplate(templateId);
   const { data: fullNode } = useNode(nodeId);
   const template: Template | null = templateData ?? null;

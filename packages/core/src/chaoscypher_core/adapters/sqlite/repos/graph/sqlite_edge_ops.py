@@ -29,6 +29,7 @@ from chaoscypher_core.adapters.sqlite.utils import (
     json_property_is_true,
     json_property_path,
 )
+from chaoscypher_core.exceptions import NotFoundError
 from chaoscypher_core.models import Edge, EdgeCreate, EdgeUpdate, EdgeWithNodes
 from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
     INVERSE_OF_KEY,
@@ -101,6 +102,7 @@ _EDGE_COLUMNS = (
     GraphEdge.label,
     GraphEdge.properties,
     GraphEdge.source_id,
+    GraphEdge.person_made,
     # migration 0020's validity window: _db_edge_to_model reads all three, so a
     # projection without them lazy-loads each per edge (one SELECT per column per row).
     GraphEdge.valid_from,
@@ -119,8 +121,10 @@ def _iso_date(value: str | None) -> date | None:
 class EdgeOperationsMixin(MembershipOperationsMixin):
     """Mixin providing edge CRUD and batch operations for GraphRepository."""
 
-    def create_edge(self, edge_create: EdgeCreate, custom_id: str | None = None) -> Edge:
-        """Create a new edge in the graph."""
+    def create_edge(
+        self, edge_create: EdgeCreate, custom_id: str | None = None, *, person_made: bool = False
+    ) -> Edge:
+        """Create a new edge in the graph; ``person_made`` marks a person's (migration 0025)."""
         edge_id = custom_id or self._generate_id("edge")
 
         db_edge = GraphEdge(
@@ -133,6 +137,7 @@ class EdgeOperationsMixin(MembershipOperationsMixin):
             label=edge_create.label,
             properties=edge_create.properties or {},
             source_id=edge_create.source_id,
+            person_made=person_made,
         )
 
         self.session.add(db_edge)
@@ -358,6 +363,7 @@ class EdgeOperationsMixin(MembershipOperationsMixin):
                     GraphEdge.target_node_id,
                     GraphEdge.label,
                     GraphEdge.source_id,
+                    GraphEdge.person_made,
                     # Excluded: properties, created_at, updated_at, graph_name
                 )
             )
@@ -606,6 +612,28 @@ class EdgeOperationsMixin(MembershipOperationsMixin):
 
         return self._db_edge_to_model(db_edge)
 
+    def repoint_edge(self, edge_id: str, *, source_node_id: str, target_node_id: str) -> None:
+        """Move an edge to new ends in place: its id, ``created_at`` and ``ccx_iri`` stay.
+
+        A merge moves a person's edge this way (it is attached, never written again).
+        Joins the caller's transaction: nothing is committed here.
+
+        Raises:
+            NotFoundError: No edge of this database has the id.
+        """
+        row = self.session.exec(
+            select(GraphEdge).where(
+                GraphEdge.id == edge_id, GraphEdge.database_name == self.database_name
+            )
+        ).first()
+        if row is None:
+            raise NotFoundError("Edge", edge_id)
+        row.source_node_id = source_node_id
+        row.target_node_id = target_node_id
+        row.updated_at = datetime.now(UTC)
+        self.session.add(row)
+        self.session.flush()
+
     def delete_edge(self, edge_id: str) -> bool:
         """Delete an edge by ID."""
         statement = select(GraphEdge).where(
@@ -811,6 +839,7 @@ class EdgeOperationsMixin(MembershipOperationsMixin):
             label=db_edge.label,
             properties=db_edge.properties or {},
             source_id=db_edge.source_id,
+            person_made=bool(db_edge.person_made),
             valid_from=_iso_date(db_edge.valid_from),
             valid_to=_iso_date(db_edge.valid_to),
             closed_by_source_id=db_edge.closed_by_source_id,
@@ -832,5 +861,6 @@ class EdgeOperationsMixin(MembershipOperationsMixin):
             label=db_edge.label,
             properties={},  # Empty for performance
             source_id=db_edge.source_id,
+            person_made=bool(db_edge.person_made),
             # created_at and updated_at will use default_factory (datetime.now(UTC))
         )

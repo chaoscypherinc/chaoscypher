@@ -158,6 +158,16 @@ class NamespaceMerger:
         total_relationships = 0
         self._import_stats = []
 
+        # Taken before the build touches anything, so a copy that fails (a
+        # full disk) leaves the composition exactly as it was.
+        snapshot, setup_error = self._prepare_build(clean, warnings)
+        if setup_error is not None:
+            return CompositionResult(
+                success=False,
+                output_dir=self.output_dir,
+                errors=[setup_error],
+                warnings=warnings,
+            )
         try:
             # "Clean" means the artefacts a build owns: the composed database
             # and the composition manifest. The resolver cache (filled moments
@@ -218,11 +228,12 @@ class NamespaceMerger:
                 # Never leave a half-built database behind: `up` keys on the
                 # database directory's existence and would serve the partial
                 # composition without rebuilding.
-                self._remove_build_artefacts()
+                self._discard_failed_build(snapshot)
             else:
                 self._write_composition_manifest(
                     package_records, total_entities, total_relationships
                 )
+                self._drop_snapshot()
 
             success = not errors
             logger.info(
@@ -244,7 +255,7 @@ class NamespaceMerger:
 
         except Exception as e:
             logger.exception("merger_failed")
-            self._remove_build_artefacts()
+            self._discard_failed_build(snapshot)
             return CompositionResult(
                 success=False,
                 output_dir=self.output_dir,
@@ -254,6 +265,52 @@ class NamespaceMerger:
                 errors=[f"Merge failed: {e}"],
                 warnings=warnings,
             )
+        except BaseException:
+            # Ctrl+C, a cancelled task: put the composition back, then let the
+            # interruption through. Were this skipped, the partial database
+            # would stay live with the good copy beside it.
+            logger.warning("merger_interrupted")
+            self._discard_failed_build(snapshot)
+            raise
+
+    def _prepare_build(self, clean: bool, warnings: list[str]) -> tuple[Path | None, str | None]:
+        """Recover from an interrupted build, then copy aside what an upsert build may restore.
+
+        An upsert build (``clean=False``) merges into the composition that
+        already exists — and into whatever an MCP host wrote into it since —
+        so a failure must put that composition back, not delete it. A clean
+        build's directory holds nothing but this run's output, so it takes
+        no copy.
+
+        Returns:
+            ``(snapshot, None)`` to go ahead (``snapshot`` None when there is
+            nothing to restore), or ``(None, error)`` when the build must not
+            start; the composition is then left as it was.
+        """
+        try:
+            if self._restore_interrupted_build():
+                warnings.append(
+                    "An earlier build was interrupted; its partial output was "
+                    "discarded and the composition it started from restored."
+                )
+        except Exception as e:
+            logger.exception("merger_recovery_failed", snapshot=str(self._snapshot_dir))
+            return None, (
+                f"An earlier build was interrupted and its copy of the composition, "
+                f"{self._snapshot_dir}, could not be restored: {e}. Nothing was changed; "
+                f"move its 'database' folder to {self.database_dir} by hand, or build "
+                f"without --no-clean."
+            )
+        if clean:
+            return None, None
+        try:
+            return self._snapshot_build_artefacts(), None
+        except Exception as e:
+            logger.exception("merger_snapshot_failed")
+            return None, (
+                f"Could not copy the existing composition aside before merging into it, "
+                f"so nothing was changed: {e}"
+            )
 
     def _remove_build_artefacts(self) -> None:
         """Delete the composed database and manifest (and nothing else)."""
@@ -262,6 +319,79 @@ class NamespaceMerger:
         manifest = self.output_dir / COMPOSITION_MANIFEST_FILENAME
         if manifest.exists():
             manifest.unlink()
+
+    @property
+    def _snapshot_dir(self) -> Path:
+        """Pre-build copy of the build artefacts an upsert build may restore."""
+        return self.output_dir / f".{COMPOSED_DATABASE_NAME}.pre-build"
+
+    @property
+    def _partial_snapshot_dir(self) -> Path:
+        """Where the pre-build copy is written before it is renamed into place."""
+        return self.output_dir / f".{COMPOSED_DATABASE_NAME}.pre-build.partial"
+
+    def _snapshot_build_artefacts(self) -> Path | None:
+        """Copy the existing database and manifest aside; None when there is none.
+
+        The copy is written to a side folder and renamed into place only when
+        complete, so a ``.pre-build`` folder is always a whole copy and the
+        database is never touched before one exists. A copy that fails or is
+        interrupted is removed and the exception raised.
+        """
+        partial = self._partial_snapshot_dir
+        if partial.exists():
+            shutil.rmtree(partial)
+        if not self.database_dir.exists():
+            return None
+        try:
+            shutil.copytree(self.database_dir, partial / "database")
+            manifest = self.output_dir / COMPOSITION_MANIFEST_FILENAME
+            if manifest.exists():
+                shutil.copy2(manifest, partial / COMPOSITION_MANIFEST_FILENAME)
+        except BaseException:
+            shutil.rmtree(partial, ignore_errors=True)
+            raise
+        partial.rename(self._snapshot_dir)
+        return self._snapshot_dir
+
+    def _restore_interrupted_build(self) -> bool:
+        """Put back the composition a killed build had copied aside; True when it did.
+
+        A ``.pre-build`` copy that is still there when a build starts means
+        the build that made it never finished: the live database is its
+        partial output and the copy is the last good composition. It is
+        restored, never dropped. A ``.partial`` copy never finished, and the
+        database was not touched before it would have, so it is only removed.
+        """
+        if self._partial_snapshot_dir.exists():
+            shutil.rmtree(self._partial_snapshot_dir)
+        if not self._snapshot_dir.exists():
+            return False
+        logger.warning("merger_restoring_interrupted_build", snapshot=str(self._snapshot_dir))
+        self._discard_failed_build(self._snapshot_dir)
+        return True
+
+    def _discard_failed_build(self, snapshot: Path | None) -> None:
+        """Remove a failed build's output, restoring the pre-build composition."""
+        if snapshot is None:
+            self._remove_build_artefacts()
+            return
+        saved_database = snapshot / "database"
+        # Absent only when a restore was itself interrupted after putting the
+        # database back; the live one is then the restored copy.
+        if saved_database.exists():
+            self._remove_build_artefacts()
+            shutil.move(saved_database, self.database_dir)
+        manifest = snapshot / COMPOSITION_MANIFEST_FILENAME
+        if manifest.exists():
+            shutil.move(manifest, self.output_dir / COMPOSITION_MANIFEST_FILENAME)
+        self._drop_snapshot()
+        logger.info("merger_restored_pre_build_composition", database=str(self.database_dir))
+
+    def _drop_snapshot(self) -> None:
+        """Delete the pre-build copy, if any."""
+        if self._snapshot_dir.exists():
+            shutil.rmtree(self._snapshot_dir)
 
     # ------------------------------------------------------------------
     # Per-package import

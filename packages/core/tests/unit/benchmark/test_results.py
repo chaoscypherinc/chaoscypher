@@ -430,6 +430,31 @@ def test_the_same_fixture_in_another_checkout_is_the_datasets_own_question_file(
     assert resolve_queries_file(str(other), own) == other.resolve()
 
 
+def test_the_dataset_file_of_another_checkout_is_the_datasets_own_whatever_its_content(
+    tmp_path: Path,
+) -> None:
+    """A row asked the main checkout's fixture is rescored in a worktree against the worktree's.
+
+    The Book One fix round (2026-10-23) edited the fixture in a worktree; the 2026-10-20 board
+    rows record the main checkout's file, which still exists with the older content, so identity
+    by content alone read it as a holdout set and rescored every board row against the old
+    entries. The dataset's own file in another checkout (the same last three parts:
+    ``datasets/<id>/queries.yaml``) is the dataset's, existing or not.
+    """
+    from chaoscypher_core.benchmark.results import resolve_queries_file
+
+    own = tmp_path / "worktree" / "datasets" / "war_and_peace_book1" / "queries.yaml"
+    main = tmp_path / "main" / "datasets" / "war_and_peace_book1" / "queries.yaml"
+    holdout = tmp_path / "main" / "holdout" / "war_and_peace_book1-holdout.yaml"
+    for path in (own, main, holdout):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    own.write_text("version: '1.1'\nqueries: [{id: q1}]\n", encoding="utf-8")
+    main.write_text("version: '1.1'\nqueries: []\n", encoding="utf-8")
+    holdout.write_text("version: '1.0'\nqueries: [{id: h1}]\n", encoding="utf-8")
+    assert resolve_queries_file(str(main), own) is None
+    assert resolve_queries_file(str(holdout), own) == holdout.resolve()
+
+
 def test_rows_recording_two_copies_of_one_holdout_file_are_one_question_file(
     tmp_path: Path,
 ) -> None:

@@ -590,6 +590,68 @@ async def test_commit_self_heal_emits_count_drift_warning(
     assert result["skipped"] == "already_committed"
 
 
+@pytest.mark.asyncio
+async def test_commit_fast_path_repairs_drifted_status_only() -> None:
+    """``commit_complete=True`` with status drifted off COMMITTED: repair the status alone.
+
+    Without the repair the reconciler keeps re-dispatching commit until
+    ``recovery_attempts`` runs out. The repair must touch only ``status``
+    via ``update_source``; ``complete_commit`` would re-persist the counts (F54).
+    """
+    from unittest.mock import MagicMock, patch
+
+    from chaoscypher_core.models import SourceStatus
+    from chaoscypher_core.operations.importing.import_service import (
+        ImportOperationsService,
+    )
+
+    adapter = MagicMock()
+    adapter.get_source = MagicMock(
+        return_value={
+            "id": "src-1",
+            "status": "extracted",  # drifted: commit finished but status was not advanced
+            "commit_complete": True,
+            "commit_nodes_created": 3,
+            "commit_edges_created": 2,
+            "commit_templates_created": 1,
+            "database_name": "default",
+            "is_paused": False,
+        }
+    )
+    adapter.get_system_state = MagicMock(return_value={"processing_paused": False})
+
+    graph_repo = MagicMock()
+    service = ImportOperationsService(
+        graph_repository=graph_repo,
+        config_manager=MagicMock(),
+        source_manager=MagicMock(),
+        trigger_service=MagicMock(),
+        llm_service=MagicMock(),
+        source_repository=adapter,
+        chunking_service=MagicMock(),
+        indexing_service=MagicMock(),
+    )
+
+    fake_settings = MagicMock()
+    fake_settings.current_database = "default"
+    with patch(
+        "chaoscypher_core.app_config.get_settings",
+        return_value=fake_settings,
+    ):
+        result = await service._import_commit_handler(
+            data={
+                "file_id": "src-1",
+                "commit_data": {},
+                "file_info": {},
+            },
+        )
+
+    assert result["skipped"] == "already_committed"
+    adapter.update_source.assert_called_once_with("src-1", {"status": SourceStatus.COMMITTED})
+    adapter.complete_commit.assert_not_called()
+    graph_repo.upsert_nodes_batch.assert_not_called()
+
+
 def test_create_citations_batch_is_idempotent(
     in_memory_adapter: SqliteAdapter,
 ) -> None:

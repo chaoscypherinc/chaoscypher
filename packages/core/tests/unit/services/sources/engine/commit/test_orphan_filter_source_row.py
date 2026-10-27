@@ -30,6 +30,7 @@ from sqlmodel import func, select
 from chaoscypher_core.adapters.sqlite.models import GraphNode
 from chaoscypher_core.models import SourceStatus
 from chaoscypher_core.services.sources.engine.deduplication.name_identity import ORPHAN_KEY
+from tests.unit.services.sources.commit_wiring import commit_service_on
 
 
 if TYPE_CHECKING:
@@ -50,32 +51,6 @@ _COMMIT_DATA_WITH_ORPHAN: dict[str, Any] = {
     "suggested_templates": [],
     "suggested_edge_templates": [],
 }
-
-
-def _build_commit_service(adapter: SqliteAdapter):
-    """Construct SourceCommitService wired from the test adapter (house pattern)."""
-    from chaoscypher_core.adapters.sqlite.engine import get_engine
-    from chaoscypher_core.adapters.sqlite.repos import GraphRepository, SearchRepository
-    from chaoscypher_core.services.sources.engine.commit.service import SourceCommitService
-    from chaoscypher_core.settings import EngineSettings
-
-    graph_repository = GraphRepository(
-        session=adapter.session,
-        database_name=adapter.database_name,
-    )
-    search_repository = SearchRepository(
-        engine=get_engine(adapter.db_path),
-        vector_dim=4,
-        embedding_model="test-model",
-    )
-    return SourceCommitService(
-        graph_repository=graph_repository,
-        source_repository=adapter,
-        sources_repository=adapter,
-        indexing_repository=adapter,
-        search_repository=search_repository,
-        settings=EngineSettings(),
-    )
 
 
 def _seed_extracted_source(adapter: SqliteAdapter, source_id: str, **row_overrides: Any) -> None:
@@ -111,7 +86,7 @@ async def _commit_with_real_file_info(
     # The premise of the defect: the projection carries neither column.
     assert "filtering_mode" not in file_info
     assert "protect_orphans" not in file_info
-    await _build_commit_service(adapter).commit(
+    await commit_service_on(adapter).commit(
         file_id=source_id,
         commit_data=commit_data or _COMMIT_DATA_WITH_ORPHAN,
         file_info=file_info,
@@ -240,7 +215,7 @@ async def test_payload_filtering_mode_still_wins_over_row(
 
     file_info = adapter.get_file(source_id, adapter.database_name)
     assert file_info is not None
-    await _build_commit_service(adapter).commit(
+    await commit_service_on(adapter).commit(
         file_id=source_id,
         commit_data=_COMMIT_DATA_WITH_ORPHAN,
         file_info={**file_info, "filtering_mode": "balanced"},

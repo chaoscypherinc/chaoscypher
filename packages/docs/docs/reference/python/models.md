@@ -144,6 +144,7 @@ Includes all fields needed by GraphRepository including timestamps.
 - `id`: `str`
 - `label`: `str`
 - `model_config`
+- `person_made`: `bool`
 - `properties`: `dict[str, Any]`
 - `source_id`: `str | None`
 - `source_node_id`: `str`
@@ -331,6 +332,27 @@ Response from LLMProvider.chat().
 - `tool_calls`: `list[dict[str, Any]] | None`
 - `usage`: `TokenUsage | None`
 
+### `class MemoryLinkState`
+
+What happened to a memory's link into the graph (`sources.memory_link_state`).
+
+Set on memory sources only (`source_type = "memory"`; migration 0024); a
+document keeps NULL. `LINKING` is live while its claim's heartbeat
+(`last_activity_at`) is fresh and reads as interrupted once it goes stale.
+`NO_MODEL` is never counted as an attempt; `FAILED` is. `LINKED_EMPTY`
+linked but attests no node, and is retried only on request.
+
+**Bases:** `StrEnum`
+
+**Attributes:**
+
+- `FAILED`
+- `LINKED`
+- `LINKED_EMPTY`
+- `LINKING`
+- `NO_MODEL`
+- `PENDING`
+
 ### `class Node`
 
 Graph node (entity) - complete version for engine use.
@@ -348,6 +370,7 @@ Includes all fields needed by GraphRepository including timestamps.
 - `label`: `str`
 - `member_source_ids`: `list[str]`
 - `model_config`
+- `person_made`: `bool`
 - `position`: `NodePosition | None`
 - `properties`: `dict[str, Any]`
 - `source_id`: `str | None`
@@ -440,6 +463,7 @@ Result from Engine.process_document() and Engine.add_document().
 **Attributes:**
 
 - `edges`: `list[str]`
+- `followups_complete`: `bool`
 - `model_config`
 - `nodes`: `list[str]`
 - `source_id`: `str`
@@ -620,6 +644,7 @@ matching `SourceErrorStage` (e.g. EXTRACTION) before persisting.
 
 **Attributes:**
 
+- `AFTER_COMMIT`
 - `COMMIT`
 - `EXTRACTION`
 - `INDEXING`
@@ -778,3 +803,14 @@ only ever sees this dataclass.
 
 - `id`: `int | None`
 - `is_admin`: `bool`
+
+### `is_memory_source(row: Mapping[str, Any] | object) -> bool`
+
+Whether a source row (a dict, or an ORM row) is a memory.
+
+A row whose `source_type` is NULL or missing (most rows predate the column, and a
+projection may not read it) is not: it reads as a document.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `row` | `Mapping[str, Any] \| object` |  |

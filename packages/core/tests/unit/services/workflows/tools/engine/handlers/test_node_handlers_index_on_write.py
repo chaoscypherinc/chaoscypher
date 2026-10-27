@@ -25,7 +25,7 @@ from chaoscypher_core.models import Template, TemplateCreate
 from chaoscypher_core.services.workflows.tools.engine.handlers.node_handlers import (
     NodeToolHandlers,
 )
-from tests.fakes.embedding import FakeEmbeddingProvider
+from chaoscypher_core.testing.embedding import FakeEmbeddingProvider
 
 
 VECTOR_DIM = 384

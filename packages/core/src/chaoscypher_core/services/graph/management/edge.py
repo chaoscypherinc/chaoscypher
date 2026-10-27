@@ -194,7 +194,10 @@ class EdgeService:
             msg = f"Template {edge_create.template_id} is not an edge template (type: {template.template_type})"
             raise ValidationError(msg)
 
-        edge = self.graph_repository.create_edge(edge_create)
+        # An edge a caller makes with no source is the person's (migration 0025)
+        edge = self.graph_repository.create_edge(
+            edge_create, person_made=edge_create.source_id is None
+        )
         return {
             "id": edge.id,
             "source_node_id": edge.source_node_id,
@@ -202,6 +205,8 @@ class EdgeService:
             "template_id": edge.template_id,
             "label": edge.label,
             "properties": edge.properties,
+            "source_id": edge.source_id,
+            "person_made": edge.person_made,
             "created_at": edge.created_at,
             "updated_at": edge.updated_at,
         }

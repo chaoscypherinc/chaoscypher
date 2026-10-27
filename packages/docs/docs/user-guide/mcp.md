@@ -128,7 +128,7 @@ mcp:
   max_extraction_payload_bytes: 10485760  # Per-call cap on submit_chunk_extraction payloads
   extraction_rate_limit_per_minute: 100   # submit_chunk_extraction calls per source per minute
   completed_history_limit: 20             # Completed uploads kept in the in-memory status history
-  profile: full                           # "full" (every tool) or "memory" (the five memory tools)
+  profile: full                           # "full" (every tool of the mode) or "memory" (the memory tools)
   tools: []                               # Allowlist of tool names; empty serves the whole profile
 ```
 
@@ -140,11 +140,14 @@ mcp:
 | `max_extraction_payload_bytes` | `10485760` | Maximum combined UTF-8 size (10 MiB) of `entities_text` + `relationships_text` accepted per `submit_chunk_extraction` call. Larger submissions are rejected with `PAYLOAD_TOO_LARGE`. |
 | `extraction_rate_limit_per_minute` | `100` | Maximum `submit_chunk_extraction` calls per source per 60-second sliding window. |
 | `completed_history_limit` | `20` | Completed MCP uploads retained in the in-memory status history before the oldest are evicted. |
-| `profile` | `full` | The served tool profile: `full` is every tool; `memory` is the memory tools alone (see [Profiles](#profiles)). |
+| `profile` | `full` | The served tool profile: `full` is every tool of the mode; `memory` is the memory tools alone, three in read mode and five in write mode (see [Profiles](#profiles)). |
 | `tools` | `[]` | An allowlist of tool names narrowing the profile; empty serves the whole profile. |
 | `memory.result_chars` | `1600` | The most characters a memory tool answers with. |
-| `memory.wait_seconds` | `120` | How long `remember` waits for the linking before answering "Saved, still linking." |
+| `memory.wait_seconds` | `20` | How long `remember` waits for the linking before answering that it links later. |
 | `memory.default_by` | `user` | Who a memory is by when the call does not say. |
+| `memory.relink_on_start` | `true` | Link the memories not linked yet, oldest first, in the background when a write-mode server starts. |
+| `memory.scope_nodes` | `{}` | Node labels a scope's memories are always shown as things the graph knows, by scope name (`{"trader": ["Trading journal"]}`); a label that matches no node is skipped and logged. See [Scopes](memory.md#scopes). |
+| `memory.scope_templates` | `{}` | Template names (made by a person, not named like a built-in type) a scope's memories are shown as known types, beside the templates the scope's nodes use, by scope name (`{"trader": ["Market"]}`); a name that matches no template is skipped and logged. See [Scopes](memory.md#scopes). |
 
 :::tip[Safe by default]
 
@@ -154,7 +157,7 @@ MCP starts in **read-only mode**. Your AI assistant can search and explore your 
 
 ## Profiles
 
-A profile is the set of tools the server lists. `full` (the default) lists every tool of the mode. `memory` lists the memory tools alone: `remember`, `recall`, `forget`, `list_memories` and `digest`, the short list an agent memory client needs so that a small model's tool list stays short. Pick it on the command line or in the settings:
+A profile is the set of tools the server lists. `full` (the default) lists every tool of the mode. `memory` lists the memory tools alone: `recall`, `list_memories` and `digest` in read mode, plus `remember` and `forget` in write mode, the short list an agent memory client needs so that a small model's tool list stays short. Pick it on the command line or in the settings:
 
 ```bash
 chaoscypher mcp --profile memory --mode write
@@ -166,7 +169,18 @@ mcp:
   tools: []        # or a narrower allowlist, for example [recall, list_memories]
 ```
 
-An allowlist narrows the profile further; a name that is not a registered tool is a configuration error, named at start. The [Memory](memory.md) page describes the tools and what they answer.
+An allowlist narrows the profile further; a name that is not a registered tool, or not in the chosen profile, is a configuration error, named at start; the allowlist cannot add a write-only tool in read mode (it is dropped). The [Memory](memory.md) page describes the tools and what they answer.
+
+## Keyword-only
+
+Set `search.enable_vector_search: false` in `settings.yaml` (or `CHAOSCYPHER_SEARCH__ENABLE_VECTOR_SEARCH=false`) and the server loads no embedding model and makes no embedding call, for searches and for writes alike. Use it on a machine without a GPU, or while another program needs the GPU.
+
+- Searches read the keyword index. Hybrid search answers with its keyword results; semantic search is refused with an error that says vector search is off.
+- Writes store and keyword-index their text as before, without vectors. Entities from one text are merged by their names, not by vector similarity.
+- The memory tools all work: `remember` links a memory to the graph by the names it uses.
+- A keyword-only server never changes the vector tables, so it can share a database with a process that has vector search on.
+
+Rows written keyword-only have no vectors when vector search is turned back on. Keyword and hybrid search still find them; `chaoscypher source rebuild-search --embed-missing` gives their chunks and nodes vectors (templates created then stay without one) (see [Rebuild Search Indexes](../reference/cli/sources.md#rebuild-search-indexes)).
 
 ## Available Tools
 
@@ -213,7 +227,7 @@ These tools are only available when `mcp.mode` is set to `write`:
 | `create_node` | Create a new graph node with template, label, and properties |
 | `update_node` | Update a node's label or properties |
 | `delete_node` | Delete a node and its connected edges |
-| `create_edge` | Create a relationship between two nodes |
+| `create_edge` | Create a relationship between two nodes; with no template it uses the default link template (`system_template_link`) |
 | `create_template` | Create a node or edge template with schema |
 | `delete_template` | Delete a template from the schema |
 | `add_document` | Queue a file for background indexing and optional entity extraction |
@@ -227,6 +241,24 @@ These tools are only available when `mcp.mode` is set to `write`:
 | `get_extraction_progress` | Check extraction submission progress for a source (submitted and missing chunk indices, and whether it is ready to finalize) |
 | `submit_chunk_extraction` | Submit extracted entities and relationships for a specific document chunk |
 | `finalize_extraction` | Finalize the extraction process for a source, committing results to the knowledge graph |
+
+### When a tool call fails
+
+A graph tool that cannot do what it was asked answers with `success: false`, a fixed sentence in `error` and a `code` a client can act on. The error's own text never reaches the answer: a database error can quote what it was given. The server's log records the tool's name, the error's type and the code, never the error's message or the values the tool was given. An unexpected error in any other tool answers the same fixed sentences: the memory tools (`remember`, `recall`, `forget`, `list_memories`, `digest`) and the site tools give the sentence alone as their line, marked as an error, and the rest answer this JSON.
+
+| `code` | Meaning |
+|--------|---------|
+| `UNKNOWN_TEMPLATE` | No template has the id or name the call gave |
+| `AMBIGUOUS_TEMPLATE` | More than one of the database's own templates has the name the call gave; `template_ids` lists them, and the call should give one id |
+| `UNKNOWN_NODE` | No node has the id the call gave (`create_edge`'s two ends are checked before the edge is saved) |
+| `MISSING_REFERENCE` | A template or node the call names does not exist |
+| `DUPLICATE` | Something with the same id already exists |
+| `INVALID_INPUT` | A value given to the tool is not valid |
+| `NOT_FOUND` | Something the call names was not found |
+| `DATABASE_BUSY` | Another process is writing to the database; try again |
+| `OPERATION_FAILED` | Anything else |
+
+A template named by name is the database's own before a shipped one of the same name. A failed call leaves the server ready for the next one. Every database the server opens, in read or write mode, is given the shipped templates it lacks, so the default link template is there even in a database an earlier release built without it.
 
 ## Usage Examples
 
@@ -294,7 +326,7 @@ This is useful when the AI assistant has better extraction capabilities than the
 
 ## Maintenance Mode
 
-If the database is blocked on a pending schema upgrade — for example, a destructive migration is pending with auto-apply disabled, or the pre-upgrade backup failed — the MCP server starts in a degraded **maintenance mode** instead of failing with an opaque JSON-RPC error. In this mode the normal toolset is not advertised; only two tools are available:
+If the database is blocked on a pending schema upgrade — for example, a destructive migration is pending with auto-apply disabled, or the pre-upgrade backup failed — the MCP server starts in a degraded **maintenance mode** instead of failing with an opaque JSON-RPC error. Over stdio (`chaoscypher mcp`) maintenance mode is served only with `--mode write`; in read mode (the default) the command exits with an error that says to re-run with `--mode write`, because the maintenance tools include destructive repair. In this mode the normal toolset is not advertised; only two tools are available:
 
 | Tool | Description |
 |------|-------------|
@@ -310,4 +342,4 @@ All data stays local. The MCP server gives your AI assistant **tool access** to 
 ## See also
 
 - [CLI reference: MCP Server](../reference/cli/mcp.md) — `chaoscypher mcp` command options and AI assistant configuration snippets
-- [API reference: Grounding (MCP)](../reference/api/grounding.md) — HTTP endpoints for node search, edge traversal, and neighbor discovery used by the HTTP MCP transport
+- [API reference: Grounding (MCP)](../reference/api/grounding.md) — read-only HTTP endpoints for node search, edge traversal, and neighbor discovery, an alternative to MCP for HTTP agents

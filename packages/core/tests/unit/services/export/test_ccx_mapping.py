@@ -639,8 +639,8 @@ class TestSourceRecords:
             }
         ]
 
-    def test_chunk_citation_prefers_persisted_node_ccx_iri(self):
-        """A persisted node ccx_iri on the citation wins over minting."""
+    def test_chunk_citation_prefers_resolved_entity_iri(self):
+        """The exporter-resolved node @id (entity_iri) on the citation wins over minting."""
         source = {"id": "s8", "full_text": None}
         chunks = [
             {
@@ -650,7 +650,7 @@ class TestSourceRecords:
                 "citations": [
                     {
                         "entity_uri": "node_42",
-                        "node_ccx_iri": "urn:ccx:chaoscypher:node/foreign-1",
+                        "entity_iri": "urn:ccx:chaoscypher:node/foreign-1",
                         "confidence": 0.5,
                     },
                 ],

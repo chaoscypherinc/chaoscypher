@@ -26,7 +26,12 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
+import structlog
+
 from chaoscypher_core.exceptions import LLMError
+
+
+logger = structlog.get_logger(__name__)
 
 
 def normalize_vector(vector: Sequence[float]) -> list[float]:
@@ -90,11 +95,26 @@ def fit_provider_vector(
     Raises:
         LLMError: When the model returned fewer dimensions than configured.
     """
+    if len(vector) > dimensions and (provider, model) not in _TRUNCATION_LOGGED:
+        # Once per model: ``search.vector_dimensions`` promises the provider logs the
+        # cut, and only Ollama's did until the 2026-10-19 audit.
+        _TRUNCATION_LOGGED.add((provider, model))
+        logger.warning(
+            "embedding_mrl_truncation",
+            provider=provider,
+            model=model,
+            native_dimensions=len(vector),
+            vector_dimensions=dimensions,
+        )
     try:
         return fit_dimensions([float(v) for v in vector], dimensions)
     except ValueError as exc:
         msg = f"{provider} embedding model {model!r}: {exc}"
         raise LLMError(msg) from exc
+
+
+_TRUNCATION_LOGGED: set[tuple[str, str]] = set()
+"""``(provider, model)`` pairs whose MRL cut has been logged this process."""
 
 
 __all__ = ["fit_dimensions", "fit_provider_vector", "normalize_vector"]

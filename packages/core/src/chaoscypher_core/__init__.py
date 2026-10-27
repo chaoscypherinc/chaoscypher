@@ -21,7 +21,11 @@ except PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 
 # Embedding providers
-from chaoscypher_core.adapters.embedding.factory import create_embedding_provider
+from chaoscypher_core.adapters.embedding.factory import (
+    create_embedding_provider,
+    embedding_provider_for,
+    require_embedding_provider,
+)
 
 # LLM providers
 from chaoscypher_core.adapters.llm.factory import ProviderFactory
@@ -222,6 +226,27 @@ async def chat(
     )
 
 
+def _default_embedding_provider(model: str | None) -> EmbeddingProviderProtocol:
+    """The provider :func:`embed` and :func:`embed_batch` call: default settings, ``model`` overriding.
+
+    Raises:
+        VectorSearchOff: When vector search is off in the default settings.
+
+    """
+    from chaoscypher_core.facade import _get_default_settings
+
+    settings = _get_default_settings()
+    if model is not None:
+        # model_copy stores the update value unvalidated, so the override must
+        # be an EmbeddingSettings, not a dict — the factory reads
+        # settings.embedding.provider and a dict raised AttributeError on every
+        # call (2026-09-24 llm audit filing, fixed 2026-09-28).
+        settings = settings.model_copy(
+            update={"embedding": settings.embedding.model_copy(update={"model": model})},
+        )
+    return require_embedding_provider(embedding_provider_for(settings), "Embedding")
+
+
 async def embed(
     text: str | list[str],
     *,
@@ -241,24 +266,16 @@ async def embed(
     Returns:
         EmbedResult for a single string, BatchEmbedResult for a list.
 
+    Raises:
+        VectorSearchOff: When vector search is off (``search.enable_vector_search``).
+
     Example:
         >>> from chaoscypher_core import embed
         >>> result = await embed("quantum entanglement")
         >>> print(f"Dimensions: {len(result.embedding)}")
 
     """
-    from chaoscypher_core.facade import _get_default_settings
-
-    settings = _get_default_settings()
-    if model is not None:
-        # model_copy stores the update value unvalidated, so the override must
-        # be an EmbeddingSettings, not a dict — the factory reads
-        # settings.embedding.provider and a dict raised AttributeError on every
-        # call (2026-09-24 llm audit filing, fixed 2026-09-28).
-        settings = settings.model_copy(
-            update={"embedding": settings.embedding.model_copy(update={"model": model})},
-        )
-    provider = create_embedding_provider(settings)
+    provider = _default_embedding_provider(model)
     if isinstance(text, list):
         return await provider.batch_embed(text, **kwargs)
     return await provider.embed(text, **kwargs)
@@ -284,25 +301,16 @@ async def embed_batch(
     Returns:
         BatchEmbedResult with embeddings list, counts, and provider.
 
+    Raises:
+        VectorSearchOff: When vector search is off (``search.enable_vector_search``).
+
     Example:
         >>> from chaoscypher_core import embed_batch
         >>> result = await embed_batch(["text one", "text two"])
         >>> print(f"{len(result.embeddings)} embeddings")
 
     """
-    from chaoscypher_core.facade import _get_default_settings
-
-    settings = _get_default_settings()
-    if model is not None:
-        # model_copy stores the update value unvalidated, so the override must
-        # be an EmbeddingSettings, not a dict — the factory reads
-        # settings.embedding.provider and a dict raised AttributeError on every
-        # call (2026-09-24 llm audit filing, fixed 2026-09-28).
-        settings = settings.model_copy(
-            update={"embedding": settings.embedding.model_copy(update={"model": model})},
-        )
-    provider = create_embedding_provider(settings)
-    return await provider.batch_embed(texts, **kwargs)
+    return await _default_embedding_provider(model).batch_embed(texts, **kwargs)
 
 
 async def search(
@@ -554,6 +562,9 @@ def embed_sync(
 
     Returns:
         EmbedResult for a single string, BatchEmbedResult for a list.
+
+    Raises:
+        VectorSearchOff: When vector search is off (``search.enable_vector_search``).
 
     Example:
         >>> from chaoscypher_core import embed_sync

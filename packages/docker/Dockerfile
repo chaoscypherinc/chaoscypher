@@ -3,7 +3,7 @@
 
 # Stage 1: Produce openapi.json from the FastAPI app so the frontend stage
 # can generate TypeScript types without a host-side `make types` step.
-FROM python:3.14.8-slim AS types-builder
+FROM python:3.14.8-slim@sha256:fbecd461fc72d21b2143c6eaba25143738079154a6d0ea3da3aec724f50eed4a AS types-builder
 
 # Silence pip's "running as root" warning. The container's filesystem is
 # already the isolation boundary — a venv adds no real benefit here.
@@ -43,7 +43,7 @@ RUN CHAOSCYPHER_SCHEMA_ONLY=1 \
     python -c "import json; from chaoscypher_cortex.main import app; open('/build/openapi.json', 'w').write(json.dumps(app.openapi()))"
 
 # Stage 2: Build React frontend
-FROM node:22.23.3-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS frontend-builder
+FROM node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS frontend-builder
 
 WORKDIR /app
 # Bump npm to latest so `npm ci` below doesn't emit a "new major version"
@@ -60,7 +60,7 @@ RUN npm run build
 # including torch CPU) into an isolated /install prefix that gets COPY'd into
 # the final stage. This keeps pip / setuptools / build toolchain OUT of the
 # runtime image and replaces the previous `pip install -e` source duplication.
-FROM python:3.14.8-slim AS wheels-builder
+FROM python:3.14.8-slim@sha256:fbecd461fc72d21b2143c6eaba25143738079154a6d0ea3da3aec724f50eed4a AS wheels-builder
 
 ENV PIP_ROOT_USER_ACTION=ignore \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -148,7 +148,7 @@ RUN find /install/lib/python3.14/site-packages \
 # Stage 4: Runtime image — pure Python + system services. No pip, no
 # setuptools editable installs, no duplicated workspace source. All Python
 # packages arrive as a prebuilt /install tree COPY'd from wheels-builder.
-FROM python:3.14.8-slim
+FROM python:3.14.8-slim@sha256:fbecd461fc72d21b2143c6eaba25143738079154a6d0ea3da3aec724f50eed4a
 
 WORKDIR /app
 

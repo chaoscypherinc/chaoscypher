@@ -1,6 +1,6 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
-"""``seed_records``: the graph nodes a memory text names, the ``about`` names, then the speaker."""
+"""``build_seed``: the ``about`` names, the graph nodes a memory text names, then the speaker."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
 from chaoscypher_core.adapters.sqlite.engine import get_engine
 from chaoscypher_core.adapters.sqlite.repos.graph.sqlite_repository import GraphRepository
 from chaoscypher_core.adapters.sqlite.repos.search import SearchRepository
-from chaoscypher_core.mcp.memory_seed import seed_records
+from chaoscypher_core.mcp.memory_seed import build_seed
 from chaoscypher_core.models import NodeCreate, TemplateCreate
 from chaoscypher_core.settings import EngineSettings
 
@@ -60,7 +60,7 @@ def engine(tmp_path: Path) -> Generator[SimpleNamespace]:
 
 
 def test_a_text_naming_pierre_seeds_pierre_and_not_anna(engine: SimpleNamespace) -> None:
-    records = seed_records(engine, "Pierre moved to Lyon.", about=[], by="alice")
+    records = build_seed(engine, "Pierre moved to Lyon.", about=[], by="alice").records("alice")
     assert [r["name"] for r in records] == ["Pierre Bezukhov", "alice"]
     assert records[0] == {
         "name": "Pierre Bezukhov",
@@ -71,18 +71,27 @@ def test_a_text_naming_pierre_seeds_pierre_and_not_anna(engine: SimpleNamespace)
 
 
 def test_about_adds_a_named_node(engine: SimpleNamespace) -> None:
-    records = seed_records(engine, "She moved to Lyon.", about=["Anna"], by="alice")
+    records = build_seed(engine, "She moved to Lyon.", about=["Anna"], by="alice").records("alice")
     assert [r["name"] for r in records] == ["Anna Pavlovna", "alice"]
 
 
+def test_the_about_names_come_before_the_texts_own(engine: SimpleNamespace) -> None:
+    records = build_seed(engine, "Pierre moved to Lyon.", about=["Anna"], by="alice").records(
+        "alice"
+    )
+    assert [r["name"] for r in records] == ["Anna Pavlovna", "Pierre Bezukhov", "alice"]
+
+
 def test_the_speaker_is_last_and_present_with_an_empty_text(engine: SimpleNamespace) -> None:
-    assert seed_records(engine, "", about=[], by="alice") == [SPEAKER]
-    records = seed_records(engine, "Pierre and Anna met.", about=["Anna"], by="alice")
+    assert build_seed(engine, "", about=[], by="alice").records("alice") == [SPEAKER]
+    records = build_seed(engine, "Pierre and Anna met.", about=["Anna"], by="alice").records(
+        "alice"
+    )
     assert records[-1] == SPEAKER
     assert [r["name"] for r in records].count("Anna Pavlovna") == 1
 
 
 def test_the_limit_bounds_the_records_and_keeps_the_speaker(engine: SimpleNamespace) -> None:
     engine.settings.extraction.known_entities_limit = 2
-    records = seed_records(engine, "Pierre and Anna met.", about=[], by="alice")
+    records = build_seed(engine, "Pierre and Anna met.", about=[], by="alice").records("alice")
     assert len(records) == 2 and records[-1] == SPEAKER

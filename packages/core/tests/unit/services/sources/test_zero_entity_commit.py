@@ -18,50 +18,13 @@ import pytest
 if TYPE_CHECKING:
     from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
 
-from chaoscypher_core.adapters.sqlite.repos import GraphRepository
 from chaoscypher_core.models import SourceStatus
-from chaoscypher_core.services.sources.engine.commit.service import (
-    SourceCommitService,
-)
+from tests.unit.services.sources.commit_wiring import commit_service_on
 
 
 # ------------------------------------------------------------------ #
 #  Shared helpers (mirrors test_commit_atomicity.py)
 # ------------------------------------------------------------------ #
-
-
-def _build_commit_service(
-    in_memory_adapter: SqliteAdapter,
-) -> SourceCommitService:
-    """Construct SourceCommitService wired from the test adapter.
-
-    Mirrors the production wiring in import_service.py.  The adapter
-    implements all three storage protocols via its mixins, so it is
-    passed for source_repository, sources_repository, and
-    indexing_repository simultaneously.
-    """
-    from chaoscypher_core.adapters.sqlite.engine import get_engine
-    from chaoscypher_core.adapters.sqlite.repos import SearchRepository
-    from chaoscypher_core.settings import EngineSettings
-
-    graph_repository = GraphRepository(
-        session=in_memory_adapter.session,
-        database_name=in_memory_adapter.database_name,
-    )
-    settings = EngineSettings()
-    search_repository = SearchRepository(
-        engine=get_engine(in_memory_adapter.db_path),
-        vector_dim=4,
-        embedding_model="test-model",
-    )
-    return SourceCommitService(
-        graph_repository=graph_repository,
-        source_repository=in_memory_adapter,
-        sources_repository=in_memory_adapter,
-        indexing_repository=in_memory_adapter,
-        search_repository=search_repository,
-        settings=settings,
-    )
 
 
 def _seed_extracted_source(
@@ -145,7 +108,7 @@ async def test_zero_entity_extraction_commits_empty(
     from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode, SourceRow
 
     source_id = _seed_extracted_source(in_memory_adapter)
-    service = _build_commit_service(in_memory_adapter)
+    service = commit_service_on(in_memory_adapter)
 
     result = await service.commit(
         file_id=source_id,
@@ -222,7 +185,7 @@ async def test_commit_skips_if_already_committed(
     in_memory_adapter.session.add(pre_existing_node)
     in_memory_adapter.session.commit()
 
-    service = _build_commit_service(in_memory_adapter)
+    service = commit_service_on(in_memory_adapter)
 
     result = await service.commit(
         file_id=source_id,

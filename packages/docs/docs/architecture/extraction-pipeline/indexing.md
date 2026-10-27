@@ -139,9 +139,9 @@ The `SearchRepository` supports three search modes:
 |------|--------|-------------|
 | Keyword | `keyword_search()` | FTS5 BM25 matching |
 | Semantic | `semantic_search()` | Vector cosine similarity |
-| Hybrid | `hybrid_search()` | Merges keyword + semantic results |
+| Hybrid | `hybrid_search()` | Fuses keyword + semantic rankings |
 
-Hybrid search is the primary mode used by the application. It runs both keyword and semantic searches in parallel, then merges results by keeping the highest score for each unique ID. Short queries (< 3 characters) skip semantic search and use keyword-only for better partial-match behavior.
+Hybrid search is the primary mode used by the application. It runs a keyword search over nodes and over chunks and a semantic search, then fuses the rankings by reciprocal rank (`RRF_K = 60`), scaled so a result ranked first in every arm scores 1.0. Rank, not score, is fused, because BM25 and cosine scores are on different scales. Short queries (< 3 characters) skip semantic search and use keyword-only for better partial-match behavior.
 
 A configurable `min_similarity_threshold` (default: 0.55) filters out low-confidence semantic results before merging.
 

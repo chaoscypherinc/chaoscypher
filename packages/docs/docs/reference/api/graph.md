@@ -200,7 +200,7 @@ curl "http://localhost/api/v1/graph/canvas?source_ids=src-001&source_ids=src-002
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `nodes` | array | Minimal node objects (id, template_id, label, position, source_id); a node the pipeline flagged also carries `properties` holding exactly its flags, each `true` (`orphan`, `descriptor_reference`, `low_plausibility`, `unplaced_type`, `unevidenced`, `excluded_name`), which the canvas groups in its "Unresolved" region |
+| `nodes` | array | Minimal node objects (id, template_id, label, position, source_id); a node the pipeline flagged also carries `properties` holding exactly its flags, each `true` (`orphan`, `descriptor_reference`, `low_plausibility`, `unplaced_type`, `unevidenced`, `excluded_name`), which the canvas links to its "Unresolved (N)" node |
 | `edges` | array | Minimal edge objects (id, source_node_id, target_node_id, template_id, label); an edge the pipeline flagged also carries `properties` holding its flags (`capped`; `unevidenced: true`: no cited sentence states the relationship, with the `evidence_reason`; `unmatched_label`, with the `written_label`; `type_mismatch`, with the `type_mismatch_reason`); the canvas draws an unevidenced edge dashed and the others thin |
 | `templates` | array | Template objects (id, name, template_type, icon, color, description) |
 | `total_nodes` | int | Number of nodes returned |

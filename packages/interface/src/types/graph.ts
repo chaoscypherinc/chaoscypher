@@ -145,7 +145,7 @@ export interface CanvasNode {
   source_id?: string | null;
   /**
    * The node's pipeline flag properties (``orphan``, ``descriptor_reference``,
-   * ...; see ``utils/nodeFlags.ts``). Drives the canvas's Unresolved region.
+   * ...; see ``utils/nodeFlags.ts``). Drives the canvas's "Unresolved (N)" hub.
    */
   properties?: Record<string, unknown> | null;
 }

@@ -145,24 +145,22 @@ See the [Workflows API Reference — Executions](../reference/api/workflows.md#w
 
 ### Import/Export
 
-Share workflows between databases or back them up:
+Share workflows between databases or back them up with the JSON export. CCX packages do not carry workflow definitions today — only trigger rows, which the importer skips (see [CCX format § 10](../reference/ccx-format.md#10-producer-notes-chaoscypher)) — so a `.ccx` export is not a workflow backup.
 
 <Tabs>
 <TabItem value="web-ui" label="Web UI">
 
 
-JSON workflow export/import is currently API-only — there are no export/import buttons in the web UI. Use the API endpoints below, or the CLI's CCX package commands.
+JSON workflow export/import is currently API-only — there are no export/import buttons in the web UI. Use the API endpoints below.
 
 </TabItem>
 <TabItem value="cli" label="CLI">
 
 
-```bash
-# Export as part of a CCX package
-chaoscypher graph package export --output my-workflows.ccx
+The CLI has no workflow export/import command, and `chaoscypher graph package export` does not include workflow definitions. Use the API endpoints in the API tab:
 
-# Import from a CCX package
-chaoscypher graph package load my-workflows.ccx
+```bash
+curl http://localhost/api/v1/workflows/wf_abc123/export > my-workflow.json
 ```
 
 </TabItem>

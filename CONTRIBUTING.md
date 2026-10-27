@@ -157,12 +157,12 @@ Shortcut: `make ci` runs the full pipeline (lint, typecheck, docstrings, tests, 
 Three layers guard against committed secrets:
 
 1. **Pre-commit hook** — runs `gitleaks` (v8.21.2) on staged files. Bypassed by `git commit --no-verify`, web-UI commits, or any tool ignoring `core.hooksPath`.
-2. **Local `make lint-secrets`** — runs `gitleaks detect` against the entire working tree. `make ci` and `make ci-local` run the same scan via `scripts/secrets_scan.py` (gitleaks binary when available, `detect-secrets` fallback otherwise), so the full local CI run catches anything pre-commit missed. Run ad-hoc with `make lint-secrets`.
+2. **Local `make lint-secrets`** — runs `scripts/secrets_scan.py` against the entire working tree: `detect-secrets` always, against `.secrets.baseline`, plus `gitleaks detect` where the binary is installed. `make ci` and `make ci-local` run the same scan, so the full local CI run catches anything pre-commit missed. Run ad-hoc with `make lint-secrets`.
 3. **CI workflow** — `.github/workflows/gitleaks.yml` is active: it runs `gitleaks` (v8.21.2, mirroring the pre-commit hook and `make lint-secrets`) on every `push` to every branch (PR branches included) as the CI defeat-path guard for `git commit --no-verify` and web-UI commits, and is also available via `workflow_dispatch` for ad-hoc audits. It intentionally does **not** trigger on `pull_request` (the `push` trigger already covers PR branches, and gitleaks-action's pull_request path 403s under this workflow's read-only `contents` token). This repository is organization-owned, so the free `GITLEAKS_LICENSE` repo secret (obtain at gitleaks.io) is required and already configured; forks under personal accounts do not need it. Tune false positives by adding entries to `.gitleaks.toml`'s `allowlist`.
 
 If `make lint-secrets` flags something:
 
-- **False positive** (test fixture, redacted sample): add an `allowlist` entry to `.gitleaks.toml` matching the file path or regex.
+- **False positive** (test fixture, redacted sample): for a gitleaks hit add an `allowlist` entry to `.gitleaks.toml` matching the file path or regex; for a detect-secrets hit audit it into `.secrets.baseline` (`detect-secrets audit .secrets.baseline`).
 - **Real secret**: rotate the credential first, then remove it from history (`git filter-repo` or a fresh branch), then commit the allowlist update.
 
 ## Adding a new architectural lint rule

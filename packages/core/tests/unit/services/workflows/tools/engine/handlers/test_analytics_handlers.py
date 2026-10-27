@@ -19,6 +19,7 @@ from chaoscypher_core.services.workflows.tools.engine.handlers.analytics_handler
     AnalyticsToolHandlers,
 )
 from chaoscypher_core.settings import EngineSettings
+from chaoscypher_core.utils.tool_failure import TOOL_FAILURES
 
 
 # ---------------------------------------------------------------------------
@@ -1776,7 +1777,7 @@ class TestErrorHandling:
         """Unhandled exception in analyze_graph_structure is caught by decorator.
 
         The @tool_handler decorator wraps exceptions into a
-        ``{"success": False, "error": "Operation failed"}`` response.
+        ``{"success": False, "error": TOOL_FAILURES["OPERATION_FAILED"]}`` response.
         """
         graph_repo.list_nodes_minimal.side_effect = RuntimeError("DB crash")
 
@@ -1784,7 +1785,7 @@ class TestErrorHandling:
         result = await handler.analyze_graph_structure()
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
     @pytest.mark.asyncio
     async def test_find_shortest_path_exception_returns_error(
@@ -1805,7 +1806,7 @@ class TestErrorHandling:
         result = await handler.find_shortest_path("n1", "n2")
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
     @pytest.mark.asyncio
     async def test_find_similar_nodes_exception_returns_error(
@@ -1826,7 +1827,7 @@ class TestErrorHandling:
         result = await handler.find_similar_nodes("n1")
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
     @pytest.mark.asyncio
     async def test_traverse_path_exception_returns_error(
@@ -1847,7 +1848,7 @@ class TestErrorHandling:
         result = await handler.traverse_path("n1")
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
 
 # ===========================================================================

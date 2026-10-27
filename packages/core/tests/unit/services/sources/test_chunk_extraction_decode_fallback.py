@@ -95,6 +95,7 @@ async def _run(
         AIEntityExtractor,
     )
     from chaoscypher_core.settings import EngineSettings
+    from chaoscypher_core.testing.embedding import FakeEmbeddingProvider
 
     adapter = _make_adapter(chunk)
     adapter.get_chunk_task.return_value = {
@@ -113,6 +114,11 @@ async def _run(
         patch(
             "chaoscypher_core.app_config.engine_factory.build_engine_settings",
             return_value=EngineSettings(),
+        ),
+        # a kept chunk's entities are embedded for finalize; the default provider is the local model
+        patch(
+            "chaoscypher_core.repo_factories.get_embedding_service",
+            return_value=FakeEmbeddingProvider(),
         ),
     ):
         service = ces.ChunkExtractionOperationsService(source_repository=adapter)

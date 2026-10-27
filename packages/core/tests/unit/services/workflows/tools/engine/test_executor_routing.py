@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from chaoscypher_core.services.workflows.tools.engine.executor import ToolExecutorService
+from chaoscypher_core.utils.tool_failure import TOOL_FAILURES
 
 
 @pytest.fixture
@@ -103,7 +104,11 @@ class TestExecuteToolRouting:
 
         result = await executor.execute_tool("search_nodes", {"query": "test"})
 
-        assert result == {"error": "Tool execution failed"}
+        assert result == {
+            "success": False,
+            "error": TOOL_FAILURES["OPERATION_FAILED"],
+            "code": "OPERATION_FAILED",
+        }
 
     @pytest.mark.asyncio
     async def test_value_error_returns_execution_failed(self, executor):
@@ -113,7 +118,11 @@ class TestExecuteToolRouting:
 
         result = await executor.execute_tool("get_node", {"node_id": "bad"})
 
-        assert result == {"error": "Tool execution failed"}
+        assert result == {
+            "success": False,
+            "error": TOOL_FAILURES["OPERATION_FAILED"],
+            "code": "OPERATION_FAILED",
+        }
 
     @pytest.mark.asyncio
     async def test_passes_multiple_parameters(self, executor):

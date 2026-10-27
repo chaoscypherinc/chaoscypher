@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from chaoscypher_core.models import is_memory_source
 from chaoscypher_core.operations import queue_utils
 from chaoscypher_core.operations.extraction.extraction_finalizer import TERMINAL_TASK_STATES
 from chaoscypher_core.services.events.bus import event_bus
@@ -31,6 +32,15 @@ if TYPE_CHECKING:
     from chaoscypher_core.ports.source_recovery import SourceRecoveryPorts
 
 logger = structlog.get_logger(__name__)
+
+
+def _is_memory(source: dict[str, Any]) -> bool:
+    """Whether ``source`` is a memory, which the link step links, never recovery (D17).
+
+    Compared in Python, so a row whose ``source_type`` is NULL (most predate the column)
+    reads as a document and is recovered as before.
+    """
+    return is_memory_source(source)
 
 
 # Default limits for the max-recovery-attempts guard (BE-1).
@@ -265,7 +275,7 @@ class SourceRecovery:
         heartbeated seconds ago.
         """
         source = self.adapter.get_source(source_id, database_name)
-        if source is None:
+        if source is None or _is_memory(source):
             return False
 
         # Manual resume is an explicit user override (Decision 5). Reset
@@ -319,6 +329,32 @@ class SourceRecovery:
         age_seconds = (datetime.now(UTC) - last_activity).total_seconds()
         return age_seconds < self.stalled_threshold_seconds
 
+    def _skipped_up_front(self, source: dict[str, Any], stats: RecoveryStats) -> bool:
+        """The guards before any recovery: a memory, a paused source, a paused system.
+
+        Counts the skip in ``stats`` and returns True when the source is left alone.
+        """
+        if _is_memory(source):
+            stats.skipped_healthy += 1
+            return True
+
+        # Per-source pause
+        if source.get("is_paused"):
+            stats.skipped_paused += 1
+            return True
+
+        # System-wide pause. Intentionally checked per-source
+        # rather than once per reconcile pass so the single-source
+        # recover_source entry point (used by the manual-resume
+        # endpoint) honors the same semantics without needing a
+        # separate code path. The system_state table is one row, so
+        # the extra SELECT per source is negligible.
+        system_state = self.adapter.get_system_state()
+        if system_state and system_state.get("processing_paused"):
+            stats.skipped_paused += 1
+            return True
+        return False
+
     async def _recover_one(
         self,
         source: dict[str, Any],
@@ -337,21 +373,12 @@ class SourceRecovery:
         work is actually missing; when it returns None, the source is
         considered healthy (either making forward progress or
         genuinely in a state the recovery matrix treats as OK).
-        """
-        # Per-source pause
-        if source.get("is_paused"):
-            stats.skipped_paused += 1
-            return
 
-        # System-wide pause. Intentionally checked per-source
-        # rather than once per reconcile pass so the single-source
-        # recover_source entry point (used by the manual-resume
-        # endpoint) honors the same semantics without needing a
-        # separate code path. The system_state table is one row, so
-        # the extra SELECT per source is negligible.
-        system_state = self.adapter.get_system_state()
-        if system_state and system_state.get("processing_paused"):
-            stats.skipped_paused += 1
+        A memory source is skipped before everything else, in every
+        status: the link step (``mcp/memory_link.py``) owns it, and its
+        ``recovery_attempts`` count failed links, not dispatches.
+        """
+        if self._skipped_up_front(source, stats):
             return
 
         # Max-recovery-attempts guard (BE-1). A source that has been

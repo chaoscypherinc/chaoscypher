@@ -43,7 +43,7 @@ This advisory is temporary — version negotiation is on the roadmap.
 
 ## Upgrade flow (all-in-one)
 
-1. Pull the new image: `docker pull ghcr.io/chaoscypherinc/chaoscypher:<tag>`.
+1. Point the `image:` line of your `docker-compose.yml` at the new tag (`ghcr.io/chaoscypherinc/chaoscypher:<tag>`) and pull it: `docker compose pull`. `docker compose up` starts whatever that line names, so a `docker pull` of some other tag changes nothing. If you track `:latest`, `docker compose pull` alone fetches the new build — note the release you are leaving first, because rolling back means pinning it by number.
 2. Stop the old container: `docker compose down`.
 3. Start the new: `docker compose up -d`.
 4. Watch the logs: `docker compose logs -f chaoscypher`.
@@ -69,8 +69,8 @@ In the all-in-one image nginx and Cortex ship in the same container, so this is 
 If migrations fail or the new tag is unhealthy:
 
 1. Stop the app container: `docker compose stop chaoscypher`.
-2. Restore the pre-upgrade backup (see below for the exact path).
-3. Pull the previous tag (or check out the previous commit): `docker pull ghcr.io/chaoscypherinc/chaoscypher:<previous-tag>`.
+2. Restore the pre-upgrade backup (see below for the exact path and command).
+3. Point the `image:` line back at the previous tag (`ghcr.io/chaoscypherinc/chaoscypher:<previous-tag>`) and pull it: `docker compose pull` (or check out the previous commit for the multi-container layout). If you were on `:latest`, pin the previous version explicitly — restarting `:latest` starts the new build again, which re-migrates the backup you just restored.
 4. Start: `docker compose up -d`.
 
 ### Auto-backup location
@@ -87,13 +87,23 @@ For example, if your data directory is `/data`, the database is `default`, and t
 /data/databases/default/backups/pre-0031-20260601T123045Z.db
 ```
 
-To restore the most recent auto-backup, use the dedicated CLI rollback:
+A new database is not upgraded: building its schema the first time takes no backup and records no upgrade, so there is no post-upgrade notice and nothing to roll back — on any surface (startup, `chaoscypher upgrade`, `chaoscypher db migrate apply`, the **Maintenance** page, MCP `apply_upgrade`). If that first build is cut short (a crash or restart partway), the database is left with empty tables and no recorded version; the next start drops them and builds it again, still without a backup, since nothing in it is data. A database that has tables holding rows but no recorded version is treated as an existing install: it is backed up and upgraded.
+
+On the all-in-one image `/data` is a named Docker volume, so restore the auto-backup inside a helper container that mounts it (find the volume name with `docker volume ls | grep chaoscypher`, and use the newest `pre-*.db` file in the backups folder):
+
+```bash
+docker run --rm -v <volume-name>:/data alpine sh -c '
+  cp /data/databases/default/backups/pre-0031-20260601T123045Z.db /data/databases/default/app.db &&
+  rm -f /data/databases/default/app.db-wal /data/databases/default/app.db-shm'
+```
+
+The CLI rollback restores the same file without the copy:
 
 ```bash
 chaoscypher db migrate rollback
 ```
 
-This finds the matching `pre-<revision>-<timestamp>.db` for the failed migration and restores it. You can also trigger a rollback from the maintenance UI — if startup is blocked on a `NEEDS_CONFIRMATION` migration, the **Maintenance** page shows a **Rollback** button that restores the auto-backup without needing the CLI. For an operator-initiated backup (not the migration auto-backup) the restore path is `POST /api/v1/backup/<filename>/restore` or the manual procedure documented in [Backup and Restore](./backup-restore.md#manual-restore-container-stopped).
+It works only while the upgrade-state row still records that backup — after a failed or blocked upgrade, or a data-changing one, whose record lasts until the next upgrade or a rollback (a restart keeps it). A successful upgrade that applied only safe migrations clears the record, and the command then exits with "No pre-upgrade backup available"; use the copy above. It also reads the data directory of the machine it runs on, so a CLI installed on the host does not see the all-in-one container's volume. You can also trigger a rollback from the maintenance UI — if startup is blocked on a `NEEDS_CONFIRMATION` migration, the **Maintenance** page shows a **Rollback** button that restores the auto-backup without needing the CLI. For an operator-initiated backup (not the migration auto-backup) the restore path is `POST /api/v1/backup/<filename>/restore` or the manual procedure documented in [Backup and Restore](./backup-restore.md#manual-restore-container-stopped).
 
 ### A note on Alembic downgrades
 

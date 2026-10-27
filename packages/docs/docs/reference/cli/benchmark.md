@@ -6,8 +6,8 @@ description: Run reproducible extraction benchmarks across LLM models and datase
 # Benchmark Commands
 
 The `benchmark` command group runs reproducible extraction benchmarks across
-LLM models and datasets, then renders a leaderboard. Each run is fully
-local — no API key is required when `--local-only` is set.
+LLM models and datasets, then renders a leaderboard. A run with
+`--local-only` is fully local and needs no API key.
 
 ```bash
 chaoscypher benchmark --help

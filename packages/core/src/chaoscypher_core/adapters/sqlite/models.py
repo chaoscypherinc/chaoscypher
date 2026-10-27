@@ -10,10 +10,22 @@ JSON fields use SQLModel's JSON type for structured data.
 from datetime import UTC, datetime
 from typing import Any, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    event,
+    false,
+)
 from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 
 from chaoscypher_core.constants import SOURCE_ROW_FILTERING_MODE
+from chaoscypher_core.models import MemoryLinkState, is_memory_source
 
 
 # pragma: ensure edit applied
@@ -411,6 +423,14 @@ class SourceRow(SQLModel, table=True):
     memory_by: str | None = None  # who stated it ("user", an agent name)
     memory_scope: str | None = None  # the scope it belongs to (None: unscoped)
     valid_from: str | None = None  # from when it holds, ISO date YYYY-MM-DD
+
+    # ========== Memory link state (source_type "memory"; migration 0024) ==========
+    # ``MemoryLinkState`` value; NULL on every other source. ``memory_linked_at``:
+    # when it became linked or linked_empty. ``memory_link_claim``: the token of the
+    # process linking it now (its heartbeat is ``last_activity_at``), NULL when nobody is.
+    memory_link_state: str | None = None
+    memory_linked_at: datetime | None = None
+    memory_link_claim: str | None = None
 
     # ========== Site import (migration 0021) ==========
     # The docs site this page was imported with (``source_sites``); SET NULL
@@ -909,6 +929,18 @@ class SourceRow(SQLModel, table=True):
             delta = self.commit_completed_at - self.commit_started_at
             return delta.total_seconds()
         return None
+
+
+@event.listens_for(SourceRow, "before_insert")
+def _memory_rows_start_pending(_mapper: Any, _connection: Any, row: SourceRow) -> None:
+    """A memory row is never written without a link state: no state given reads ``pending``.
+
+    Every ORM insert of a source passes here (``process_document``, ``create_source``, the
+    pack import's upsert), so no writer can leave a memory's state NULL, which the list
+    and digest views refuse. A document keeps NULL.
+    """
+    if is_memory_source(row) and row.memory_link_state is None:
+        row.memory_link_state = MemoryLinkState.PENDING.value
 
 
 class SourceEntityEmbedding(SQLModel, table=True):
@@ -1609,6 +1641,13 @@ class GraphNode(SQLModel, table=True):
     # 0003. Nullable: legacy rows and not-yet-exported nodes stay NULL.
     ccx_iri: str | None = Field(default=None, index=True)
 
+    # Made by a person (create_node / create_edge), not by a source (migration 0025): a
+    # source attesting it is released without deleting or rewriting it.
+    person_made: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=false()),
+    )
+
 
 class GraphEdge(SQLModel, table=True):
     """Knowledge graph edges table.
@@ -1660,6 +1699,13 @@ class GraphEdge(SQLModel, table=True):
     # an exported CCX package, so re-imports upsert by IRI. Added by migration
     # 0003. Nullable: legacy rows and not-yet-exported edges stay NULL.
     ccx_iri: str | None = Field(default=None, index=True)
+
+    # Made by a person (create_node / create_edge), not by a source (migration 0025): a
+    # source attesting it is released without deleting or rewriting it.
+    person_made: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=false()),
+    )
 
     # Validity window (migration 0020): ISO dates. ``valid_to`` set means a later
     # memory on a single-valued relation closed this edge; ``closed_by_source_id``

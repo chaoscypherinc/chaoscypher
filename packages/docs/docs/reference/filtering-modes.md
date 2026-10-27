@@ -157,7 +157,7 @@ A mode decides how strict each filter is; since October 2026 no filter
 throws away a record that carries evidence (a description or an evidence
 sentence). It keeps the record with a flag, and the consumers decide
 (chat retrieval ranks a flagged record after the others; the graph canvas
-groups flagged nodes in its "Unresolved" region and draws flagged edges
+links flagged nodes to its "Unresolved (N)" node and draws flagged edges
 thin). What each filter does now:
 
 | Filter | Before | Now |

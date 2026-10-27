@@ -193,7 +193,10 @@ export default function EmbeddingProviderConfig({
               ...settings,
               search: {
                 ...settings.search,
-                vector_dimensions: parseInt(e.target.value) || 768,
+                // The backend default is 1024 and the registry's native sizes
+                // vary; a cleared field keeps the current value rather than
+                // inventing one.
+                vector_dimensions: parseInt(e.target.value) || settings.search.vector_dimensions,
               },
             })
           }

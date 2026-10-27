@@ -149,10 +149,9 @@ class OllamaEmbeddingProvider:
     def _truncate(self, vector: list[float]) -> list[float]:
         """The vector at ``vector_dimensions`` and unit length (MRL cut, re-normalised).
 
-        The first vector seen records :attr:`native_dimensions`; when it is
-        larger than ``vector_dimensions`` the cut is logged once
-        (``embedding_mrl_truncation``), so a run that indexes below the
-        model's native size says so instead of doing it silently.
+        The first vector seen records :attr:`native_dimensions`; a cut below
+        it is logged once per model by :func:`fit_provider_vector`
+        (``embedding_mrl_truncation``), the same for every provider.
 
         Args:
             vector: Raw embedding vector from Ollama.
@@ -166,13 +165,6 @@ class OllamaEmbeddingProvider:
         """
         if self.native_dimensions is None:
             self.native_dimensions = len(vector)
-            if len(vector) > self.vector_dimensions:
-                logger.warning(
-                    "embedding_mrl_truncation",
-                    model=self.model_name,
-                    native_dimensions=len(vector),
-                    vector_dimensions=self.vector_dimensions,
-                )
         return fit_provider_vector(
             vector, self.vector_dimensions, provider="ollama", model=self.model_name
         )

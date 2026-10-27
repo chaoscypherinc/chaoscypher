@@ -305,7 +305,7 @@ async def test_batch_upload_falls_back_to_max_per_file_when_size_unknown() -> No
 
 
 @pytest.mark.asyncio
-async def test_batch_upload_threads_enable_vision_to_each_file() -> None:
+async def test_batch_upload_threads_enable_vision_to_each_file(tmp_path: Path) -> None:
     """F1: enable_vision=True on /sources/batch reaches every queued task."""
     settings = MagicMock()
     settings.batching.upload_max_concurrent = 4
@@ -332,7 +332,7 @@ async def test_batch_upload_threads_enable_vision_to_each_file() -> None:
     )
     service.preflight_disk_for_upload = MagicMock()
     service.validate_content_type = MagicMock()
-    service.stream_upload_to_temp = AsyncMock(return_value=(Path("/tmp/x"), "h", 5))
+    service.stream_upload_to_temp = AsyncMock(return_value=(tmp_path / "staged", "h", 5))
 
     file_a = MagicMock()
     file_a.filename = "a.txt"
@@ -528,7 +528,7 @@ async def test_batch_upload_caps_long_exception_messages_at_200_chars() -> None:
 
 
 @pytest.mark.asyncio
-async def test_batch_upload_enable_vision_defaults_to_none() -> None:
+async def test_batch_upload_enable_vision_defaults_to_none(tmp_path: Path) -> None:
     """F1: omitting enable_vision (default None) forwards None per file."""
     settings = MagicMock()
     settings.batching.upload_max_concurrent = 4
@@ -555,7 +555,7 @@ async def test_batch_upload_enable_vision_defaults_to_none() -> None:
     )
     service.preflight_disk_for_upload = MagicMock()
     service.validate_content_type = MagicMock()
-    service.stream_upload_to_temp = AsyncMock(return_value=(Path("/tmp/x"), "h", 5))
+    service.stream_upload_to_temp = AsyncMock(return_value=(tmp_path / "staged", "h", 5))
 
     file_a = MagicMock()
     file_a.filename = "a.txt"

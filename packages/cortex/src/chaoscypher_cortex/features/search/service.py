@@ -248,7 +248,7 @@ class SearchService:
         embedding_provider_callback: Any = None,
         min_similarity: float | None = None,
     ) -> SearchResponse:
-        """Perform hybrid search (semantic with keyword fallback).
+        """Perform hybrid search (keyword and semantic rankings fused by reciprocal rank).
 
         Args:
             query: Search query

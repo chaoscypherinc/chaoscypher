@@ -1466,3 +1466,104 @@ class TestVramPresetTableAccuracy:
         """Every display row's model equals the preset's ollama_chat_model."""
         preset = self._load_preset_json(str(row["preset"]))
         assert row["model"] == preset["ollama_settings"]["ollama_chat_model"]
+
+
+class TestWizardEmbeddingDimensions:
+    """2026-10-19 audit: the CLI wizard indexes a registry model at its native size."""
+
+    def test_registry_model_sets_vector_dimensions(self) -> None:
+        from chaoscypher_core.adapters.embedding.registry import get_curated_dimensions
+
+        state = WizardState()
+        state.llm.provider = "ollama"
+        state.embedding.provider = "ollama"
+        state.embedding.model = "qwen3-embedding:0.6b"
+        state.embedding.is_configured = True
+
+        updates = _wizard_updates(state)
+
+        expected = get_curated_dimensions("qwen3-embedding:0.6b")
+        assert expected is not None
+        assert updates["search"] == {"vector_dimensions": expected}
+
+    def test_custom_model_leaves_vector_dimensions_alone(self) -> None:
+        state = WizardState()
+        state.llm.provider = "ollama"
+        state.embedding.provider = "ollama"
+        state.embedding.model = "my-own-embedder:latest"
+        state.embedding.is_configured = True
+
+        assert "search" not in _wizard_updates(state)
+
+    def test_a_rerun_keeps_the_configured_dimensions_of_an_unchanged_model(
+        self, isolated_settings, monkeypatch
+    ) -> None:
+        """Re-running setup to change the LLM must not re-size the vector index (#824 review).
+
+        An install auto-configured with qwen3-embedding:4b at the old 1024
+        default would get 2560 written, and the next start drops every vector
+        table (``SqliteSearchRepository`` on a dimension change) and forces a
+        full re-embed. The wizard says so in one line and changes nothing.
+        """
+        (isolated_settings / "settings.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "setup_completed": True,
+                    "llm": {"chat_provider": "ollama"},
+                    "embedding": {
+                        "provider": "ollama",
+                        "model": "qwen3-embedding:4b",
+                        "is_configured": True,
+                    },
+                    "search": {"vector_dimensions": 1024},
+                }
+            )
+        )
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+        result = CliRunner().invoke(setup, ["--force", "--non-interactive", "--provider", "openai"])
+
+        assert result.exit_code == 0, result.output
+        loaded = Settings.load_from_yaml(isolated_settings / "settings.yaml")
+        assert loaded.llm.chat_provider == "openai"
+        assert loaded.search.vector_dimensions == 1024
+        assert "2560" in result.output
+        assert "rebuild-search" in result.output
+
+    def test_a_rerun_that_changes_the_model_writes_its_dimensions(self) -> None:
+        backend = Settings(
+            setup_completed=True,
+            embedding={
+                "provider": "ollama",
+                "model": "qwen3-embedding:0.6b",
+                "is_configured": True,
+            },
+            search={"vector_dimensions": 1024},
+        )
+        state = _seed_wizard_state(backend)
+        state.embedding.model = "qwen3-embedding:4b"
+
+        assert _wizard_updates(state)["search"] == {"vector_dimensions": 2560}
+
+    def test_a_rerun_with_an_unchanged_model_writes_no_dimensions(self) -> None:
+        backend = Settings(
+            setup_completed=True,
+            embedding={
+                "provider": "ollama",
+                "model": "qwen3-embedding:4b",
+                "is_configured": True,
+            },
+            search={"vector_dimensions": 1024},
+        )
+
+        assert "search" not in _wizard_updates(_seed_wizard_state(backend))
+
+    def test_the_menu_default_is_the_registry_default(self) -> None:
+        from chaoscypher_cli.commands.setup import _default_curated_choice
+        from chaoscypher_core.adapters.embedding.registry import (
+            CURATED_EMBEDDING_MODELS,
+            get_default_model,
+        )
+
+        chosen = CURATED_EMBEDDING_MODELS[int(_default_curated_choice()) - 1]
+        assert chosen is get_default_model()

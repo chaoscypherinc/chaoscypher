@@ -62,4 +62,11 @@ describe('SourcePacksDialog', () => {
     renderDialog(source({ status: 'indexed', extraction_packs: null, extraction_domain: null } as Partial<Source>));
     expect(screen.getByText(/re-extracts this source/i)).not.toHaveTextContent(/deleted first/i);
   });
+
+  it('keeps the picker, with no detect switch or explainer', () => {
+    renderDialog(source());
+    expect(screen.getByRole('combobox', { name: /packs/i })).toBeEnabled();
+    expect(screen.queryByRole('switch', { name: /detect packs automatically/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('What are packs?')).not.toBeInTheDocument();
+  });
 });

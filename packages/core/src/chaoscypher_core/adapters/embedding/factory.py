@@ -23,6 +23,7 @@ from chaoscypher_core.adapters.embedding.ollama_provider import OllamaEmbeddingP
 from chaoscypher_core.adapters.embedding.openai_provider import OpenAIEmbeddingProvider
 from chaoscypher_core.adapters.embedding.registry import get_curated_dimensions
 from chaoscypher_core.cache.wiring import digest_build_resolver, wrap_embedding
+from chaoscypher_core.exceptions import VectorSearchOff
 
 
 if TYPE_CHECKING:
@@ -115,6 +116,51 @@ def create_embedding_provider(settings: EngineSettings) -> EmbeddingProviderProt
         else None
     )
     return wrap_embedding(provider, settings, resolve_build=resolve_build)
+
+
+def embedding_provider_for(settings: EngineSettings) -> EmbeddingProviderProtocol | None:
+    """The embedding provider these settings call for, or None when vector search is off.
+
+    The one reader of ``search.enable_vector_search`` in the code base: the
+    Engine, the commit service's fallback and every other builder in the
+    Engine's reach ask this function instead of reading the switch, so a
+    keyword-only process never builds or calls an embedding model. None
+    means keyword-only to every consumer.
+
+    Args:
+        settings: Full engine settings.
+
+    Returns:
+        The provider :func:`create_embedding_provider` builds, or None when
+        ``settings.search.enable_vector_search`` is false.
+
+    """
+    if not settings.search.enable_vector_search:
+        return None
+    return create_embedding_provider(settings)
+
+
+def require_embedding_provider(
+    provider: EmbeddingProviderProtocol | None, action: str
+) -> EmbeddingProviderProtocol:
+    """The provider, or a :class:`VectorSearchOff` naming the action that needed it.
+
+    Args:
+        provider: A provider from :func:`embedding_provider_for` (None when
+            vector search is off).
+        action: What needs vectors, as the start of a sentence
+            (``"Semantic search"``).
+
+    Returns:
+        ``provider`` when it is not None.
+
+    Raises:
+        VectorSearchOff: When ``provider`` is None.
+
+    """
+    if provider is None:
+        raise VectorSearchOff(action)
+    return provider
 
 
 def _build_embedding_provider(settings: EngineSettings) -> EmbeddingProviderProtocol:
@@ -231,6 +277,8 @@ def validate_embedding_model(
 
 __all__ = [
     "create_embedding_provider",
+    "embedding_provider_for",
     "ollama_embedding_build",
+    "require_embedding_provider",
     "validate_embedding_model",
 ]

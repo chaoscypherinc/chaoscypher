@@ -1677,13 +1677,19 @@ class Settings(BaseSettings):
         # (CHAOSCYPHER_LLM__OLLAMA_CHAT_MODEL) surface the nested key in
         # UPPERCASE while YAML sections keep their written case. Field names
         # on the settings models are all lowercase, so normalise the section's
-        # top-level keys — deeper levels (user-defined dict keys like
-        # user-defined dict keys) are left untouched.
+        # top-level keys, and the keys of its sub-sections that name a field
+        # (CHAOSCYPHER_MCP__MEMORY__WAIT_SECONDS); user-defined dict keys are
+        # left untouched (_normalise_section_keys).
         def get_section(key: str) -> dict[str, Any]:
             section = get_ci(key, {})
             if not isinstance(section, dict):
                 return {}
-            return {str(k).lower(): v for k, v in section.items()}
+            lowered = {str(k).lower(): v for k, v in section.items()}
+            field = cls.model_fields.get(key.lower())
+            model = field.annotation if field is not None else None
+            if isinstance(model, type) and issubclass(model, BaseModel):
+                return _normalise_section_keys(model, lowered)
+            return lowered
 
         # Extract nested settings (dynaconf converts keys to UPPERCASE)
         llm_data = _scrub_retired_keys("llm", get_section("LLM"))

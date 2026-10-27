@@ -2,7 +2,7 @@
   "name": "vram_20gb",
   "display_name": "20GB VRAM",
   "version": "1.0.0",
-  "description": "Professional workstation configuration for 14B parameter models. Good balance of model size and context window for knowledge work.",
+  "description": "Professional workstation configuration: a 9B chat model and a 14B extraction model with a wider context window. Good balance of model size and context window for knowledge work.",
   "author": "ChaosCypher Team",
   "builtin": true,
 

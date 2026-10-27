@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from chaoscypher_core.models import SourceStatus
+from chaoscypher_core.models import SourceStatus, is_memory_source
 from chaoscypher_core.operations.extraction.extraction_finalizer import (
     trigger_next_waiting_extraction,
 )
@@ -62,6 +62,10 @@ async def recover_stuck_sources(
 
         if not source_id:
             logger.warning("recovery_source_missing_id", source=source)
+            continue
+        if is_memory_source(source):
+            # the link step owns a memory: reset to indexed it would be extracted as a document
+            logger.debug("recovery_source_memory_skipped", source_id=source_id)
             continue
 
         try:

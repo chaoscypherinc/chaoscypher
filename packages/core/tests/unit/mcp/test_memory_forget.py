@@ -175,9 +175,9 @@ async def test_every_memory_is_reachable_past_the_source_page(
     world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Review: the tools paged the newest 1000 sources; older memories and documents vanished."""
-    from chaoscypher_core.mcp import memory as memory_module
+    from chaoscypher_core.mcp import memory_seed
 
-    monkeypatch.setattr(memory_module, "SOURCE_PAGE", 2)
+    monkeypatch.setattr(memory_seed, "SOURCE_PAGE", 2)
     listed = await call(world.server, "list_memories", {"limit": 50})
     assert len(listed.splitlines()) == 3
     recalled = await call(world.server, "recall", {"query": "Where was Pierre born?"})

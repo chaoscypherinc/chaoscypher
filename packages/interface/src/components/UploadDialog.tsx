@@ -296,6 +296,7 @@ export function UploadDialog({
                 availableDomains={availableDomains}
                 onChange={onPacksChange}
                 allowAuto
+                proposalReviewed={!importsSite}
                 contextWindow={contextWindow}
                 groupSize={groupSize}
                 inputPerChunk={inputPerChunk}

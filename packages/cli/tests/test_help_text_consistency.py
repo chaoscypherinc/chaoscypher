@@ -393,3 +393,36 @@ def test_config_set_hints_name_real_settings_keys() -> None:
         "`chaoscypher config set` hints naming a key the settings schema "
         "rejects:\n" + "\n".join(offenders)
     )
+
+
+_CLI_INDEX = (
+    Path(__file__).resolve().parents[3]
+    / "packages"
+    / "docs"
+    / "docs"
+    / "reference"
+    / "cli"
+    / "index.md"
+)
+
+
+def test_cli_index_page_lists_every_top_level_command() -> None:
+    """The CLI reference index names every top-level command with its registered help line.
+
+    ``reference/cli/index.md`` hand-copies ``chaoscypher --help`` and a
+    command table. ``memory`` shipped (2026-10-20) without either row, so a
+    reader of the index could not find the command; this reads the registry
+    instead of a reader.
+    """
+    from chaoscypher_cli.__main__ import LAZY_COMMANDS
+
+    text = _CLI_INDEX.read_text(encoding="utf-8")
+    assert sorted(LAZY_COMMANDS) == TOP_LEVEL_COMMANDS, "TOP_LEVEL_COMMANDS mirrors LAZY_COMMANDS"
+    for name, (_target, help_line) in LAZY_COMMANDS.items():
+        first_line = help_line.split("\n", 1)[0].strip()
+        assert re.search(
+            rf"^  {re.escape(name)}\s+{re.escape(first_line[:40])}", text, re.MULTILINE
+        ), f"{name!r} ({first_line!r}) is missing from the --help block of {_CLI_INDEX.name}"
+        assert re.search(rf"^\| \[?`{re.escape(name)}`", text, re.MULTILINE), (
+            f"{name!r} has no row in the command tables of {_CLI_INDEX.name}"
+        )

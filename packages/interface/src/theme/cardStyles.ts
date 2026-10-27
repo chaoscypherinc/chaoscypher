@@ -116,8 +116,8 @@ export const glassPanelSx = {
 
 /**
  * Faint frosted backing for controls floating over the graph canvas (the
- * search bar, the Unresolved-region toggle): lighter than `glassPanelSx` so
- * the graph stays visible behind it.
+ * search bar): lighter than `glassPanelSx` so the graph stays visible
+ * behind it.
  */
 export const canvasOverlaySx = {
   background: 'rgba(15, 20, 30, 0.15)',
@@ -145,4 +145,3 @@ export const CardColors = {
   orange:    ChaosCypherPalette.orange,
   accent:    ChaosCypherPalette.accent,
 } as const;
-

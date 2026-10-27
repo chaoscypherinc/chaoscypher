@@ -44,14 +44,18 @@ logger = structlog.get_logger(__name__)
 
 
 def _release_embedder(engine_settings: EngineSettings | None) -> LazyEmbedder:
-    """The provider the post-release refresh re-embeds with, built only if a node went stale."""
+    """The provider the post-release refresh re-embeds with, built only if a node went stale.
 
-    def build() -> EmbeddingProviderProtocol:
-        from chaoscypher_core.adapters.embedding import create_embedding_provider
+    Built through ``embedding_provider_for``: None with vector search off, and
+    the refresh then re-indexes the stale nodes for keywords only.
+    """
+
+    def build() -> EmbeddingProviderProtocol | None:
+        from chaoscypher_core.adapters.embedding import embedding_provider_for
 
         if engine_settings is None:
             raise ExternalServiceError("embedding", "no engine settings to build a provider from")
-        return create_embedding_provider(engine_settings)
+        return embedding_provider_for(engine_settings)
 
     return LazyEmbedder(build=build, owned=True)
 

@@ -594,3 +594,35 @@ def test_a_domain_config_edit_moves_the_cache_recipe_of_that_domains_corpus(monk
     after_cache = GraphCache(root=Path("x"), dedup_embedder=DEDUP, corpus_identity=literary_corpus)
     assert after_cache.recipe_for("c") != before
     assert after_cache.key_for(**pins, temperature=0.0) != before_key
+
+
+@pytest.mark.asyncio
+async def test_a_builder_that_dies_mid_write_leaves_no_snapshot(tmp_path):
+    """2026-10-19 audit: a partial ``app.db`` used to be served as a hit on the next run."""
+    cache = GraphCache(root=tmp_path / "cache", dedup_embedder=DEDUP)
+    m = ModelConfig(provider="ollama", model="llama", label="L")
+    pins = {
+        "corpus_id": "ds1",
+        "corpus_version": "1.0",
+        "extractor": m,
+        "seed": 42,
+        "temperature": 0.0,
+    }
+
+    async def dying_build(target: Path) -> None:
+        target.write_bytes(b"half-a-snap")  # noqa: ASYNC240
+        msg = "killed mid-write"
+        raise RuntimeError(msg)
+
+    with pytest.raises(RuntimeError, match="killed mid-write"):
+        await cache.get_or_build(**pins, builder=dying_build)
+    slot = cache._slot(cache.key_for(**pins))
+    assert not (slot / "app.db").exists()
+    assert not list(slot.glob("app.db.*"))
+
+    async def good_build(target: Path) -> None:
+        target.write_bytes(b"whole-snapshot")  # noqa: ASYNC240
+
+    out = await cache.get_or_build(**pins, builder=good_build)
+    assert out.name == "app.db"
+    assert out.read_bytes() == b"whole-snapshot"

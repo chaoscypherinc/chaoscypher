@@ -9,11 +9,13 @@ batch creation and source tracking via entity properties.
 Extracted from commit_service.py for SRP compliance.
 """
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from chaoscypher_core.constants import is_system_template_id
 from chaoscypher_core.models import (
     Node,
     NodeCreate,
@@ -21,6 +23,9 @@ from chaoscypher_core.models import (
 from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
     GIVEN_ALIASES_KEY,
     NAME_RECORD_KEYS,
+)
+from chaoscypher_core.services.sources.engine.extraction.utils.offered_types import (
+    take_offered_template,
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import (
     SUBTYPES_PROPERTY,
@@ -80,6 +85,7 @@ class EntityCommitHandler:
         file_info: Any,
         file_id: str,
         source_id: str | None = None,
+        offered_templates: Mapping[str, str] | None = None,
     ) -> tuple[list[NodeCreate], list[dict], list[str]]:
         """Prepare entity nodes for batch creation.
 
@@ -91,6 +97,10 @@ class EntityCommitHandler:
             file_info: Import file info dict
             file_id: Import file ID
             source_id: Source ID for linking nodes to source (for enabled filtering)
+            offered_templates: A memory's offered templates (folded name -> id, D26): an
+                entity stamped with one (``offered_types.OFFERED_TEMPLATE_KEY``) whose
+                template still exists binds to it; the stamp is never stored. Every other
+                entity goes through the per-source matcher.
 
         Returns:
             Tuple of (nodes_to_create, entity_data_list, all_entity_template_ids):
@@ -121,19 +131,25 @@ class EntityCommitHandler:
             # type with the subtype in ``entity_subtype``; a type no core type
             # answers is kept as ``Concept`` flagged ``unplaced_type`` (the type
             # rescue's rule), so the template match below reads the core type.
-            entity_data = core_typed(entity.get("entity_data", entity))
+            entity_data, offered = take_offered_template(
+                core_typed(entity.get("entity_data", entity)), offered_templates or {}
+            )
             entity_name = entity_data.get("name", "Untitled")
 
-            # Resolve template
-            template_id = self._resolve_template_id(
-                entity, entity_data, all_templates, suggested_templates, template_name_to_id
+            # Resolve template: an offered one it binds to while it exists, else the matcher
+            template_id = (
+                offered
+                if offered is not None and offered in templates_by_id
+                else self._resolve_template_id(
+                    entity, entity_data, all_templates, suggested_templates, template_name_to_id
+                )
             )
 
             # Track this template for source linking (ensures proper orphan detection)
             # Only track user templates, not system templates
             if (
                 template_id
-                and not template_id.startswith("system_template_")
+                and not is_system_template_id(template_id)
                 and template_id not in all_entity_template_ids
             ):
                 all_entity_template_ids.append(template_id)

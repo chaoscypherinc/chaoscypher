@@ -20,6 +20,7 @@ from chaoscypher_core.app_config import get_settings
 from chaoscypher_core.ports.llm import TaskType
 from chaoscypher_core.services.search.engine.research import TopicResearcher
 from chaoscypher_core.utils.llm_response import extract_content_with_fallback
+from chaoscypher_core.utils.tool_failure import log_tool_failure
 
 
 logger = structlog.get_logger(__name__)
@@ -191,12 +192,7 @@ Include at least 3-5 level-1 topics with relevant subtopics. Think through the b
             }
 
         except Exception as e:
-            logger.exception(
-                "build_hierarchy_failed",
-                error_type=type(e).__name__,
-                error_message=str(e),
-            )
-            return {"success": False, "error": "Research operation failed"}
+            return log_tool_failure(logger, "build_hierarchy_failed", e)
 
     async def identify_knowledge_gaps(self, topic: str) -> dict[str, Any]:
         """Identify gaps in knowledge graph coverage for a topic.
@@ -298,12 +294,7 @@ Think through the gaps, then provide specific, actionable recommendations in cle
             }
 
         except Exception as e:
-            logger.exception(
-                "knowledge_gap_analysis_failed",
-                error_type=type(e).__name__,
-                error_message=str(e),
-            )
-            return {"success": False, "error": "Research operation failed"}
+            return log_tool_failure(logger, "knowledge_gap_analysis_failed", e)
 
     async def extract_entities_from_text(
         self, text: str, template_id: str | None = None, create_nodes: bool = False
@@ -430,7 +421,8 @@ Include at least 3-5 relevant entities."""
                                     "entity_type": entity.get("type", "unknown"),
                                     **entity.get("properties", {}),
                                 },
-                            )
+                            ),
+                            person_made=True,  # made on a person's request, no source
                         )
                         created_nodes.append({"id": node.id, "label": node.label})
                     except Exception as e:
@@ -449,9 +441,4 @@ Include at least 3-5 relevant entities."""
             }
 
         except Exception as e:
-            logger.exception(
-                "entity_extraction_failed",
-                error_type=type(e).__name__,
-                error_message=str(e),
-            )
-            return {"success": False, "error": "Research operation failed"}
+            return log_tool_failure(logger, "entity_extraction_failed", e)

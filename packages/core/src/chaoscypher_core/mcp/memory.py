@@ -11,8 +11,8 @@ is plain text sized for a small model: what was remembered, what it linked, the 
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
-from collections.abc import Collection
+from collections import Counter, defaultdict
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -22,21 +22,28 @@ from mcp.types import CallToolResult, TextContent
 
 from chaoscypher_core.adapters.sqlite.repos import memory_audit
 from chaoscypher_core.adapters.sqlite.repos.memory_audit import count_forgotten
-from chaoscypher_core.mcp.memory_seed import seed_records
+from chaoscypher_core.mcp.memory_link import (
+    LinkOutcome,
+    LinkView,
+    MemoryLinker,
+    link_repository,
+    link_view,
+    new_claim_token,
+)
+from chaoscypher_core.mcp.memory_seed import all_sources, memory_rows, node_by_label
 from chaoscypher_core.mcp.provenance import GraphProvenance
 from chaoscypher_core.mcp.secrets import looks_like_secret
+from chaoscypher_core.models import MEMORY_SOURCE_TYPE, MemoryLinkState, is_memory_source
 from chaoscypher_core.services.graph.memory.supersession import (
     recompute_single_valued,
     single_valued_labels,
 )
-from chaoscypher_core.services.sources.engine.deduplication.name_identity import fold
 from chaoscypher_core.services.sources.engine.extraction.utils.relation_vocabulary import (
     EMPTY_RELATION_VOCABULARY,
 )
 from chaoscypher_core.services.workflows.tools.engine.memory_render import (
     EMPTY_RECALL,
     INDENT,
-    MEMORY_SOURCE_TYPE,
     SENTENCE_CHARS,
     Provenance,
     cut_on_word,
@@ -46,25 +53,27 @@ from chaoscypher_core.services.workflows.tools.engine.memory_render import (
     tag,
 )
 from chaoscypher_core.utils.id import generate_hex_id
+from chaoscypher_core.utils.logging.privacy import log_failure, private_text
 
 
 if TYPE_CHECKING:
     from chaoscypher_core.bootstrap import Engine
     from chaoscypher_core.models import SourceDeletion
+    from chaoscypher_core.ports.graph import GraphRepositoryProtocol
     from chaoscypher_core.services.workflows.tools.engine.executor import ToolExecutorService
     from chaoscypher_core.settings import EngineSettings
 
 logger = structlog.get_logger(__name__)
 
+# The status copy (spec 2026-10-24 § 4.3, D19): this module owns it, verbatim.
 NO_FACTS = "Linked: none (no facts found; the text is kept as a note)"
-NO_MODEL = "Linked: none (not linked: no extraction model)"
-FAILED = "Linked: none (not linked: extraction failed)"
-STILL_LINKING = "Saved, still linking."
-
-
-def extraction_model_configured(settings: EngineSettings) -> bool:
-    """Whether the settings name an extraction provider at all (no provider: index only)."""
-    return bool(settings.llm.chat_provider)
+TIMED_OUT_LINE = "Not linked yet: the model did not answer in time. Kept as a note; it links later."
+FAILED_LINE = "Not linked yet: the model failed. Kept as a note; it links later."
+NO_MODEL_LINE = (
+    "Not linked yet: no extraction model is set up. Kept as a note; it links once one is."
+)
+NOT_STORED = "Not stored: the database is busy. Try again."
+GONE_LINE = "Forgotten before it was linked."
 
 
 def _session(engine: Engine) -> Any:
@@ -214,24 +223,80 @@ def parse_memory_args(args: dict[str, Any], settings: EngineSettings) -> MemoryA
     )
 
 
-async def handle_remember(
-    engine: Engine, args: dict[str, Any], settings: EngineSettings
-) -> CallToolResult:
-    """Store one memory and answer with what it linked."""
-    parsed = parse_memory_args(args, settings)
-    if isinstance(parsed, str):
-        return _answer(parsed, error=True)
-    source_id = generate_hex_id()
+def link_status_lines(engine: Engine, source_id: str, outcome: LinkOutcome) -> list[str]:
+    """The lines after ``Remembered``: what the memory linked, or why it is not linked yet."""
+    if outcome in (LinkOutcome.LINKED, LinkOutcome.ALREADY_LINKED):
+        # linked_lines answers NO_FACTS for a memory that attests nothing
+        return [*linked_lines(engine, source_id), *changed_lines(engine, source_id)]
+    by_outcome = {
+        LinkOutcome.LINKED_EMPTY: NO_FACTS,
+        LinkOutcome.TIMED_OUT: TIMED_OUT_LINE,
+        LinkOutcome.ELSEWHERE: TIMED_OUT_LINE,
+        LinkOutcome.FAILED: FAILED_LINE,
+        LinkOutcome.NO_MODEL: NO_MODEL_LINE,
+        LinkOutcome.GONE: GONE_LINE,
+    }
+    return [by_outcome[outcome]]
+
+
+def link_suffix(view: LinkView, attempts: int) -> str:
+    """The end of a memory's ``list_memories`` line: its link state, nothing when linked."""
+    if view is LinkView.FAILED:
+        tries = "1 try" if attempts == 1 else f"{attempts} tries"
+        return f" (not linked yet: the model failed, {tries})"
+    return {
+        LinkView.PENDING: " (not linked yet)",
+        LinkView.LINKING: " (linking)",
+        LinkView.INTERRUPTED: " (not linked yet: interrupted)",
+        LinkView.NO_MODEL: " (not linked yet: no extraction model)",
+        LinkView.LINKED_EMPTY: " (no facts found)",
+        LinkView.LINKED: "",
+    }[view]
+
+
+def not_linked_line(views: Iterable[LinkView]) -> str | None:
+    """``digest``'s count of the memories not linked yet, or None when there are none."""
+    counts = Counter(views)
+    waiting = sum(n for v, n in counts.items() if v not in (LinkView.LINKED, LinkView.LINKED_EMPTY))
+    if not waiting:
+        return None
+    return (
+        f"Not linked yet: {waiting} ({counts[LinkView.NO_MODEL]} no model, "
+        f"{counts[LinkView.FAILED]} failed, {counts[LinkView.INTERRUPTED]} interrupted)"
+    )
+
+
+def _link_views(
+    engine: Engine,
+    *,
+    source_ids: Collection[str] | None = None,
+    scope: str | None = None,
+) -> dict[str, tuple[LinkView, int]]:
+    """Each memory's link view and failed-attempt count, read on a fresh session."""
+    now = datetime.now(UTC)
+    rows = link_repository(engine).link_rows(
+        engine.database_name, source_ids=source_ids, scope=scope
+    )
+    return {row.id: (link_view(row, now), row.recovery_attempts) for row in rows}
+
+
+async def _store(engine: Engine, parsed: MemoryArgs, source_id: str, token: str) -> bool:
+    """Store the memory, its row written already claimed; False when no row was written.
+
+    The row carries the text (``full_text``), so a store that fails after the row is
+    written is not lost: the link chunks it again from the kept text.
+    """
     fields = {
         "memory_by": parsed.by,
         "memory_scope": parsed.scope,
         "valid_from": parsed.valid_from.isoformat(),
+        "full_text": parsed.text,
+        "memory_link_state": MemoryLinkState.LINKING.value,
+        "memory_link_claim": token,
+        "last_activity_at": datetime.now(UTC),
     }
-    first = remembered_line(parsed.by, parsed.valid_from, parsed.text)
-    extract = extraction_model_configured(engine.settings)
-    seed = seed_records(engine, parsed.text, parsed.about, parsed.by) if extract else ()
-    task = asyncio.ensure_future(
-        engine.process_document(
+    try:
+        await engine.process_document(
             parsed.text,
             source_id=source_id,
             filename=f"memory-{source_id[:8]}.txt",
@@ -239,24 +304,50 @@ async def handle_remember(
             forced_domain="generic",
             source_type=MEMORY_SOURCE_TYPE,
             source_fields=fields,
-            seed=seed,
-            extract=extract,
+            extract=False,
         )
-    )
+    except Exception as error:
+        if engine.storage_adapter.get_source(source_id, engine.database_name) is None:
+            log_failure(logger, "memory_not_stored", error, source_id=source_id)
+            return False
+        log_failure(logger, "memory_store_incomplete", error, source_id=source_id)
+    return True
+
+
+async def handle_remember(
+    engine: Engine, args: dict[str, Any], settings: EngineSettings, linker: MemoryLinker
+) -> CallToolResult:
+    """Store one memory, link it while the wait lasts, and answer with what it linked or why not."""
+    with private_text():  # a failure's log may quote the memory
+        return await _remember(engine, args, settings, linker)
+
+
+async def _remember(
+    engine: Engine, args: dict[str, Any], settings: EngineSettings, linker: MemoryLinker
+) -> CallToolResult:
+    """:func:`handle_remember`'s body, run inside ``private_text()``."""
+    parsed = parse_memory_args(args, settings)
+    if isinstance(parsed, str):
+        return _answer(parsed, error=True)
+    source_id = generate_hex_id()
+    token = new_claim_token()
+    if not await _store(engine, parsed, source_id, token):
+        return _answer(NOT_STORED, error=True)
+    first = remembered_line(parsed.by, parsed.valid_from, parsed.text)
+    task = linker.spawn(source_id, token=token, about=parsed.about)
     try:
-        await asyncio.wait_for(asyncio.shield(task), timeout=settings.mcp.memory.wait_seconds)
+        outcome = await asyncio.wait_for(
+            asyncio.shield(task), timeout=settings.mcp.memory.wait_seconds
+        )
     except TimeoutError:
         logger.info("memory_still_linking", source_id=source_id)
-        return _answer(f"{STILL_LINKING}\n{first}")
-    except Exception:
-        logger.exception("memory_extraction_failed", source_id=source_id)
-        return _answer(f"{first}\n{FAILED}")
-    second = (
-        [*linked_lines(engine, source_id), *changed_lines(engine, source_id)]
-        if extract
-        else [NO_MODEL]
-    )
-    return _answer(cut_to_budget([first, *second], settings.mcp.memory.result_chars))
+        outcome = LinkOutcome.TIMED_OUT
+    except Exception as error:
+        # the row exists and keeps the text: never an error, or the agent stores it twice
+        log_failure(logger, "memory_link_raised", error, source_id=source_id)
+        outcome = LinkOutcome.FAILED
+    lines = [first, *link_status_lines(engine, source_id, outcome)]
+    return _answer(cut_to_budget(lines, settings.mcp.memory.result_chars))
 
 
 # ----------------------------------------------------------------------------
@@ -265,45 +356,20 @@ async def handle_remember(
 
 NOTHING_YET = "Nothing remembered yet."
 DIGEST_DAYS = 7
-SOURCE_PAGE = 1000
-"""The most sources a memory tool reads in one page (a scope's memories, every document)."""
-
-
-def _all_sources(engine: Engine, source_type: str | None = None) -> list[dict[str, Any]]:
-    """Every source row (of ``source_type`` when given), paged through: no memory is ever out of reach."""
-    rows: list[dict[str, Any]] = []
-    page = 1
-    while True:
-        batch, total = engine.storage_adapter.list_sources(
-            page=page, page_size=SOURCE_PAGE, source_type=source_type
-        )
-        rows.extend(batch)
-        if not batch or len(rows) >= total:
-            return rows
-        page += 1
-
-
-def memory_rows(engine: Engine, scope: str | None = None) -> list[dict[str, Any]]:
-    """The memory source rows (every memory tool's and the pack export's read), newest first by ``valid_from`` then ``created_at``; ``scope`` filters."""
-    rows = _all_sources(engine, MEMORY_SOURCE_TYPE)
-    if scope is not None:
-        rows = [r for r in rows if r.get("memory_scope") == scope]
-    return sorted(
-        rows,
-        key=lambda r: (str(r.get("valid_from") or ""), str(r.get("created_at") or "")),
-        reverse=True,
-    )
 
 
 def _other_sources(engine: Engine) -> list[str]:
     """Every source that is no memory (documents, packs): always in scope (spec § 8b)."""
-    return [r["id"] for r in _all_sources(engine) if r.get("source_type") != MEMORY_SOURCE_TYPE]
+    return [r["id"] for r in all_sources(engine) if not is_memory_source(r)]
 
 
 def _memory_text(engine: Engine, source_id: str) -> str:
-    """A memory's text, its first chunk's, cut at :data:`SENTENCE_CHARS` on a word."""
+    """A memory's text, its first chunk's (else its kept text), cut at :data:`SENTENCE_CHARS` on a word."""
     chunks, _ = engine.storage_adapter.get_chunks_by_source(source_id, page_size=1)
-    text = str(chunks[0].get("content") or "") if chunks else ""
+    if chunks:
+        text = str(chunks[0].get("content") or "")
+    else:  # its store never finished: the row keeps the text
+        text = engine.storage_adapter.get_source_full_text(source_id, engine.database_name) or ""
     return cut_on_word(" ".join(text.split()), SENTENCE_CHARS)
 
 
@@ -322,19 +388,6 @@ def memory_provenance(*, by: str | None, valid_from: date | None) -> Provenance:
     return Provenance("memory", by, None, valid_from, None, None)
 
 
-def _node_by_label(engine: Engine, name: str) -> Any | None:
-    """The node whose label is ``name`` (case and accents folded), or None."""
-    hits = engine.search_repository.keyword_search(name, limit=10, item_type="node")
-    ids = [h for h, _ in hits]
-    if not ids:
-        return None
-    wanted = fold(name)
-    for node in engine.graph_repository.get_nodes_batch(ids, include_embedding=False):
-        if fold(node.label) == wanted:
-            return node
-    return None
-
-
 async def handle_list_memories(
     engine: Engine, args: dict[str, Any], settings: EngineSettings
 ) -> CallToolResult:
@@ -344,14 +397,20 @@ async def handle_list_memories(
     limit = max(1, min(50, int(args.get("limit") or 10)))
     rows = memory_rows(engine, scope)
     if about:
-        node = _node_by_label(engine, about)
+        node = node_by_label(engine, about)
         members = set(engine.graph_repository.node_members(node.id)) if node is not None else set()
         rows = [r for r in rows if r["id"] in members]
         if not rows:
             return _answer(f"Nothing remembered about {about}.")
     if not rows:
         return _answer(NOTHING_YET)
-    lines = [f'{_memory_tag(r)} "{_memory_text(engine, r["id"])}"' for r in rows[:limit]]
+    listed = rows[:limit]
+    views = await asyncio.to_thread(_link_views, engine, source_ids=[r["id"] for r in listed])
+    lines = [  # a memory another process forgot between the two reads is left out
+        f'{_memory_tag(r)} "{_memory_text(engine, r["id"])}"' + link_suffix(*views[r["id"]])
+        for r in listed
+        if r["id"] in views
+    ]
     return _answer(cut_to_budget(lines, settings.mcp.memory.result_chars))
 
 
@@ -424,6 +483,10 @@ def digest_lines(engine: Engine, scope: str | None, since: date) -> list[str]:
         lines.append("Replaced: none")
     forgotten = count_forgotten(_session(engine), engine.database_name, since.isoformat())
     lines.append(f"Forgotten: {forgotten}")
+    # every memory of the scope, not only the window's: the line reports a present state
+    waiting = not_linked_line(view for view, _ in _link_views(engine, scope=scope).values())
+    if waiting is not None:
+        lines.append(waiting)
     return lines
 
 
@@ -585,8 +648,17 @@ def forget_preview(
     return lines
 
 
-async def remove_source(engine: Engine, source_id: str) -> SourceDeletion:
-    """Delete a source and refresh the graph it released: the one delete path of the server."""
+async def remove_source(
+    engine: Engine,
+    source_id: str,
+    *,
+    commit_with: Callable[[GraphRepositoryProtocol], None] | None = None,
+) -> SourceDeletion:
+    """Delete a source and refresh the graph it released: the one delete path of the server.
+
+    ``commit_with`` runs inside the delete's transaction (``SourceService.delete_source``).
+    The refresh after the commit is best-effort: once the delete commits it stands.
+    """
     from chaoscypher_core.services.graph.management.release import refresh_after_release
     from chaoscypher_core.services.graph.management.source import SourceService
 
@@ -594,7 +666,9 @@ async def remove_source(engine: Engine, source_id: str) -> SourceDeletion:
     sms = SourceService(
         repository=engine.storage_adapter, database_name=database_name, settings=engine.settings
     )
-    deleted = sms.delete_source(source_id, search_repo=engine.search_repository)
+    deleted = sms.delete_source(
+        source_id, search_repo=engine.search_repository, commit_with=commit_with
+    )
     await refresh_after_release(
         engine.storage_adapter,
         database_name,
@@ -626,25 +700,37 @@ async def handle_forget(
         if confirm:
             lines.insert(0, NEEDS_HANDLE)
         return _answer(cut_to_budget(lines, settings.mcp.memory.result_chars))
+    with private_text():  # the release and the settle log names the memory states
+        return await _forget_one(engine, handle, rows, all_ids)
+
+
+async def _forget_one(
+    engine: Engine, handle: str, rows: list[dict[str, Any]], all_ids: list[str]
+) -> CallToolResult:
+    """:func:`handle_forget`'s confirmed branch, run inside ``private_text()``."""
     resolved = resolve_handle(handle, all_ids)
     if resolved not in all_ids:
         return _answer(resolved, error=True)
     row = next(r for r in rows if r["id"] == resolved)
     go, stays = _fact_counts(engine, resolved)
     pairs = _single_valued_pairs(engine, resolved)
-    deleted = await remove_source(engine, resolved)
+
+    def settle_and_audit(graph: GraphRepositoryProtocol) -> None:
+        """In the delete's transaction: settle what the memory had closed, write the audit row."""
+        for subject_id, label in pairs:  # what the memory had closed is open again
+            recompute_single_valued(graph, subject_id, label)
+        memory_audit.record(
+            _session(engine),
+            engine.database_name,
+            action=memory_audit.FORGET,
+            handle=handle,
+            by=row.get("memory_by"),
+            scope=row.get("memory_scope"),
+            facts_removed=go,
+            facts_kept=stays,
+        )
+
+    deleted = await remove_source(engine, resolved, commit_with=settle_and_audit)
     if not deleted:
         return _answer(f"No memory has handle {handle}.", error=True)
-    for subject_id, label in pairs:  # what the memory had closed is open again: settle it
-        recompute_single_valued(engine.graph_repository, subject_id, label)
-    memory_audit.record(
-        _session(engine),
-        engine.database_name,
-        action=memory_audit.FORGET,
-        handle=handle,
-        by=row.get("memory_by"),
-        scope=row.get("memory_scope"),
-        facts_removed=go,
-        facts_kept=stays,
-    )
     return _answer(f"Forgotten {handle}: {go} facts removed, {stays} kept.")

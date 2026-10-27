@@ -20,6 +20,7 @@ from rich.table import Table
 
 from chaoscypher_cli.context import get_context
 from chaoscypher_cli.utils.console import print_json
+from chaoscypher_core.adapters.embedding import require_embedding_provider
 from chaoscypher_core.app_config import get_settings
 
 
@@ -67,7 +68,7 @@ def search(
     Supports three search modes:
 
     \b
-    - hybrid (default): Semantic + keyword fallback - most robust
+    - hybrid (default): Keyword + semantic rankings fused - most robust
     - keyword: Fast full-text search
     - semantic: Pure vector similarity (local CPU embeddings)
 
@@ -118,7 +119,8 @@ def _perform_search(ctx: CLIContext, query: str, mode: str, limit: int) -> list[
         # Keyword search - synchronous
         raw_results = search_repo.keyword_search(query, limit=limit)
     elif mode == "semantic":
-        # Semantic search - needs LLM callback for query embedding
+        # Semantic search - needs a provider to embed the query
+        require_embedding_provider(ctx.embedding_service, "Semantic search")
         raw_results = asyncio.run(
             search_repo.semantic_search(
                 query,
@@ -126,7 +128,7 @@ def _perform_search(ctx: CLIContext, query: str, mode: str, limit: int) -> list[
                 embedding_provider_callback=_get_embedding_callback(ctx),
             )
         )
-    else:  # hybrid
+    else:  # hybrid: its keyword arm alone with vector search off (no callback)
         raw_results = asyncio.run(
             search_repo.hybrid_search(
                 query,
@@ -146,13 +148,17 @@ def _get_embedding_callback(ctx: CLIContext) -> Any:
         ctx: CLI context with embedding service.
 
     Returns:
-        Async callback function that generates embeddings.
-        Returns the embedding vector (list[float]) directly.
+        Async callback function that generates embeddings and returns the
+        embedding vector (list[float]) directly, or None when the context has
+        no embedding provider (vector search off).
     """
+    provider = ctx.embedding_service
+    if provider is None:
+        return None
 
     async def callback(text: str) -> list[float]:
         """Embed a query string and return the raw vector."""
-        result = await ctx.embedding_service.embed(text)
+        result = await provider.embed(text)
         return result.embedding
 
     return callback

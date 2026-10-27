@@ -85,17 +85,37 @@ def test_ensure_stamped_noop_on_fresh_db(tmp_path: Path) -> None:
 
 
 def test_ensure_stamped_marks_preexisting_schema_at_baseline(tmp_path: Path) -> None:
-    # Simulate a pre-Alembic install: build the schema via create_all,
-    # then verify ensure_stamped marks it at the baseline (0001) — NOT
-    # head — so subsequent Alembic migrations in the chain still run.
-    # Stamping at head would silently skip constraint-change migrations
+    # Simulate a pre-Alembic install: build the schema via create_all and give
+    # it a row of data, then verify ensure_stamped marks it at the baseline
+    # (0001) — NOT head — so subsequent Alembic migrations in the chain still
+    # run. Stamping at head would silently skip constraint-change migrations
     # that must apply to existing DBs.
     db_path = tmp_path / "app.db"
     engine = get_engine(db_path)
     SQLModel.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            "INSERT INTO chats (id, database_name, title, status, created_at, updated_at, "
+            "message_count) VALUES ('c1', 'default', 't', 'active', '2026-01-01', "
+            "'2026-01-01', 0)"
+        )
 
     ensure_stamped(db_path)
     assert current_revision(db_path) == "0001"
+
+
+def test_ensure_stamped_leaves_an_empty_unversioned_schema_to_the_build(tmp_path: Path) -> None:
+    """Tables with no rows and no version are an unfinished first build, not an install.
+
+    Stamping one at the baseline would make finishing its build a data-changing
+    upgrade (a backup, the post-upgrade notice, a rollback); the startup run
+    builds it again from nothing instead.
+    """
+    db_path = tmp_path / "app.db"
+    SQLModel.metadata.create_all(get_engine(db_path))
+
+    ensure_stamped(db_path)
+    assert current_revision(db_path) is None
 
 
 def test_ensure_stamped_noop_on_already_stamped(tmp_path: Path) -> None:
@@ -254,9 +274,7 @@ def test_ensure_stamped_refuses_pre_squash_revision(tmp_path: Path) -> None:
     import sqlite3
 
     con = sqlite3.connect(str(db))
-    con.execute(
-        "UPDATE alembic_version SET version_num = '0050_chunk_job_finalize_claimed'"
-    )
+    con.execute("UPDATE alembic_version SET version_num = '0050_chunk_job_finalize_claimed'")
     con.commit()
     con.close()
 
@@ -290,3 +308,74 @@ def test_startup_migrations_propagate_unsupported_lineage(tmp_path: Path) -> Non
 
     with pytest.raises(UnsupportedDatabaseLineageError):
         run_startup_migrations(db)
+
+
+# ----- the migration connection goes back to the pool enforcing foreign keys --
+
+
+def _foreign_keys_of_every_pooled_connection(db: Path) -> list[int]:
+    """``PRAGMA foreign_keys`` on each connection the app engine's pool holds now."""
+    engine = get_engine(db)
+    held = [engine.connect() for _ in range(engine.pool.checkedin())]  # type: ignore[attr-defined]
+    try:
+        return [c.exec_driver_sql("PRAGMA foreign_keys").scalar() for c in held]
+    finally:
+        for c in held:
+            c.close()
+
+
+def test_upgrade_leaves_every_pooled_connection_enforcing_foreign_keys(tmp_path: Path) -> None:
+    """The migration turns foreign keys off for its batch rebuilds; the pool gets them back on.
+
+    ``PRAGMA foreign_keys`` is a no-op inside a transaction, so turning them back on while
+    the upgrade's transaction was still open did nothing: the first session after an upgrade
+    could write a row naming a template that does not exist.
+    """
+    db = _fresh_db(tmp_path)
+    upgrade_to_head(db)
+    pooled = _foreign_keys_of_every_pooled_connection(db)
+    assert pooled and all(fk == 1 for fk in pooled)
+
+
+def test_stamping_leaves_every_pooled_connection_enforcing_foreign_keys(tmp_path: Path) -> None:
+    db = tmp_path / "app.db"
+    SQLModel.metadata.create_all(get_engine(db))
+    ensure_stamped(db)
+    pooled = _foreign_keys_of_every_pooled_connection(db)
+    assert pooled and all(fk == 1 for fk in pooled)
+
+
+def test_downgrade_leaves_every_pooled_connection_enforcing_foreign_keys(tmp_path: Path) -> None:
+    db = _fresh_db(tmp_path)
+    upgrade_to_head(db)
+    downgrade_to(db, "0024")
+    pooled = _foreign_keys_of_every_pooled_connection(db)
+    assert pooled and all(fk == 1 for fk in pooled)
+
+
+@pytest.mark.parametrize("downgrade", [False, True], ids=["upgrade", "downgrade"])
+def test_an_in_process_run_leaves_the_apps_logging_alone(tmp_path: Path, downgrade: bool) -> None:
+    """Alembic's own CLI configures logging from ``alembic.ini``; the app's runs must not.
+
+    ``env.py`` called ``fileConfig`` on every run, so a startup upgrade swapped the app's root
+    handlers for a bare stderr one and, by ``fileConfig``'s ``disable_existing_loggers``,
+    silenced every logger the app had already created until it restarted (found 2026-10-26,
+    when the disabled loggers hid a test's warning in CI).
+    """
+    import logging
+
+    db = _fresh_db(tmp_path)
+    if downgrade:
+        upgrade_to_head(db)
+    app_logger = logging.getLogger("chaoscypher_core.test_runner_probe")  # exists before the run
+    root = logging.getLogger()
+    handlers, level = list(root.handlers), root.level
+
+    if downgrade:
+        downgrade_to(db, "base")
+    else:
+        upgrade_to_head(db)
+
+    assert not app_logger.disabled
+    assert root.handlers == handlers
+    assert root.level == level

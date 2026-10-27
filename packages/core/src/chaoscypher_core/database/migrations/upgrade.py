@@ -24,8 +24,14 @@ from chaoscypher_core.database.engine import get_db_path
 from chaoscypher_core.exceptions import NotFoundError, ValidationError
 from chaoscypher_core.database.migrations.runner import (
     current_revision,
+    ensure_stamped,
     pending_revisions,
     upgrade_to_head,
+)
+from chaoscypher_core.database.migrations.startup import (
+    build_if_new,
+    settle_nothing_pending,
+    upgrade_lock,
 )
 from chaoscypher_core.database.migrations.state import (
     clear_upgrade_state,
@@ -124,14 +130,42 @@ class UpgradeService:
         )
 
     def apply(self) -> ApplyResponse:
-        """Apply all pending migrations, backing up first if needed."""
-        revisions = pending_revisions(self.db_path)
+        """Apply all pending migrations, backing up first if needed.
+
+        Runs whole under the database's upgrade lock, reading what is pending only
+        once it holds it: a startup run (a first build, or an upgrade) may have
+        finished while this waited. A database with no schema yet is built as
+        opening it would build it (``build_if_new``): no backup, no upgrade record.
+        A pre-Alembic one is stamped at the baseline first, as at startup.
+        """
+        with upgrade_lock(self.db_path):
+            revisions = pending_revisions(self.db_path)
+            if build_if_new(self.db_path):
+                logger.info("upgrade_built_new_database", revisions=revisions)
+                return ApplyResponse(
+                    applied=revisions,
+                    current_revision=current_revision(self.db_path),
+                    backup_path=None,
+                )
+            ensure_stamped(self.db_path)
+            return self._apply_locked(pending_revisions(self.db_path))
+
+    def _apply_locked(self, revisions: list[str]) -> ApplyResponse:
+        """Upgrade an existing database to head, under the upgrade lock."""
+        if not revisions:
+            settle_nothing_pending(self.db_path)
+            return ApplyResponse(
+                applied=[],
+                current_revision=current_revision(self.db_path),
+                backup_path=None,
+            )
         state = get_upgrade_state(self.db_path)
 
-        # If no backup exists (e.g., operator triggered apply outside
-        # the startup path), take one now.
-        backup_path = state.last_backup
-        if backup_path is None and revisions:
+        # A blocked state's backup is the one the startup run just took for these
+        # pending migrations. A ready record's is an earlier upgrade's, kept for its
+        # notice and rollback: never this upgrade's. Without one, take one now.
+        backup_path = state.last_backup if not state.ready else None
+        if backup_path is None:
             result = backup_database(self.db_path, label=f"pre-{revisions[0]}")
             backup_path = str(result.backup_path)
             # Persist the fresh backup path BEFORE running the upgrade: if

@@ -1663,3 +1663,184 @@ def test_context_holds_terms_gates_an_alias_on_its_evidence_phrases() -> None:
         is True
     )
     assert cp.context_holds_terms("The young Bolkónski rose.", terms, alias_evidence=gate) is True
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-23 Book One answer review (the board's 7,920 answers graded by hand)
+# ---------------------------------------------------------------------------
+
+
+def test_a_phrase_term_written_with_hyphens_is_the_phrase() -> None:
+    """'forty\u2011thousand rubles' names 'forty thousand' (GPT-OSS 20B, q004 and q025).
+
+    A hyphen between the words of a phrase term joins them as a space would; a term written
+    with hyphens is met by its spaced form too, and a single word stays matched as before.
+    """
+    q = _q(answer_terms=[("forty thousand", "40,000")])
+    for answer in (
+        "He gave forty\u2011thousand rubles.",
+        "He gave forty-thousand rubles.",
+        "He gave forty\u2010thousand rubles.",
+    ):
+        ok, why = cp.answers_from_graph(_brec(answer), q)
+        assert ok, (answer, why)
+    assert not cp.answers_from_graph(_brec("He gave four-thousand rubles."), q)[0]
+    aide = _q(answer_terms=[("aide-de-camp",)])
+    context = "He is to be an aide-de-camp of Kutúzov."
+    assert cp.answers_from_graph(_rec("He is an aide de camp.", context_text=context), aide)[0]
+    assert cp.answers_from_graph(
+        _rec("He is an aide\u2011de\u2011camp.", context_text=context), aide
+    )[0]
+
+
+def test_an_out_of_scope_decline_that_offers_a_candidate_or_an_inference_fails() -> None:
+    """A decline that then offers a candidate, an inference or a concluded answer guesses.
+
+    Real answers of the Book One review: 'Schubert is a candidate as he is the colonel'
+    (q075), 'we can infer that Prince Andrew's father is Prince Bolkónski' (q074), 'it is
+    likely to be Andrei', 'Borís may have been involved' (q078), 'Therefore, the answer is:
+    the third floor window' (q067). A concluding 'the answer is: not in the sources' is the
+    decline itself.
+    """
+    q = _q(
+        band="out_of_scope", gold_entities=[], decoy_entities=["Rostopchín"], expect_refusal=True
+    )
+    for answer in (
+        "The context does not name him, but Schubert is a candidate as he is the colonel.",
+        "The context does not name him. However, we can infer that it was Prince Vasíli.",
+        "The context does not name him; it can be inferred that Prince Vasíli did it.",
+        "The first name is not mentioned, but it is likely to be Andrei.",
+        "The context does not say. Borís may have been involved, as he searched for her.",
+        "This suggests that Schubert may be the commander, but it is not explicitly stated.",
+        "The context does not say. Based on the scene, it appears that it was at the window.",
+        "The context does not specify it. Therefore, the answer is: the third floor window.",
+    ):
+        ok, why = cp.declines_when_unsupported(_rec(answer), q)
+        assert not ok and "speculates" in why, answer
+    for answer in (
+        "The context does not say. Therefore, the answer is: it is not in the sources.",
+        "Therefore, the answer is: the context does not contain information about the estate.",
+        "Based on the retrieved context, the answer is not explicitly stated.",
+        "The sources do not name the governor; an earlier passage is unlikely to help.",
+    ):
+        assert cp.declines_when_unsupported(_rec(answer), q)[0], answer
+
+
+def test_the_context_s_entity_label_and_english_openers_are_not_names() -> None:
+    """Words the Book One review's right answers wrote that the names check read as names.
+
+    'Entity' is the retrieved graph's own label ('(Entity description)', '[[Entity: Prince
+    Vasíli Kurágin]]', Gemma 4 on q100 and q124); 'Another', 'Specific', 'Subsequent' and
+    'Translator' open a sentence or a list item before a lower-case word (q063, q109, q017,
+    q059, q052). A capitalised name in the same place is still one.
+    """
+    q = _q(answer_terms=["cornet"])
+    for answer in (
+        "He is a cornet (Entity description).",
+        "He is a cornet [[Entity: Karágin]].",
+        "He is a cornet. Another passage names Borís.",
+        "1. **Borís**: Another officer, not a cornet.\n2. **Karágin**: a cornet.",
+        "He is a cornet. Specific anecdotes name Borís.",
+        "He is a cornet. Subsequent chunks name Borís.",
+        "* Translator of the terms into English\nHe is a cornet.",
+    ):
+        ok, why = cp.no_unsupported_names(_brec(answer), q)
+        assert ok, (answer, why)
+    ok, why = cp.no_unsupported_names(_brec("He is a cornet. Dólokhov named him."), q)
+    assert not ok and "Dólokhov" in why
+
+
+def test_a_wrong_fact_inside_a_quotation_of_the_context_is_not_stated() -> None:
+    """A long quotation of the retrieved context says what the source says (q100, the Book One review).
+
+    Right answers quoted C5:S2 ('... Prince Vasíli's daughter, and the little Princess
+    Bolkónskaya...') and failed the trap 'little princess'. A quotation the context does not hold
+    word for word, or the same words outside quotation marks, still states the phrase.
+    """
+    context = (
+        "[CHUNK C5 | war_and_peace_book1.txt]\n[S2] Another, of young people, was grouped round "
+        "the beautiful Princess Hélène, Prince Vasíli\u2019s daughter, and the little Princess "
+        "Bolkónskaya.\n"
+    )
+    q = _q(answer_terms=["Hélène"], must_not_contain=["little princess"])
+    quoted = (
+        "They are siblings: \u201cAnother, of young people, was grouped round the beautiful "
+        "Princess Hélène, Prince Vasíli\u2019s daughter, and the little Princess Bolkónskaya...\u201d "
+        "[C5:S2]"
+    )
+    assert cp.must_not_contain(_rec(quoted, context_text=context), q)[0]
+    straight = quoted.replace("\u201c", '"').replace("\u201d", '"')
+    assert cp.must_not_contain(_rec(straight, context_text=context), q)[0]
+    invented = (
+        'They are siblings: "Hélène, the sister of Hippolyte, is the little princess of the '
+        'family" [C5:S2]'
+    )
+    assert not cp.must_not_contain(_rec(invented, context_text=context), q)[0]
+    unquoted = "They are siblings; Hélène is the little princess."
+    assert not cp.must_not_contain(_rec(unquoted, context_text=context), q)[0]
+    # a phrase that runs from the answer's own words into the quotation is the answer's claim
+    # ('Prince Vasíli is "very fond of Pierre ..."', q097)
+    bound = _q(answer_terms=["Hélène"], must_not_contain=["Lise is another, of young people"])
+    claim = quoted.replace("They are siblings: ", "Lise is ")
+    assert not cp.must_not_contain(_rec(claim, context_text=context), bound)[0]
+
+
+def test_the_russian_form_of_a_given_name_the_context_writes_in_english_is_supported() -> None:
+    """'Andrei's' for the context's Andrew, 'Nikolai' for Nicholas (Qwen3.8 27B, q062 and q112).
+
+    The translation renders the Russian given names in English; a model that writes the
+    Russian form names the same person. Only the closed list of the corpus's given names;
+    a form whose English name the context lacks is still unsupported.
+    """
+    q = _q(answer_terms=["cornet"])
+    context = "[CHUNK C0 | x.txt]\n[S1] Prince Andrew and Nicholas met Michael Ilariónovich."
+    for answer in (
+        "He is a cornet, as Andrei's letter says.",
+        "Nikolai is a cornet.",
+        "Mikhail Ilariónovich made him a cornet.",
+    ):
+        ok, why = cp.no_unsupported_names(_rec(answer, context_text=context), q)
+        assert ok, (answer, why)
+    ok, why = cp.no_unsupported_names(_brec("Nikolai is a cornet."), q)
+    assert not ok and "Nikolai" in why
+
+
+def test_an_alias_can_count_only_where_the_context_never_names_him() -> None:
+    """alias_evidence '!phrase': the alias counts only where the context lacks the phrase (q029).
+
+    The Book One review passed 'the man who married Lise Meinen' + Kutúzov on the rungs whose
+    context never names the bride's brother, and the 10-03 reviews failed the same wording
+    where the context calls him young Bolkónski: a descriptive identification answers only
+    where no name is given. A phrase without the mark still needs to be present.
+    """
+    gate = {"married Lise Meinen": ["!young Bolkonski", "!wife of Prince Andrew"]}
+    q = replace(
+        _q(answer_terms=[("Andrew", "young Bolkonski", "married Lise Meinen"), "Kutuzov"]),
+        alias_evidence={"Andrew": ["wife of Prince Andrew"], **gate},
+    )
+    unnamed = "Her brother, who married Lise Meinen lately, is aide-de-camp of Kutuzov."
+    named = unnamed + " Lise, young Bolkonski's wife, smiled."
+    answer = "Her brother, the man who married Lise Meinen, is Kutuzov's aide-de-camp."
+    ok, why = cp.answers_from_graph(_rec(answer, context_text=unnamed), q)
+    assert ok, why
+    ok, why = cp.answers_from_graph(_rec(answer, context_text=named), q)
+    assert not ok and "not in the retrieved context" in why
+    assert cp.context_holds_terms(unnamed, q.answer_terms, alias_evidence=q.alias_evidence)
+    assert cp.context_holds_terms(named, q.answer_terms, alias_evidence=q.alias_evidence)
+    only_gate = [("married Lise Meinen",)]
+    assert not cp.context_holds_terms(named, only_gate, alias_evidence=gate)
+    # the description grounded beside a name the context never ties to him: the name is from
+    # memory, and the answer is too ('This is Prince Andrew, who married Lise Meinen', q029)
+    ok, why = cp.answers_from_graph(
+        _rec(
+            "Her brother is Prince Andrew, who married Lise Meinen; Kutuzov.", context_text=unnamed
+        ),
+        q,
+    )
+    assert not ok and "not in the retrieved context" in why
+    tied = unnamed + " She is the wife of Prince Andrew."
+    ok, why = cp.answers_from_graph(
+        _rec("Her brother is Prince Andrew, who married Lise Meinen; Kutuzov.", context_text=tied),
+        q,
+    )
+    assert ok, why

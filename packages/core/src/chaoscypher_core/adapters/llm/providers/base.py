@@ -96,7 +96,8 @@ def _get_usage_value(usage_meta: Any, field: str) -> int:
     raw = (
         usage_meta.get(field, 0) if isinstance(usage_meta, dict) else getattr(usage_meta, field, 0)
     )
-    return raw or 0
+    # A count is an int; anything else (None, a placeholder object) is no count.
+    return raw if isinstance(raw, int) and not isinstance(raw, bool) else 0
 
 
 def extract_streaming_usage(chunk: Any) -> dict[str, int]:  # noqa: PLR0911

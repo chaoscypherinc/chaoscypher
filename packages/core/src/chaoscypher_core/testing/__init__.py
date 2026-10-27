@@ -53,12 +53,15 @@ _stdlib_logging._chaoscypher_logging_configured = True  # type: ignore[attr-defi
 
 
 from chaoscypher_core.testing.cache_fixtures import data_dir_in_tmp, llm_cache_in_tmp
+from chaoscypher_core.testing.engine_fixtures import sqlite_engines_released
 from chaoscypher_core.testing.network_fixtures import (
     OLLAMA_PORT,
+    TestLoadedEmbeddingModelError,
     TestReachedOllamaError,
     ollama_offline,
 )
 from chaoscypher_core.testing.structlog_fixtures import (
+    logging_left_as_found,
     structlog_for_caplog,
     use_plain_tracebacks,
 )
@@ -71,10 +74,13 @@ use_plain_tracebacks()
 
 __all__ = [
     "OLLAMA_PORT",
+    "TestLoadedEmbeddingModelError",
     "TestReachedOllamaError",
     "data_dir_in_tmp",
     "llm_cache_in_tmp",
+    "logging_left_as_found",
     "ollama_offline",
+    "sqlite_engines_released",
     "structlog_for_caplog",
     "use_plain_tracebacks",
 ]

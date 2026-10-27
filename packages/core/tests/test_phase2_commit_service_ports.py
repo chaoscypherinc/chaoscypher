@@ -40,7 +40,7 @@ def test_commit_service_no_retry_adapter_import() -> None:
 def test_commit_service_adapter_embedding_import_only_in_fallback() -> None:
     """Only one allowlisted late import remains — the _get_embedding_provider fallback."""
     source = COMMIT_SERVICE_FILE.read_text(encoding="utf-8")
-    hits = source.count("from chaoscypher_core.adapters.embedding import create_embedding_provider")
+    hits = source.count("from chaoscypher_core.adapters.embedding import embedding_provider_for")
     assert hits == 1, (
         f"expected exactly one (allowlisted) adapter embedding import in the "
         f"lazy fallback; found {hits}"

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import structlog
-from sqlalchemy import or_
+from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import load_only
 from sqlmodel import col, delete, select
 
@@ -96,8 +96,10 @@ class NodeOperationsMixin(MembershipOperationsMixin):
     # Node Operations
     # ========================================================================
 
-    def create_node(self, node_create: NodeCreate, custom_id: str | None = None) -> Node:
-        """Create a new node in the graph."""
+    def create_node(
+        self, node_create: NodeCreate, custom_id: str | None = None, *, person_made: bool = False
+    ) -> Node:
+        """Create a new node in the graph; ``person_made`` marks a person's (migration 0025)."""
         node_id = custom_id or self._generate_id("node")
         graph_name = self._get_graph_name_for_template(node_create.template_id)
 
@@ -114,6 +116,7 @@ class NodeOperationsMixin(MembershipOperationsMixin):
             position_y=node_create.position.y if node_create.position else None,
             embedding=node_create.embedding,
             source_id=node_create.source_id,
+            person_made=person_made,
         )
 
         self.session.add(db_node)
@@ -345,6 +348,11 @@ class NodeOperationsMixin(MembershipOperationsMixin):
         round-trips. This loads the batch and commits once. ``graph_nodes.
         embedding`` is a JSON ``list[float]`` column (NOT base64), so the vector
         is written as-is.
+
+        The read and the write are one locked unit (``write_locked``): a node
+        another process deletes (merges away) meanwhile is either gone before
+        the read, and skipped, or deleted after the write; never between, where
+        the UPDATE would match no row.
         """
         if not embeddings:
             return 0
@@ -354,16 +362,15 @@ class NodeOperationsMixin(MembershipOperationsMixin):
         )
         changed = 0
         now = datetime.now(UTC)
-        for node in self.session.exec(statement).all():
-            vector = embeddings.get(node.id)
-            if vector is None:
-                continue
-            node.embedding = vector
-            node.updated_at = now
-            self.session.add(node)
-            changed += 1
-        if changed:
-            self.session.maybe_commit()
+        with self.write_locked():
+            for node in self.session.exec(statement).all():
+                vector = embeddings.get(node.id)
+                if vector is None:
+                    continue
+                node.embedding = vector
+                node.updated_at = now
+                self.session.add(node)
+                changed += 1
         return changed
 
     def get_node(self, node_id: str, *, include_embedding: bool = True) -> Node | None:
@@ -391,6 +398,7 @@ class NodeOperationsMixin(MembershipOperationsMixin):
                     GraphNode.position_x,
                     GraphNode.position_y,
                     GraphNode.source_id,
+                    GraphNode.person_made,
                     GraphNode.created_at,
                     GraphNode.updated_at,
                 )
@@ -448,6 +456,7 @@ class NodeOperationsMixin(MembershipOperationsMixin):
                     GraphNode.position_x,
                     GraphNode.position_y,
                     GraphNode.source_id,
+                    GraphNode.person_made,
                     # Excluded: properties, embedding, created_at, updated_at, graph_name
                 )
             )
@@ -463,6 +472,7 @@ class NodeOperationsMixin(MembershipOperationsMixin):
                 GraphNode.position_x,
                 GraphNode.position_y,
                 GraphNode.source_id,
+                GraphNode.person_made,
                 GraphNode.created_at,
                 GraphNode.updated_at,
             ]
@@ -578,13 +588,18 @@ class NodeOperationsMixin(MembershipOperationsMixin):
             for n in db_nodes
         ]
 
-    def list_nodes_without_embeddings(self, limit: int = 10000) -> list[Node]:
-        """List nodes that have no embedding vector (NULL or empty JSON array).
+    def list_nodes_without_embeddings(
+        self, *, after_id: str | None = None, limit: int = 10000
+    ) -> list[Node]:
+        """List nodes that have no embedding vector (NULL, JSON null or ``[]``), by id.
 
         Used by embedding generation to find nodes needing processing without
-        loading the full node table with existing embeddings.
+        loading the full node table with existing embeddings. Keyset-paginated
+        on ``id``: a caller passing the last id it read as ``after_id`` never
+        reads a node twice, even one that still has no vector after its turn.
 
         Args:
+            after_id: Keyset cursor: only ids after it; None starts at the beginning.
             limit: Maximum number of results.
 
         Returns:
@@ -600,15 +615,23 @@ class NodeOperationsMixin(MembershipOperationsMixin):
                     GraphNode.template_id,
                     GraphNode.label,
                     GraphNode.source_id,
+                    GraphNode.person_made,
                     GraphNode.properties,
                 )
             )
             .where(
                 GraphNode.database_name == self.database_name,
-                (GraphNode.embedding.is_(None)) | (GraphNode.embedding == "[]"),  # type: ignore[union-attr,comparison-overlap]  # SQLAlchemy column comparison; mypy treats Mapped[list[float]|None] literally
+                # SQL NULL, the JSON ``null`` a node created without a vector holds
+                # (a JSON column writes None as that text) and ``[]`` all read as no
+                # vector; a plain text compare, so a malformed row never fails the query
+                col(GraphNode.embedding).is_(None)
+                | cast(col(GraphNode.embedding), String).in_(("null", "[]")),
             )
+            .order_by(col(GraphNode.id))
             .limit(limit)
         )
+        if after_id is not None:
+            statement = statement.where(col(GraphNode.id) > after_id)
         db_nodes = self.session.exec(statement).all()
         return [self._db_node_to_model(n) for n in db_nodes]
 
@@ -754,6 +777,7 @@ class NodeOperationsMixin(MembershipOperationsMixin):
                     GraphNode.position_x,
                     GraphNode.position_y,
                     GraphNode.source_id,
+                    GraphNode.person_made,
                     GraphNode.created_at,
                     GraphNode.updated_at,
                 )
@@ -972,6 +996,7 @@ class NodeOperationsMixin(MembershipOperationsMixin):
             created_at=db_node.created_at,
             updated_at=db_node.updated_at,
             source_id=db_node.source_id,
+            person_made=bool(db_node.person_made),
             member_source_ids=split_member_ids(members),
         )
 
@@ -994,6 +1019,7 @@ class NodeOperationsMixin(MembershipOperationsMixin):
             position=position,
             embedding=None,  # Not loaded
             source_id=db_node.source_id,
+            person_made=bool(db_node.person_made),
             member_source_ids=split_member_ids(members),
             # created_at and updated_at will use default_factory (datetime.now(UTC))
         )

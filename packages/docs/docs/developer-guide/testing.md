@@ -41,14 +41,19 @@ make test
 
 ```bash
 # Core
-cd packages/core && pytest
+uv run pytest packages/core/tests --import-mode=importlib
 
 # Cortex
-cd packages/cortex && pytest
+uv run pytest packages/cortex/tests --import-mode=importlib
+
+# Neuron
+uv run pytest packages/neuron/tests --import-mode=importlib
 
 # CLI
-cd packages/cli && pytest
+uv run pytest packages/cli/tests --import-mode=importlib
 ```
+
+The workspace's `.venv` is uv-managed and never activated by hand, so every `pytest` goes through `uv run` (`make test` runs the same command over every package).
 
 ### End-to-End Tests
 
@@ -57,7 +62,7 @@ The system-level E2E harness at `e2e/` runs in tiers:
 ```bash
 make e2e-cli       # CLI tier — subprocess tests, no Docker required
 make e2e-browser   # Playwright browser tier only (Docker)
-make e2e           # Full suite: CLI + Docker API + browser
+make e2e           # CLI + Docker API tiers (fresh + resume); the browser tier is operator-run via make e2e-browser
 ```
 
 `make e2e` runs the Docker-backed tests in two phases: a **fresh** phase that wipes data and starts a clean stack, then a **resume** phase that restarts the app and verifies state survives the restart. HTML, JUnit, and JSON reports for every tier land in `test-reports/`.
@@ -161,7 +166,7 @@ The full CI pipeline (`make ci`) runs, in order:
 2. **Type generation** — regenerate the TypeScript API types from the backend schema
 3. **Type checking** — mypy (Python) + tsc (TypeScript)
 4. **Custom architectural rules** — `lint-claude` (import-linter + semgrep + AST checker, with self-tests)
-5. **Secret scan** — gitleaks
+5. **Secret scan** — detect-secrets against `.secrets.baseline`, plus gitleaks where installed
 6. **Public-export hygiene** — internal-reference check + SPDX license headers
 7. **Docstring coverage** — 100% required, single-underscore names included
 8. **Dead code detection** — vulture scanning

@@ -8,6 +8,9 @@
   not), so moving CI between runners is one variable, not fifteen edits.
 * Publishing workflows stay on GitHub-hosted runners: they publish with OIDC
   trusted publishing and run on the public repository.
+* Every PyPI upload carries PEP 740 attestations (#825): a release without
+  provenance gave an automated scanner nothing to check its verdict against.
+  The publish action is pinned at v1.14.3 or later (GHSA-5xjx-3w67-w9x9).
 * Each base image (``python``, ``node``) carries one tag across every
   Dockerfile: the test and multi-container images had drifted three patches
   behind the shipped image (3.14.3 vs 3.14.7) because only the top-level
@@ -27,6 +30,7 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -221,6 +225,54 @@ def test_every_publishing_job_runs_on_the_public_mirror_only(name: str) -> None:
         job for job, spec in jobs.items() if _PUBLIC_MIRROR_GUARD not in str(spec.get("if", ""))
     ]
     assert not unguarded, f"{name}: jobs without the public-mirror guard: {unguarded}"
+
+
+_PYPI_PUBLISH = "pypa/gh-action-pypi-publish"
+_UNATTESTED_UPLOAD = re.compile(r"\buv\s+publish\b|\btwine\s+upload\b")
+
+
+def test_every_pypi_upload_carries_pep740_attestations() -> None:
+    """Every PyPI upload goes through the PyPA action with attestations on, never ``uv publish``.
+
+    ``uv publish`` uploads no provenance. v0.3.0 shipped without it, and an automated scanner
+    listed chaoscypher-cli and -neuron 0.3.0 as malicious (#825) with nothing on PyPI to show
+    which workflow built them. The action signs a PEP 740 attestation per file.
+    """
+    steps = _action_steps(_PYPI_PUBLISH)
+    assert [(wf, job) for wf, job, _ in steps] == [("publish-pypi.yml", "publish")], steps
+    for wf, job, w in steps:
+        assert str(w.get("attestations", "true")).lower() != "false", (wf, job)
+    publish = _jobs(_WORKFLOWS / "publish-pypi.yml")["publish"]
+    assert publish["permissions"]["id-token"] == "write"
+    uses = next(
+        s["uses"] for s in publish["steps"] if str(s.get("uses", "")).startswith(_PYPI_PUBLISH)
+    )
+    assert re.fullmatch(rf"{_PYPI_PUBLISH}@[0-9a-f]{{40}}", uses), uses
+    unattested = [
+        (path.name, name)
+        for path in _workflow_files()
+        for name, job in _jobs(path).items()
+        for step in job.get("steps", [])
+        if _UNATTESTED_UPLOAD.search(str(step.get("run", "")))
+    ]
+    assert not unattested, f"uploads without attestations: {unattested}"
+
+
+# GHSA-5xjx-3w67-w9x9 (critical, 2026-10-21): up to v1.14.2 the action trusted a
+# revoked CA (emSign) for Trusted Publishing and Sigstore signing.
+_PYPI_PUBLISH_FLOOR = (1, 14, 3)
+_PYPI_PUBLISH_PIN = re.compile(
+    rf"uses:\s*{_PYPI_PUBLISH}@[0-9a-f]{{40}}\s+#\s*v(\d+)\.(\d+)\.(\d+)\s*$", re.MULTILINE
+)
+
+
+def test_the_pypi_publish_pin_is_past_the_revoked_ca_advisory() -> None:
+    """The SHA pin carries its ``# vX.Y.Z`` tag, and that tag is the patched v1.14.3 or later."""
+    text = (_WORKFLOWS / "publish-pypi.yml").read_text(encoding="utf-8")
+    pins = [tuple(int(n) for n in m.groups()) for m in _PYPI_PUBLISH_PIN.finditer(text)]
+    assert len(pins) == text.count(f"{_PYPI_PUBLISH}@"), "a pin without its # vX.Y.Z comment"
+    assert pins, "no pypa/gh-action-pypi-publish pin found"
+    assert all(v >= _PYPI_PUBLISH_FLOOR for v in pins), (pins, "GHSA-5xjx-3w67-w9x9")
 
 
 _CORE_SRC = _ROOT / "packages" / "core" / "src" / "chaoscypher_core"
@@ -571,6 +623,9 @@ def test_only_the_factory_constructs_a_graph_repository() -> None:
 #: Callers of the whole-index rebuild, and why theirs is a full rebuild.
 _FULL_REBUILDERS = {
     "packages/core/src/chaoscypher_core/benchmark/reindex.py": "an explicit reindex of the whole graph",
+    "packages/core/src/chaoscypher_core/adapters/sqlite/repos/search.py": (
+        "reindex_all_nodes on a keyword-only repository: the full-text half of a full rebuild"
+    ),
 }
 
 
@@ -924,3 +979,199 @@ def test_every_release_reaches_the_post_release_refresh() -> None:
                     missing.append(f"{key[0]}::{key[1]}")
     assert not missing, f"releases never refreshed: {missing}"
     assert set(_RELEASE_PASS_THROUGH) <= seen, sorted(set(_RELEASE_PASS_THROUGH) - seen)
+
+
+# ---------------------------------------------------------------------------
+# One reader of the vector switch (memory 0.6.0 item 1, D1 and D2)
+# ---------------------------------------------------------------------------
+#
+# ``embedding_provider_for(settings)`` is the only code that reads
+# ``search.enable_vector_search``: everything in the Engine's reach asks it for a
+# provider and treats None as keyword-only. A second reader would let one path
+# embed while the switch says off. Building a provider straight from the factory
+# skips the switch, so ``create_embedding_provider`` is called only where the
+# switch does not reach (the Docker stack, D2) or the caller picks its embedder
+# on purpose.
+
+_SWITCH_READER = "packages/core/src/chaoscypher_core/adapters/embedding/factory.py"
+
+#: Callers of ``create_embedding_provider`` and why each may skip the switch.
+_FACTORY_CALLERS = {
+    _SWITCH_READER: "embedding_provider_for, the switch's one reader",
+    "packages/core/src/chaoscypher_core/repo_factories/embedding_factory.py": (
+        "get_embedding_service, the process-wide provider; its callers are pinned below"
+    ),
+    "packages/cortex/src/chaoscypher_cortex/features/sources/service.py": "the Docker stack (D2)",
+    "packages/neuron/src/chaoscypher_neuron/handlers/template_embedding.py": (
+        "the Docker stack (D2)"
+    ),
+    "packages/neuron/src/chaoscypher_neuron/setup/ops_handlers.py": "the Docker stack (D2)",
+    "packages/cli/src/chaoscypher_cli/benchmark/orchestrator.py": (
+        "the benchmark picks its embedder explicitly"
+    ),
+}
+
+
+#: Callers of ``get_embedding_service`` (the process-wide provider, which never asks the
+#: switch) and why each may: only the Docker stack's queue handlers and services reach it.
+_SHARED_PROVIDER_CALLERS = {
+    "packages/core/src/chaoscypher_core/operations/extraction/extraction_finalizer.py": (
+        "the finalize_extraction queue handler (D2)"
+    ),
+    "packages/core/src/chaoscypher_core/operations/extraction/chunk_extraction_service.py": (
+        "the extract_chunk queue handler (D2)"
+    ),
+    "packages/core/src/chaoscypher_core/streaming/chat/utils.py": (
+        "the chat worker's default (SHARED_EMBEDDER, D2); the CLI passes its own provider"
+    ),
+    "packages/cortex/src/chaoscypher_cortex/features/health/service.py": "the Docker stack (D2)",
+    "packages/cortex/src/chaoscypher_cortex/features/search/service.py": "the Docker stack (D2)",
+    "packages/cortex/src/chaoscypher_cortex/features/nodes/service.py": "the Docker stack (D2)",
+    "packages/neuron/src/chaoscypher_neuron/worker.py": "the Docker stack (D2)",
+}
+
+
+def _switch_reads(tree: ast.AST) -> list[int]:
+    """Lines that read an attribute named ``enable_vector_search`` (an assignment is no read)."""
+    return [
+        n.lineno
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Attribute)
+        and n.attr == "enable_vector_search"
+        and isinstance(n.ctx, ast.Load)
+    ]
+
+
+def _calls_to(name: str) -> Any:
+    """A finder of the lines that call ``name`` under its own name or an import alias."""
+
+    def find(tree: ast.AST) -> list[int]:
+        names = {name} | set(_import_aliases(tree, frozenset({name})))
+        return [n.lineno for n in ast.walk(tree) if isinstance(n, ast.Call) and _called(n) in names]
+
+    return find
+
+
+_factory_calls = _calls_to("create_embedding_provider")
+
+
+def test_the_switch_guards_see_their_shapes() -> None:
+    assert _switch_reads(ast.parse("if s.search.enable_vector_search:\n    pass\n")) == [1]
+    assert _switch_reads(ast.parse("x = getattr(s, 'y') or s.enable_vector_search\n")) == [1]
+    assert not _switch_reads(ast.parse("s.search.enable_vector_search = False\n"))
+    assert not _switch_reads(ast.parse("class S:\n    enable_vector_search: bool = True\n"))
+    aliased = (
+        "from x import create_embedding_provider as make\nmake(s)\nf.create_embedding_provider(s)\n"
+    )
+    assert _factory_calls(ast.parse(aliased)) == [2, 3]
+    assert not _factory_calls(ast.parse("embedding_provider_for(s)\n"))
+
+
+def _offenders(find: Any, allowed: set[str]) -> tuple[list[str], set[str]]:
+    seen: set[str] = set()
+    offenders: list[str] = []
+    for root in _SRC_ROOTS:
+        for path in sorted(root.rglob("*.py")):
+            lines = find(ast.parse(path.read_text(encoding="utf-8")))
+            if not lines:
+                continue
+            rel = path.relative_to(_ROOT).as_posix()
+            if rel in allowed:
+                seen.add(rel)
+                continue
+            offenders += [f"{rel}:{line}" for line in lines]
+    return offenders, seen
+
+
+def test_only_the_embedding_factory_reads_the_vector_switch() -> None:
+    offenders, seen = _offenders(_switch_reads, {_SWITCH_READER})
+    assert not offenders, f"ask embedding_provider_for(settings) instead: {offenders}"
+    assert seen == {_SWITCH_READER}
+
+
+def test_create_embedding_provider_is_called_only_where_allowed() -> None:
+    offenders, seen = _offenders(_factory_calls, set(_FACTORY_CALLERS))
+    assert not offenders, f"build through embedding_provider_for(settings) instead: {offenders}"
+    assert seen == set(_FACTORY_CALLERS), sorted(set(_FACTORY_CALLERS) - seen)
+
+
+def test_the_shared_provider_is_called_only_where_allowed() -> None:
+    """``get_embedding_service`` never asks the switch: an Engine-based path must not reach it."""
+    offenders, seen = _offenders(_calls_to("get_embedding_service"), set(_SHARED_PROVIDER_CALLERS))
+    assert not offenders, f"take the engine's provider (None = keyword-only) instead: {offenders}"
+    assert seen == set(_SHARED_PROVIDER_CALLERS), sorted(set(_SHARED_PROVIDER_CALLERS) - seen)
+
+
+# Every open of a database for writing takes one step (``prepare_database``)
+#
+# The Engine ran the migrations alone, and only ``init_database`` seeded: a database a client
+# built through the CLI or ``chaoscypher mcp`` had none of the shipped templates, and its first
+# edge with the default template failed a foreign key. ``prepare_database`` migrates and then
+# gives the database the shipped templates it lacks; a direct call of the migration runner is
+# allowed only where the step follows it.
+
+#: The calls of ``run_startup_migrations`` outside ``prepare_database``, and why each is safe.
+_MIGRATION_RUNNERS = {
+    "packages/core/src/chaoscypher_core/database/engine.py": "prepare_database itself",
+    "packages/cli/src/chaoscypher_cli/mcp/command.py": (
+        "the maintenance gate before the Engine, whose prepare_database follows"
+    ),
+}
+
+
+def test_only_prepare_database_runs_the_startup_migrations() -> None:
+    """A path that opens a database for writing calls ``prepare_database``, not the runner."""
+    offenders, seen = _offenders(_calls_to("run_startup_migrations"), set(_MIGRATION_RUNNERS))
+    assert not offenders, f"call prepare_database (migrate + shipped templates): {offenders}"
+    assert seen == set(_MIGRATION_RUNNERS), sorted(set(_MIGRATION_RUNNERS) - seen)
+
+
+def test_the_graph_defaults_are_shipped_templates() -> None:
+    """The default node and edge templates are ones every open gives a database."""
+    from chaoscypher_core.settings import GraphSettings
+    from chaoscypher_core.templates.default_templates import SHIPPED_TEMPLATE_IDS
+
+    graph = GraphSettings()
+    assert graph.default_node_template in SHIPPED_TEMPLATE_IDS
+    assert graph.default_edge_template in SHIPPED_TEMPLATE_IDS
+
+
+# Every engine ChaosCypher builds hides a failed statement's values
+#
+# SQLAlchemy quotes a statement's parameters in its error text, and so in every log of it: a
+# node's label and properties, which an agent writes a memory into. ``hide_parameters=True``
+# on each production engine keeps them out; a new engine without it would bring them back.
+
+_ENGINE_BUILDERS = frozenset({"create_engine", "engine_from_config", "create_async_engine"})
+
+
+def _engines_without_hidden_parameters(tree: ast.AST) -> list[int]:
+    """Lines building a SQLAlchemy engine without ``hide_parameters=True``."""
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and _called(node) in _ENGINE_BUILDERS
+        and not any(
+            kw.arg == "hide_parameters"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value is True
+            for kw in node.keywords
+        )
+    ]
+
+
+def test_the_engine_guard_sees_its_shapes() -> None:
+    assert _engines_without_hidden_parameters(ast.parse("create_engine(url)\n")) == [1]
+    assert _engines_without_hidden_parameters(ast.parse("sa.engine_from_config(c, p)\n")) == [1]
+    assert not _engines_without_hidden_parameters(
+        ast.parse("create_engine(url, hide_parameters=True)\n")
+    )
+    assert _engines_without_hidden_parameters(
+        ast.parse("create_engine(url, hide_parameters=False)\n")
+    ) == [1]
+
+
+def test_every_production_engine_hides_its_parameters() -> None:
+    offenders, _seen = _offenders(_engines_without_hidden_parameters, set())
+    assert not offenders, f"pass hide_parameters=True: {offenders}"

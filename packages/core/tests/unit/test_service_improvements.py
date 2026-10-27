@@ -90,6 +90,9 @@ class TestFromEngineFactories:
         assert service.graph_repository.database_name == engine.graph_repository.database_name
         assert service.search_repository is engine.search_repository
         assert service.source_repository is engine.storage_adapter
+        # the Engine's provider, not a second one built from the settings (a second model)
+        assert service._get_embedding_provider() is engine.embedding_service
+        assert service._retry_policy is engine.retry_policy
 
     def test_search_service_from_engine(self, engine):
         """SearchService.from_engine() wires dependencies."""

@@ -18,7 +18,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { installApiClientMock } from '../../../../test/mocks/apiClient';
 import { useNodePropertyState } from '../useNodePropertyState';
 import type { GraphNodeData } from '../../types';
+import { SOURCE_GROUP_PREFIX, unresolvedBucketId } from '../../types';
 import { apiClient } from '../../../../services/api/client';
+
+/** The hub for unresolved nodes with no known source. */
+const UNRESOLVED_BUCKET_ID = unresolvedBucketId(null);
 
 vi.mock('../../../../services/api/client', () => installApiClientMock());
 
@@ -111,6 +115,23 @@ describe('useNodePropertyState', () => {
     act(() => result.current.handleDeleteTag('extra'));
     expect(result.current.nodeTags).not.toContain('extra');
   });
+
+  it.each([UNRESOLVED_BUCKET_ID, `${SOURCE_GROUP_PREFIX}src-1`])(
+    'never fetches a node or template for the synthetic node %s',
+    async (id) => {
+      mockedApiClient.get.mockResolvedValue({ data: {} });
+      const synthetic: GraphNodeData = { ...SELECTED, nodeId: id, templateId: '__hub__' };
+      const { result } = renderHook(() => useNodePropertyState(synthetic), {
+        wrapper: makeWrapper(),
+      });
+      // Let any query that would have been enabled start.
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(mockedApiClient.get).not.toHaveBeenCalled();
+      expect(result.current.template).toBeNull();
+    },
+  );
 
   it('returns an empty template and pristine state when no node is selected', () => {
     mockedApiClient.get.mockResolvedValue({ data: {} });

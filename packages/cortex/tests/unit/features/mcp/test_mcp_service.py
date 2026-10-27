@@ -98,6 +98,51 @@ class TestMCPServiceManager:
         assert manager._engine is None
 
     @pytest.mark.asyncio
+    async def test_start_hands_the_server_its_own_memory_linker(self) -> None:
+        """The server's memory links (remember's, the start-up sweep) belong to the manager."""
+        from chaoscypher_core.mcp.memory_link import MemoryLinker
+
+        manager = MCPServiceManager()
+        session_manager = MagicMock()
+        session_manager.run.return_value = AsyncMock()
+        with (
+            patch("chaoscypher_core.app_config.get_settings", return_value=MagicMock()),
+            patch(
+                "chaoscypher_core.app_config.engine_factory.build_engine_settings",
+                return_value=MagicMock(),
+            ),
+            patch("chaoscypher_core.bootstrap.Engine", return_value=MagicMock()),
+            patch("chaoscypher_core.mcp.server.create_mcp_server") as create,
+            patch(
+                "chaoscypher_cortex.features.mcp.service.StreamableHTTPSessionManager",
+                return_value=session_manager,
+            ),
+        ):
+            await manager.start()
+        linker = create.call_args.kwargs["linker"]
+        assert isinstance(linker, MemoryLinker)
+        assert manager._linker is linker
+
+    @pytest.mark.asyncio
+    async def test_stop_closes_the_memory_linker_before_the_engine(self) -> None:
+        """A link still running gives its claim back while its engine is still open."""
+        manager = MCPServiceManager()
+        order: list[str] = []
+        linker = MagicMock()
+        linker.close = AsyncMock(side_effect=lambda: order.append("linker"))
+        engine = MagicMock()
+        engine.close.side_effect = lambda: order.append("engine")
+        manager._manager = MagicMock()
+        manager._run_context = AsyncMock()
+        manager._engine = engine
+        manager._linker = linker
+
+        await manager.stop()
+
+        assert order == ["linker", "engine"]
+        assert manager._linker is None
+
+    @pytest.mark.asyncio
     async def test_handle_request_delegates_to_manager(self) -> None:
         """handle_request forwards ASGI triple to the underlying session manager."""
         manager = MCPServiceManager()

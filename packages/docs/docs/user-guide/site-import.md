@@ -96,7 +96,7 @@ Every page is fetched once, converted to clean text and imported as its own sour
 
 **Skip duplicates** does not apply to a site's pages: a page whose text you already imported is still imported as the site's own page, and your earlier source is left as it was (handing it to the site would let deleting the site with its pages delete it).
 
-A page that cannot be fetched is marked failed on its own row, and so is one that a redirect takes off the site or onto a path its `robots.txt` disallows; the rest of the site carries on.
+A page that cannot be fetched is marked failed on its own row, and so is one that a redirect takes off the site or onto a path its `robots.txt` disallows; the rest of the site carries on. During **Check for updates** a page already imported that cannot be fetched (or now redirects off the site) keeps its content and is reported as unreachable, and a page whose earlier fetch failed is tried again.
 
 A large or slow site is imported in runs: each run works for up to `web.site_run_max_seconds`, remembers how far it got and hands the rest to a new run. A run that is stopped part-way (a restart, a crash) is resumed from that point by the next **Check for updates**, without fetching the pages already done again.
 
@@ -113,6 +113,7 @@ Searching or filtering the sources list searches every source, a site's pages in
 - a page whose text is unchanged is left alone;
 - a page whose text changed is re-imported in place: same source, its old entities and relationships released, the new text extracted again;
 - a new page is added;
+- a page still being processed is left for the next check;
 - a page the site no longer lists is marked **Gone from site**. It is never deleted: it stays searchable until you remove it, and the mark clears if the site lists it again.
 
 A check cannot start while an import or another check of the same site is queued or running; the menu says why. A run whose worker was stopped (a restart, a crash) does not keep the site locked: the site is marked **Failed** ("The import was interrupted") when the worker starts again, and in any case a run older than the operations worker's timeout no longer counts as running. A check that stopped early (the page limit) marks nothing gone, and so does a check that found the pages another way than the last one (a sitemap after `llms.txt`): it matches each page however it is spelled (`/a.md` and `/a` are one page), so nothing is imported twice.

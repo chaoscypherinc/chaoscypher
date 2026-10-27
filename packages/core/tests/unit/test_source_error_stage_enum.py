@@ -14,6 +14,7 @@ def test_enum_values_match_persisted_strings() -> None:
     assert SourceErrorStage.COMMIT.value == "commit"
     assert SourceErrorStage.URL_FETCH.value == "url_fetch"
     assert SourceErrorStage.RECOVERY_EXHAUSTED.value == "recovery_exhausted"
+    assert SourceErrorStage.AFTER_COMMIT.value == "after_commit"
 
 
 def test_enum_is_str_compatible() -> None:

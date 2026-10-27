@@ -152,18 +152,14 @@ class EntityTemplateMatcher:
         return f"{entity_type}:{template_hash}"
 
     def _ensure_fallback_template_exists(self) -> None:
-        """Lazily re-create the fallback template if it was deleted.
+        """Make sure the fallback template exists, restoring it if it was deleted.
 
-        Runs at most once per matcher instance (per commit) — guarded by
-        ``_fallback_verified``. The first call after a fresh commit pays one
-        ``get_template`` SELECT; if the row is present, every subsequent
-        fallback in the same commit is a flag check.
-
-        If the row is missing, rebuild it from
-        ``chaoscypher_core.templates.default_templates`` so the FK on
-        ``graph_nodes.template_id`` stays satisfiable. Logs a warning when
-        the heal fires — that's a signal something else deleted a system
-        template and is worth investigating.
+        Runs at most once per matcher instance (per commit), guarded by
+        ``_fallback_verified``. The restore (``templates.restore``, the one every
+        write naming a shipped template uses) reads the row's id; if it is missing it
+        rebuilds it from ``chaoscypher_core.templates.default_templates`` so the FK on
+        ``graph_nodes.template_id`` stays satisfiable, and logs a warning: something
+        else deleted a shipped template, which is worth investigating.
 
         Raises:
             RuntimeError: (programmer error) If ``default_node_template``
@@ -174,23 +170,10 @@ class EntityTemplateMatcher:
         if self._fallback_verified:
             return
 
-        existing = self.graph_repository.get_template(_DEFAULT_NODE_TEMPLATE)
-        if existing is not None:
-            self._fallback_verified = True
-            return
+        from chaoscypher_core.templates.restore import restore_shipped_template
 
-        # Re-create from defaults. Imported inside the method to avoid a
-        # module-load-time dependency on the templates package — the matcher
-        # is otherwise a leaf in the import graph.
-        from chaoscypher_core.models import PropertyDefinition, TemplateCreate
-        from chaoscypher_core.templates.default_templates import DEFAULT_NODE_TEMPLATES
-
-        spec = next(
-            (t for t in DEFAULT_NODE_TEMPLATES if t["id"] == _DEFAULT_NODE_TEMPLATE),
-            None,
-        )
-        if spec is None:
-            # The fallback constant points at an id not in the seeded defaults
+        if not restore_shipped_template(self.graph_repository, _DEFAULT_NODE_TEMPLATE):
+            # The fallback constant points at an id not in the shipped templates
             # — a config drift the matcher can't paper over. Loud failure now
             # is better than 212 silent FK errors later.
             msg = (
@@ -201,29 +184,6 @@ class EntityTemplateMatcher:
             raise RuntimeError(  # nosemgrep: cc-045-bare-stdlib-raise-in-core - programmer error: config drift between default_node_template setting and DEFAULT_NODE_TEMPLATES; cannot reach a user
                 msg
             )
-
-        properties = [
-            p if isinstance(p, PropertyDefinition) else PropertyDefinition(**dict(p))
-            for p in spec.get("properties", [])
-        ]
-        template_create = TemplateCreate(
-            name=spec["name"],
-            description=spec.get("description"),
-            template_type=spec["template_type"],
-            properties=properties,
-            icon=spec.get("icon"),
-            color=spec.get("color"),
-        )
-        self.graph_repository.create_template(
-            template_create,
-            custom_id=_DEFAULT_NODE_TEMPLATE,
-            is_system=True,
-        )
-        logger.warning(
-            "fallback_template_self_healed",
-            template_id=_DEFAULT_NODE_TEMPLATE,
-            reason="missing_at_commit_time",
-        )
         self._fallback_verified = True
 
     def _match_in_source_templates(

@@ -185,3 +185,19 @@ def test_extract_routes_two_routers_in_one_file(tmp_path):
     # Confirm the wrong paths are not emitted
     assert Endpoint(method="GET", path="/api/v1/sources/status") not in routes
     assert Endpoint(method="DELETE", path="/api/v1/sources/events") not in routes
+
+
+def test_every_module_router_wires_is_scanned():
+    """A route module router.py includes is scanned whatever its file name.
+
+    ``sites_api.py`` was wired in router.py and missing from the old hand-kept
+    name list, so the check never saw its routes; the list is now derived from
+    the wiring map, and this drives the real tree.
+    """
+    wiring = mod._build_wiring_map(mod.ROUTER_FILE)  # noqa: SLF001 - the module's own wiring reader, on the real router
+    files = mod.feature_source_files(wiring)
+    wired = {path.resolve() for path, _var in wiring}
+    assert wired <= set(files), sorted(str(p) for p in wired - set(files))
+    assert any(f.name == "sites_api.py" for f in files)
+    paths = {e.path for e in mod.extract_routes_from_features()}
+    assert any(p.startswith("/api/v1/sources/sites") for p in paths), sorted(paths)[:5]

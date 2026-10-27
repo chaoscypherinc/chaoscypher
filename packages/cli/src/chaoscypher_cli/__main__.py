@@ -190,7 +190,7 @@ LAZY_COMMANDS = {
     "mcp": ("chaoscypher_cli.mcp.command:mcp", "Start MCP server over stdio"),
     "memory": (
         "chaoscypher_cli.commands.memory:memory",
-        "Export the memories the MCP memory tools store",
+        "Export and link the memories the MCP memory tools store",
     ),
     "mount": (
         "chaoscypher_cli.commands.mount:mount",

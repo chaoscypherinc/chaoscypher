@@ -33,6 +33,7 @@ class MCPServiceManager:
         self._manager: StreamableHTTPSessionManager | None = None
         self._run_context: Any = None
         self._engine: Any = None
+        self._linker: Any = None
 
     async def start(self) -> None:
         """Initialize and start the MCP session manager.
@@ -45,6 +46,7 @@ class MCPServiceManager:
             build_engine_settings,
         )
         from chaoscypher_core.bootstrap import Engine
+        from chaoscypher_core.mcp.memory_link import MemoryLinker
         from chaoscypher_core.mcp.server import create_mcp_server
 
         backend_settings = get_settings()
@@ -59,8 +61,11 @@ class MCPServiceManager:
             initialize_db=False,  # Cortex already initializes DB at startup
         )
 
-        # Build MCP server with full tool set (same as CLI)
-        server = create_mcp_server(self._engine)
+        # Build MCP server with full tool set (same as CLI). The manager owns the
+        # server's memory links (remember's, the start-up sweep): stop() closes them,
+        # so each gives its claim back while the engine is still open.
+        self._linker = MemoryLinker(self._engine)
+        server = create_mcp_server(self._engine, linker=self._linker)
 
         self._manager = StreamableHTTPSessionManager(
             app=server,
@@ -81,6 +86,9 @@ class MCPServiceManager:
             await self._run_context.__aexit__(None, None, None)
             self._run_context = None
             self._manager = None
+        if self._linker is not None:
+            await self._linker.close()
+            self._linker = None
         if self._engine:
             self._engine.close()
             self._engine = None

@@ -150,6 +150,15 @@ class SourceStorageProtocol(Protocol):
         """
         ...
 
+    def settle_imported_memory_links(self, source_ids: list[str], database_name: str) -> int:
+        """Mark imported memories ``linked`` or ``linked_empty`` by what they attest.
+
+        A memory that attests a node is ``linked``, one that attests none
+        ``linked_empty`` (``memory_linked_at`` now). Run after a package import wrote their memberships. Only memory rows among
+        ``source_ids`` change. Returns how many rows changed.
+        """
+        ...
+
     def upsert_source_by_ccx_iri(
         self,
         ccx_iri: str,

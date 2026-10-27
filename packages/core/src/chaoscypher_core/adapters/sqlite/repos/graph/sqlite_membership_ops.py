@@ -20,7 +20,8 @@ deleted. This is the one place graph rows are deleted by ``source_id`` (a guard
 in ``test_ci_config_guards.py`` holds every other module to it).
 """
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections import Counter
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from datetime import date
 from typing import Any
 
@@ -238,6 +239,33 @@ class MembershipOperationsMixin(GraphMixinBase):
                 select(GraphNodeSource.node_id).where(GraphNodeSource.source_id == source_id)
             ).all()
         ]
+
+    def nodes_attested_by(self, source_ids: Collection[str], limit: int) -> list[str]:
+        """The nodes ``source_ids`` attest, most memberships among them first, ties by node id.
+
+        At most ``limit``. The ids go to SQL in slices of ``SQL_IN_BATCH``, one grouped
+        count per slice, summed here, so a large set never passes SQLite's variable limit;
+        a set that fits one slice is ranked and cut in SQL.
+        """
+        if limit <= 0:
+            return []
+        batches = [b for b in id_batches(list(source_ids)) if b]
+        count = func.count(col(GraphNodeSource.source_id))
+        totals: Counter[str] = Counter()
+        for batch in batches:
+            statement = (
+                select(GraphNodeSource.node_id, count)
+                .where(col(GraphNodeSource.source_id).in_(batch))
+                .group_by(col(GraphNodeSource.node_id))
+            )
+            if len(batches) == 1:
+                statement = statement.order_by(count.desc(), col(GraphNodeSource.node_id)).limit(
+                    limit
+                )
+            for node_id, n in self.session.exec(statement).all():
+                totals[str(node_id)] += int(n)
+        ranked = sorted(totals.items(), key=lambda item: (-item[1], item[0]))
+        return [node_id for node_id, _ in ranked[:limit]]
 
     def member_edge_ids(self, source_id: str) -> list[str]:
         """The edges ``source_id`` attests, in membership order."""
@@ -494,8 +522,9 @@ class MembershipOperationsMixin(GraphMixinBase):
         own (written before memberships existed). Every candidate loses the
         source's membership. A candidate with no membership left is deleted (an
         edge also goes with a deleted endpoint, and is reported with the deleted
-        edges); the other candidates survive, untouched, in ``touched_*``, whether
-        or not the source still attested them. The source's templates follow D6
+        edges), unless a person made it (``person_made``): a row a person made is
+        never deleted by a release. The other candidates survive, untouched, in
+        ``touched_*``, whether or not the source still attested them. The source's templates follow D6
         (:meth:`_release_templates`). Citations are the caller's: the source
         delete and the re-commit remove the source's own.
 
@@ -520,6 +549,10 @@ class MembershipOperationsMixin(GraphMixinBase):
 
         First, what the sources closed is reopened (a forgotten memory takes its
         closures with it, spec 2026-10-20 decision 7): every release path.
+        A person-made row (``person_made``, migration 0025) loses the sources'
+        memberships and stays, as it was written, on every path, the source and
+        data resets (:meth:`release_all_sources`) included; only ``clear_all`` (the
+        knowledge-graph reset) deletes it.
         """
         session = self.session
         session.flush()
@@ -529,6 +562,10 @@ class MembershipOperationsMixin(GraphMixinBase):
         edge_ids = self._released(GraphEdgeSource, "edge_id", GraphEdge, source_ids)
         dead_nodes = node_ids - self._attested(GraphNodeSource, "node_id", node_ids)
         dead_edges = edge_ids - self._attested(GraphEdgeSource, "edge_id", edge_ids)
+        # a row a person made is never released with a source that attested it: it
+        # loses that membership and stays, as it was written
+        dead_nodes -= self._person_made(GraphNode, dead_nodes)
+        dead_edges -= self._person_made(GraphEdge, dead_edges)
         for batch in id_batches(sorted(dead_nodes)):  # their edges cascade: report them too
             dead_edges.update(
                 session.exec(
@@ -599,6 +636,19 @@ class MembershipOperationsMixin(GraphMixinBase):
                 ).all()
             )
         return still
+
+    def _person_made(self, model: type[GraphNode] | type[GraphEdge], ids: set[str]) -> set[str]:
+        """Those of ``ids`` a person made (``person_made``, migration 0025)."""
+        marked: set[str] = set()
+        for batch in id_batches(sorted(ids)):
+            marked.update(
+                self.session.exec(
+                    select(model.id).where(
+                        col(model.id).in_(batch or []), col(model.person_made).is_(True)
+                    )
+                ).all()
+            )
+        return marked
 
     def _release_templates(self, source_ids: list[str]) -> None:
         """D6 (revised in review): a released source's template goes with its last user.

@@ -383,6 +383,7 @@ async def test_embed_created_templates_does_not_hold_session_transaction_across_
     svc.search_repository = _MagicMock()
     svc.graph_repository = _MagicMock()
     svc._embedding_provider = _TxnSensingEmbeddingService()  # type: ignore[assignment]
+    svc._embedding_provider_resolved = True
 
     # Three fake templates — enough iterations to surface the implicit-txn
     # holding across awaits if the fix regresses.

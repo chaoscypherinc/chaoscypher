@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from chaoscypher_core.utils.tool_failure import log_tool_failure
+
 
 if TYPE_CHECKING:
     from chaoscypher_core.services.workflows.tools.engine.executor import ToolExecutorService
@@ -63,9 +65,7 @@ class MCPToolBridge:
                 is_error=is_error,
             )
         except Exception as e:
-            logger.warning("mcp_tool_execution_failed", tool=tool_name, error=str(e))
-            error_result = {"success": False, "error": "Tool execution failed"}
-            return BridgeResult(
-                text=json.dumps(error_result),
-                is_error=True,
+            answer = log_tool_failure(
+                logger, "mcp_tool_execution_failed", e, level="warning", tool=tool_name
             )
+            return BridgeResult(text=json.dumps(answer), is_error=True)

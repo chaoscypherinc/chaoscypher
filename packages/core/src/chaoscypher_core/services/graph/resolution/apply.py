@@ -33,6 +33,10 @@ from typing import TYPE_CHECKING, Any
 
 from chaoscypher_core.exceptions import ValidationError
 from chaoscypher_core.models import Edge, EdgeCreate, EdgeUpdate, Node, NodeCreate, NodeUpdate
+from chaoscypher_core.services.graph.memory.supersession import (
+    recompute_single_valued,
+    single_valued_labels,
+)
 from chaoscypher_core.services.graph.resolution.plan import (
     ResolutionPlan,
     fold,
@@ -54,6 +58,9 @@ from chaoscypher_core.services.sources.engine.deduplication.name_identity import
 from chaoscypher_core.services.sources.engine.deduplication.service import (
     merge_edge_properties,
     merge_node_properties,
+)
+from chaoscypher_core.services.sources.engine.extraction.utils.relation_vocabulary import (
+    EMPTY_RELATION_VOCABULARY,
 )
 
 
@@ -344,8 +351,59 @@ def fold_members(
     return props
 
 
+def _edges_of(repo: GraphRepositoryProtocol, node_id: str) -> list[Edge]:
+    """Every edge from and to ``node_id``, a disabled source's too, a page (:data:`PAGE`) at a time.
+
+    A merge must move every edge on the dropped node: one it did not read would go with
+    the node, and a kept-node edge it did not read would be written twice.
+    """
+    edges: list[Edge] = []
+    for outgoing in (True, False):
+        skip = 0
+        while True:
+            page = (
+                repo.list_edges(
+                    source_node_id=node_id, skip=skip, limit=PAGE, include_disabled_sources=True
+                )
+                if outgoing
+                else repo.list_edges(
+                    target_node_id=node_id, skip=skip, limit=PAGE, include_disabled_sources=True
+                )
+            )
+            edges.extend(page)
+            if len(page) < PAGE:
+                break
+            skip += PAGE
+    # a loop on the node is read from both ends: it is one edge, moved once
+    return list({e.id: e for e in edges}.values())
+
+
+def _date_undated(repo: GraphRepositoryProtocol, kept: Edge, moved: Edge) -> None:
+    """A source's kept edge takes the moved one's validity window when it has none of its own.
+
+    An attach writes no text into the kept edge. A person's edge is never written: with
+    no window it holds always (the coordinator's ruling, 2026-10-25). A kept edge with a
+    window of its own keeps it.
+    """
+    if kept.person_made or kept.valid_from or kept.valid_to or kept.closed_by_source_id:
+        return  # a person's undated edge holds always; a dated one keeps its own window
+    if not (moved.valid_from or moved.valid_to or moved.closed_by_source_id):
+        return
+    repo.set_edge_validity(
+        kept.id,
+        valid_from=moved.valid_from,
+        valid_to=moved.valid_to,
+        closed_by_source_id=moved.closed_by_source_id,
+    )
+
+
 def _move_edges(
-    repo: GraphRepositoryProtocol, keep: str, drop: str, report: ResolutionReport
+    repo: GraphRepositoryProtocol,
+    keep: str,
+    drop: str,
+    report: ResolutionReport,
+    *,
+    fold_into_kept: bool = True,
 ) -> None:
     """Re-point every edge on ``drop`` at ``keep``; skip loops, fold an edge ``keep`` already has.
 
@@ -357,68 +415,115 @@ def _move_edges(
     lost (keep, flag, never delete, 2026-10-07; until then the copy was
     dropped with its text: 3 edges on the v4b literary pack, 2 on the generic).
     A self-loop carries no fact between two nodes and is dropped.
+
+    Without ``fold_into_kept`` (:func:`attach_node`) an edge the kept node already has
+    takes the dropped one's memberships and citations only: the kept edge's properties
+    are left as they are, and its validity window too unless it has none
+    (:func:`_date_undated`).
+
+    A person's edge (``person_made``, migration 0025) is attached, never folded: it is
+    re-pointed in place (its id, ``created_at`` and ``ccx_iri`` stay; a loop it becomes is
+    kept), a source's copy of the same fact on the kept node folds into it (memberships
+    only), and a source's edge meeting a person's kept edge brings its memberships only,
+    fold mode or not. Two person's edges of one fact are both kept. Edges of disabled
+    sources move like any other (:func:`_edges_of` reads them).
     """
     have: dict[tuple[str, str, str], Edge] = {}
-    for e in [
-        *repo.list_edges(source_node_id=keep, limit=PAGE),
-        *repo.list_edges(target_node_id=keep, limit=PAGE),
-    ]:
+    for e in _edges_of(repo, keep):
         have.setdefault((e.source_node_id, e.target_node_id, e.label), e)
-    for e in [
-        *repo.list_edges(source_node_id=drop, limit=PAGE),
-        *repo.list_edges(target_node_id=drop, limit=PAGE),
-    ]:
-        report.removed_edge_ids.add(e.id)  # whatever happens below, this row goes
+    for e in _edges_of(repo, drop):
         src = keep if e.source_node_id == drop else e.source_node_id
         tgt = keep if e.target_node_id == drop else e.target_node_id
         key = (src, tgt, e.label)
+        if e.person_made:
+            _repoint_persons_edge(repo, e, key, have, report)
+            continue
+        report.removed_edge_ids.add(e.id)  # whatever happens below, this row goes
         if src == tgt:
             repo.drop_edge_citations(e.id)  # the fact they cite is gone (D4)
             report.edges_dropped += 1
             continue
         kept = have.get(key)
         if kept is not None:
-            merged = merge_edge_properties(dict(kept.properties or {}), dict(e.properties or {}))
-            if merged != dict(kept.properties or {}):
-                updated = repo.update_edge(kept.id, EdgeUpdate(properties=merged))
-                if updated is not None:
-                    have[key] = updated
-            if kept.valid_to is None and e.valid_to is not None:
-                # the same fact, closed on the dropped row: the kept row takes the window
-                repo.set_edge_validity(
-                    kept.id,
-                    valid_from=kept.valid_from or e.valid_from,
-                    valid_to=e.valid_to,
-                    closed_by_source_id=e.closed_by_source_id,
-                )
+            if kept.person_made or not fold_into_kept:
+                _date_undated(repo, kept, e)
+            else:
+                have[key] = _fold_into(repo, kept, e)
             repo.absorb_edge(kept.id, e.id)
             report.edges_dropped += 1
             report.edges_folded += 1
             continue
-        props = dict(e.properties or {})
-        props[RESOLVED_FROM] = drop
-        moved = repo.create_edge(
-            EdgeCreate(
-                template_id=e.template_id,
-                source_node_id=src,
-                target_node_id=tgt,
-                label=e.label,
-                properties=props,
-                source_id=e.source_id,  # still what its home source wrote
-            )
-        )
-        repo.absorb_edge(moved.id, e.id)
-        if e.valid_from or e.valid_to or e.closed_by_source_id:
-            # the moved fact keeps its validity window (a closed home stays closed, 2026-10-20)
-            repo.set_edge_validity(
-                moved.id,
-                valid_from=e.valid_from,
-                valid_to=e.valid_to,
-                closed_by_source_id=e.closed_by_source_id,
-            )
-        have[key] = moved
+        have[key] = _recreate_moved(repo, e, src, tgt, drop)
         report.edges_moved += 1
     # delete_node cascades the old edges
+
+
+def _repoint_persons_edge(
+    repo: GraphRepositoryProtocol,
+    edge: Edge,
+    key: tuple[str, str, str],
+    have: dict[tuple[str, str, str], Edge],
+    report: ResolutionReport,
+) -> None:
+    """Move a person's edge in place; a source's copy of its fact on the kept node folds in."""
+    kept = have.get(key)
+    if kept is not None and not kept.person_made:
+        repo.absorb_edge(edge.id, kept.id)  # the source's memberships and citations
+        repo.delete_edge(kept.id)
+        report.removed_edge_ids.add(kept.id)
+        report.edges_folded += 1
+        kept = None
+    repo.repoint_edge(edge.id, source_node_id=key[0], target_node_id=key[1])
+    if kept is None:
+        have[key] = edge
+    report.edges_moved += 1
+
+
+def _fold_into(repo: GraphRepositoryProtocol, kept: Edge, edge: Edge) -> Edge:
+    """Fold a source's edge into the kept node's copy of its fact (fold mode): text and window."""
+    merged = merge_edge_properties(dict(kept.properties or {}), dict(edge.properties or {}))
+    folded = kept
+    if merged != dict(kept.properties or {}):
+        updated = repo.update_edge(kept.id, EdgeUpdate(properties=merged))
+        if updated is not None:
+            folded = updated
+    if kept.valid_to is None and edge.valid_to is not None:
+        # the same fact, closed on the dropped row: the kept row takes the window
+        repo.set_edge_validity(
+            kept.id,
+            valid_from=kept.valid_from or edge.valid_from,
+            valid_to=edge.valid_to,
+            closed_by_source_id=edge.closed_by_source_id,
+        )
+    return folded
+
+
+def _recreate_moved(
+    repo: GraphRepositoryProtocol, edge: Edge, src: str, tgt: str, drop: str
+) -> Edge:
+    """A source's edge on the dropped node, written again between the kept ends."""
+    props = dict(edge.properties or {})
+    props[RESOLVED_FROM] = drop
+    moved = repo.create_edge(
+        EdgeCreate(
+            template_id=edge.template_id,
+            source_node_id=src,
+            target_node_id=tgt,
+            label=edge.label,
+            properties=props,
+            source_id=edge.source_id,  # still what its home source wrote
+        )
+    )
+    repo.absorb_edge(moved.id, edge.id)
+    if edge.valid_from or edge.valid_to or edge.closed_by_source_id:
+        # the moved fact keeps its validity window (a closed home stays closed, 2026-10-20)
+        repo.set_edge_validity(
+            moved.id,
+            valid_from=edge.valid_from,
+            valid_to=edge.valid_to,
+            closed_by_source_id=edge.closed_by_source_id,
+        )
+    return moved
 
 
 def _apply_merges(
@@ -480,6 +585,9 @@ def _merge_group(
     dropped = [n for n in (repo.get_node(d, include_embedding=False) for d in drop_ids) if n]
     if keep is None or not dropped:
         return
+    if keep.person_made or any(d.person_made for d in dropped):
+        _attach_group(repo, keep, dropped, removed_by_node, report)
+        return
     # Fold the dropped nodes in one order, what their records are (``member_order``),
     # never the order the plan lists them in: the merged description is the same text
     # whatever ids the nodes carry (audit wave 8).
@@ -497,10 +605,108 @@ def _merge_group(
         repo.delete_node(d.id)
         report.merged.append((keep.label, d.label))
         report.removed_node_ids.add(d.id)
+    _settle_single_valued(repo, keep.id)
     updated = repo.update_node(keep.id, NodeUpdate(properties=props))
     report.changed_node_ids.add(keep.id)
     if reembed is not None and updated is not None:
         reembed(updated)
+
+
+def _settle_single_valued(repo: GraphRepositoryProtocol, node_id: str) -> None:
+    """Recompute the single-valued facts the merged node now holds, inside the merge's lock.
+
+    A merge brings two nodes' facts onto one: two open ``located_in`` (one from each
+    node) must settle into one chain, the earlier closed at the later one's date, as if
+    one node had held both all along. The moves only carry each edge's window over, so
+    every single-valued label on the kept node's outgoing edges is recomputed here
+    (``recompute_single_valued`` joins the group's ``write_locked``). Only memories date
+    a fact: on a graph with no memory nothing is dated, and nothing is written.
+    """
+    labels = single_valued_labels(EMPTY_RELATION_VOCABULARY)
+    outgoing = sorted(
+        {e.label for e in _edges_of(repo, node_id) if e.source_node_id == node_id} & labels
+    )
+    for label in outgoing:
+        recompute_single_valued(repo, node_id, label)
+
+
+def _may_attach(
+    repo: GraphRepositoryProtocol, keep: Node, drop: Node, only_from: str | None
+) -> bool:
+    """:func:`attach_node`'s check, read under its lock."""
+    if keep.id == drop.id:
+        return False
+    if not keep.person_made or drop.person_made:
+        return False
+    return only_from is None or (
+        drop.source_id == only_from and set(repo.node_members(drop.id)) == {only_from}
+    )
+
+
+def attach_node(
+    repo: GraphRepositoryProtocol,
+    keep_id: str,
+    drop_id: str,
+    *,
+    only_from: str | None = None,
+    search: SearchRepositoryProtocol | None = None,
+    report: ResolutionReport | None = None,
+) -> ResolutionReport:
+    """Fold ``drop_id`` into ``keep_id`` without touching ``keep_id``'s own text.
+
+    The dropped node's memberships and citations move to the kept node and its edges are
+    re-pointed there (an edge the kept node already has takes its memberships only), and
+    the dropped node is deleted; the kept node's label, type and properties stay as they
+    are. What a memory does to a node a person made (``offered_nodes``): it attests it,
+    it never rewrites it. One unit of work under the writer lock, where it checks again
+    that the kept node is person-made and the dropped one is not (and, with
+    ``only_from``, that the dropped one is homed at that source and attested by it
+    alone); otherwise nothing happens. ``search`` follows the removed node and edges.
+    """
+    report = ResolutionReport() if report is None else report
+    done = ResolutionReport()
+    with repo.write_locked():
+        keep = repo.get_node(keep_id, include_embedding=False)
+        drop = repo.get_node(drop_id, include_embedding=False)
+        if keep is not None and drop is not None and _may_attach(repo, keep, drop, only_from):
+            _move_edges(repo, keep_id, drop_id, done, fold_into_kept=False)
+            repo.absorb_node(keep_id, drop_id)  # its sources and citations, before it cascades
+            repo.delete_node(drop_id)
+            done.merged.append((keep.label, drop.label))
+            done.removed_node_ids.add(drop_id)
+    _committed(report, done, [], None)
+    if search is not None:
+        _follow_search(search, done)
+    return report
+
+
+def _attach_group(
+    repo: GraphRepositoryProtocol,
+    keep: Node,
+    dropped: list[Node],
+    removed_by_node: dict[str, set[str]],
+    report: ResolutionReport,
+) -> None:
+    """A merge group holding a person-made node: that node keeps its row, and its text.
+
+    The person's node is never dropped, and nothing folds into it: the group's other
+    nodes are attached to it (memberships, citations and edges move, as
+    :func:`attach_node` does) and its label, type and properties stay. Two person-made
+    nodes in one group are both kept (the first, in record order, takes the others').
+    """
+    group = sorted([keep, *dropped], key=lambda n: member_order(node_record(n)))
+    target = next(n for n in group if n.person_made)
+    for n in group:
+        removed_by_node.pop(n.id, None)
+    for d in group:
+        if d.id == target.id or d.person_made:
+            continue
+        _move_edges(repo, target.id, d.id, report, fold_into_kept=False)
+        repo.absorb_node(target.id, d.id)  # its sources and citations, before it cascades
+        repo.delete_node(d.id)
+        report.merged.append((target.label, d.label))
+        report.removed_node_ids.add(d.id)
+    _settle_single_valued(repo, target.id)
 
 
 def _apply_alias_drops(
@@ -533,7 +739,7 @@ def _drop_aliases(
 ) -> None:
     """Remove the folded aliases in ``removed`` from a node, re-embedding it when they change."""
     node = repo.get_node(node_id, include_embedding=False)
-    if node is None:
+    if node is None or node.person_made:  # a person's aliases are the person's
         return
     props = dict(node.properties or {})
     before = [str(a) for a in props.get("aliases") or []]
@@ -565,7 +771,7 @@ def _apply_flags(
     with repo.write_locked():
         for flag in plan.flags:
             edge = repo.get_edge(flag.edge)
-            if edge is None:
+            if edge is None or edge.person_made:  # a person's edge is the person's
                 continue
             props = dict(edge.properties or {})
             if props.get(FLAG_KEY) == flag.why:
@@ -678,6 +884,7 @@ __all__ = [
     "RESOLVED_FROM",
     "ResolutionReport",
     "apply_resolution",
+    "attach_node",
     "distinct_readings",
     "edge_create_snapshot",
     "edge_record",

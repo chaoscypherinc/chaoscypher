@@ -29,7 +29,7 @@ from chaoscypher_core.adapters.sqlite.engine import (
 from chaoscypher_core.adapters.sqlite.engine import (
     get_engine as engine_get_engine,
 )
-from chaoscypher_core.database.seed import seed_default_data
+from chaoscypher_core.database.seed import ensure_system_templates, seed_default_data
 from chaoscypher_core.utils.filelock import lock_file, unlock_file
 
 
@@ -76,6 +76,37 @@ def database_exists(database_name: str) -> bool:
 def get_engine(database_name: str) -> Engine:
     """Return cached SQLAlchemy engine for this database."""
     return engine_get_engine(get_db_path(database_name))
+
+
+def prepare_database(
+    db_path: Path,
+    database_name: str,
+    *,
+    auto_apply_destructive: bool | None = None,
+) -> bool:
+    """Open a database for writing: migrate it to head and give it the shipped templates.
+
+    The one step every path that opens a database for writing takes: ``init_database``
+    (Cortex, the worker, a new or reset database) and the ``Engine`` (the CLI,
+    ``chaoscypher mcp``, the Python API, a package import). A database the migrations
+    alone built has none of the shipped templates, and the first edge with the default
+    template fails its foreign key; this repairs one made that way, whatever its revision.
+
+    Returns:
+        False when the upgrade is blocked (a migration needs confirmation, or applying one
+        failed): the schema is not at head, so nothing is seeded.
+
+    Raises:
+        Exception: the seed's failure, logged at error level (``ensure_system_templates``).
+    """
+    from chaoscypher_core.database.migrations.startup import run_startup_migrations
+    from chaoscypher_core.database.migrations.state import get_upgrade_state
+
+    run_startup_migrations(db_path, auto_apply_destructive=auto_apply_destructive)
+    if not get_upgrade_state(db_path).ready:
+        return False
+    ensure_system_templates(db_path, database_name)
+    return True
 
 
 def init_database(
@@ -131,15 +162,11 @@ def init_database(
             lock_file(lock_handle, blocking=False)
             logger.info("initialization_lock_acquired", database_name=database_name)
         except BlockingIOError:
+            # Then run it all again rather than trust what the other process left: every
+            # step is idempotent, a finished database makes each one a read, and one the
+            # other process left half-built (it failed or was killed) is built here.
             logger.info("waiting_for_another_process_initialization", database_name=database_name)
             lock_file(lock_handle, blocking=True)
-            if engine_database_exists(db_path) and db_path.stat().st_size > 1024:
-                logger.info(
-                    "database_already_initialized_by_another_process",
-                    database_name=database_name,
-                )
-                unlock_file(lock_handle)
-                return
 
         try:
             engine = engine_get_engine(db_path)
@@ -156,12 +183,6 @@ def init_database(
             # pre-Alembic installs create_all would silently add missing
             # tables without the new constraints, defeating the point of
             # routing through Alembic.
-            from chaoscypher_core.database.migrations.startup import (
-                run_startup_migrations,
-            )
-
-            run_startup_migrations(db_path, auto_apply_destructive=auto_apply_destructive)
-
             # Everything past this point assumes a healthy, at-HEAD schema.
             # If the upgrade gated (a needs-confirmation migration) or
             # failed (run_startup_migrations recorded ready=False after, say,
@@ -170,11 +191,13 @@ def init_database(
             # invariants the blocked DB doesn't satisfy, and would re-crash
             # the boot before the maintenance page can be served. Skip them
             # and let the upgrade-gate middleware serve maintenance instead.
-            from chaoscypher_core.database.migrations.state import (
-                get_upgrade_state,
-            )
+            if not prepare_database(
+                db_path, database_name, auto_apply_destructive=auto_apply_destructive
+            ):
+                from chaoscypher_core.database.migrations.state import (
+                    get_upgrade_state,
+                )
 
-            if not get_upgrade_state(db_path).ready:
                 logger.warning(
                     "database_initialization_blocked_pending_upgrade",
                     database_name=database_name,
@@ -201,7 +224,7 @@ def init_database(
                 strict=strict_schema_drift,
             )
 
-            seed_default_data(database_name)
+            seed_default_data(db_path, database_name)
             logger.info("database_initialized_successfully", database_name=database_name)
 
             # A database from before the core entity types is not migrated in

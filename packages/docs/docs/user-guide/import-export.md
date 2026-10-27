@@ -1,7 +1,7 @@
 ---
 id: import-export
 title: Import & Export
-description: Export and import knowledge graphs using the CCX format — share nodes, edges, templates, workflows, and sources between databases or with the Lexicon Hub community.
+description: Export and import knowledge graphs using the CCX format — share nodes, edges, templates and sources between databases or with the Lexicon Hub community.
 ---
 
 # Import & Export
@@ -16,7 +16,7 @@ CCX is a compressed archive format with the `.ccx` file extension. A CCX package
 |-----------|-------------|
 | **Templates** | Node and edge type definitions |
 | **Knowledge** | Graph nodes and edges with properties |
-| **Workflows** | Automation definitions and triggers |
+| **Workflows** | Workflow trigger rows only — not workflow definitions, and the importer skips them today. Back up workflows with the [JSON workflow export](../reference/api/workflows.md#export-and-import) |
 | **Sources** | Document metadata, chunks, citations, and tags |
 
 ## Exporting

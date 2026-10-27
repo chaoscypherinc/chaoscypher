@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from chaoscypher_core.adapters.sqlite import SqliteAdapter
     from chaoscypher_core.ports.embedding import EmbeddingProviderProtocol
     from chaoscypher_core.ports.index import IndexingProtocol
+    from chaoscypher_core.ports.search import SearchRepositoryProtocol
     from chaoscypher_core.settings import EngineSettings
 
 logger = structlog.get_logger(__name__)
@@ -38,6 +39,40 @@ def chunk_embedding_text(chunk: dict[str, Any]) -> str:
     return str(chunk["content"])
 
 
+def index_source_chunk_vectors(
+    adapter: SqliteAdapter,
+    search_repository: SearchRepositoryProtocol,
+    source_id: str,
+    *,
+    page_size: int,
+) -> int:
+    """Push a source's stored chunk vectors into the chunk vector index; the number pushed.
+
+    Streams ``(id, embedding)`` only, no chunk content (``iter_chunk_embeddings``),
+    base64-decodes each float32 vector, prefixes the id with ``chunk:`` and
+    bulk-upserts. The vectors are already persisted on the chunk rows, so a
+    failure here leaves an index a rebuild can restore.
+
+    Args:
+        adapter: The storage adapter holding the chunks.
+        search_repository: The search repository whose chunk index takes the vectors.
+        source_id: The source whose chunks are pushed.
+        page_size: Rows per read (``batching.chunk_fetch_limit``).
+
+    Returns:
+        How many vectors were pushed.
+    """
+    embeddings_to_index: list[tuple[str, list[float]]] = []
+    for chunk_id, embedding in adapter.iter_chunk_embeddings(source_id, page_size=page_size):
+        vector = np.frombuffer(base64.b64decode(embedding), dtype=np.float32).tolist()
+        embeddings_to_index.append((f"chunk:{chunk_id}", vector))
+
+    if not embeddings_to_index:
+        return 0
+    search_repository.index_embeddings_batch(embeddings_to_index, item_type="chunk")
+    return len(embeddings_to_index)
+
+
 class IndexingService:
     """Business logic for document indexing (RAG).
 
@@ -49,14 +84,18 @@ class IndexingService:
         self,
         repository: IndexingProtocol,
         settings: EngineSettings,
-        embedding_service: EmbeddingProviderProtocol | None = None,
+        *,
+        embedding_service: EmbeddingProviderProtocol | None,
     ):
         """Initialize indexing service.
 
         Args:
             repository: IndexingProtocol implementation
             settings: Engine settings with LLM configuration
-            embedding_service: Embedding provider for generating embeddings
+            embedding_service: Embedding provider for generating embeddings,
+                or None when vector search is off (``create_index`` then
+                stores the chunks keyword-only). Required, so a caller with
+                vector search on cannot forget to wire one.
 
         """
         self.repository = repository
@@ -68,7 +107,8 @@ class IndexingService:
         """Create IndexingService from an Engine instance.
 
         Args:
-            engine: An Engine instance with storage_adapter and settings.
+            engine: An Engine instance with storage_adapter, settings and
+                embedding_service (None when vector search is off).
 
         Returns:
             Configured IndexingService.
@@ -78,7 +118,11 @@ class IndexingService:
             result = await service.create_index(source_id)
 
         """
-        return cls(repository=engine.storage_adapter, settings=engine.settings)
+        return cls(
+            repository=engine.storage_adapter,
+            settings=engine.settings,
+            embedding_service=engine.embedding_service,
+        )
 
     @classmethod
     def from_adapter(
@@ -86,23 +130,27 @@ class IndexingService:
         adapter: SqliteAdapter,
         settings: EngineSettings,
         *,
-        embedding_service: EmbeddingProviderProtocol | None = None,
+        embedding_service: EmbeddingProviderProtocol | None,
     ) -> IndexingService:
         """Create IndexingService from a storage adapter.
 
         Args:
             adapter: SqliteAdapter (or compatible) implementing IndexingProtocol.
             settings: Engine settings.
-            embedding_service: Optional embedding provider override.
+            embedding_service: Embedding provider, or None for keyword-only.
 
         Returns:
             Configured IndexingService.
 
         Example:
             from chaoscypher_core import IndexingService, SqliteAdapter, EngineSettings
+            from chaoscypher_core.adapters.embedding import embedding_provider_for
 
             adapter = SqliteAdapter("app.db", "default")
-            service = IndexingService.from_adapter(adapter, EngineSettings())
+            settings = EngineSettings()
+            service = IndexingService.from_adapter(
+                adapter, settings, embedding_service=embedding_provider_for(settings)
+            )
 
         """
         return cls(
@@ -123,6 +171,10 @@ class IndexingService:
         1. Get small chunks from ChunkingService (already created)
         2. Delegate embedding generation + persistence to embed_chunks
         3. Ready for commit to vector search index
+
+        With no embedding provider (vector search off) step 2 is skipped:
+        the chunks stay without vectors (keyword-indexed by the chunk
+        triggers) and the result names no model and 0 dimensions.
 
         Args:
             source_id: Source ID
@@ -159,6 +211,16 @@ class IndexingService:
                 source_id=source_id,
                 chunk_count=len(small_chunks),
             )
+
+            if self.embedding_service is None:
+                logger.info(
+                    "indexing_keyword_only", source_id=source_id, chunk_count=len(small_chunks)
+                )
+                return {
+                    "chunks_count": len(small_chunks),
+                    "embedding_model": "",
+                    "embedding_dimensions": 0,
+                }
 
             # Step 2: Embed the fetched chunks (shared code path with the
             # resumable embedding sub-stage used by indexing_handler).
@@ -201,6 +263,7 @@ class IndexingService:
         progress_callback: Callable[[int, int], None] | None = None,
         cancellation_check: Callable[[], Any] | None = None,
         expected_dimensions: int | None = None,
+        chunk_status: str | None = "indexed",
     ) -> int:
         """Embed a pre-fetched list of chunks and persist the vectors.
 
@@ -238,6 +301,9 @@ class IndexingService:
                 check because it reflects what the existing rows actually
                 contain. Pass ``None`` for a first-pass embedding (no
                 prior dimension on record).
+            chunk_status: Status every embedded chunk takes (``"indexed"``),
+                or None to leave each chunk's status as it is (embedding
+                chunks of a source that is already committed).
 
         Returns:
             Number of chunks successfully embedded (total minus any
@@ -354,7 +420,7 @@ class IndexingService:
             embeddings_by_chunk,
             embedding_model=embedding_model,
             embedding_dimensions=resolved_expected_dimensions,
-            status="indexed",
+            status=chunk_status,
         )
         skipped_count = 0
         for chunk_id in missing_ids:

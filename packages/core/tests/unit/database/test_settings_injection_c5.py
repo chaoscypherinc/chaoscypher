@@ -98,6 +98,7 @@ def test_init_database_threads_strict_schema_drift_param(
         state_mod, "get_upgrade_state", lambda _p: state_mod.UpgradeState(ready=True)
     )
     monkeypatch.setattr(engine_mod, "seed_default_data", lambda *_a, **_k: None)
+    monkeypatch.setattr(engine_mod, "ensure_system_templates", lambda *_a, **_k: 0)
     monkeypatch.setattr(engine_mod, "engine_apply_schema_updates", lambda *_a, **_k: None)
 
     engine_mod.init_database("default", strict_schema_drift=False)
@@ -125,6 +126,7 @@ def test_init_database_threads_auto_apply_destructive_param(
         state_mod, "get_upgrade_state", lambda _p: state_mod.UpgradeState(ready=True)
     )
     monkeypatch.setattr(engine_mod, "seed_default_data", lambda *_a, **_k: None)
+    monkeypatch.setattr(engine_mod, "ensure_system_templates", lambda *_a, **_k: 0)
     monkeypatch.setattr(engine_mod, "engine_apply_schema_updates", lambda *_a, **_k: None)
 
     engine_mod.init_database("default", auto_apply_destructive=False)

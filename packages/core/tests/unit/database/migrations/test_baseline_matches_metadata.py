@@ -96,10 +96,7 @@ def test_baseline_columns_match_create_all(tmp_path: Path) -> None:
         if cols_a != cols_c:
             drift[table] = (cols_a - cols_c, cols_c - cols_a)
 
-    assert not drift, (
-        "per-table column drift:\n"
-        + "\n".join(
-            f"  {t}: alembic-extra={sorted(a)} create-extra={sorted(c)}"
-            for t, (a, c) in sorted(drift.items())
-        )
+    assert not drift, "per-table column drift:\n" + "\n".join(
+        f"  {t}: alembic-extra={sorted(a)} create-extra={sorted(c)}"
+        for t, (a, c) in sorted(drift.items())
     )

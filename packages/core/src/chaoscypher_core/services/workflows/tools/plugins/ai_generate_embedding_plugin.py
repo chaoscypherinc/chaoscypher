@@ -125,6 +125,7 @@ class EmbeddingPlugin:
 
         Raises:
             OperationError: If engine settings not provided in context
+            VectorSearchOff: If no provider is injected and vector search is off
             NotFoundError: If requested entity is not found
             ValidationError: If required input fields are missing or invalid
 
@@ -133,8 +134,8 @@ class EmbeddingPlugin:
         text = self._extract_text_from_inputs(inputs, context.graph_manager)
 
         # Prefer the port injected on the context; fall back to a one-shot
-        # factory build from settings for non-Engine callers. The factory
-        # import is allowlisted under CC012.
+        # build from settings for non-Engine callers, through the one reader
+        # of the vector switch. The factory import is allowlisted under CC012.
         provider = context.embedding_provider
         if provider is None:
             settings = context.settings
@@ -143,9 +144,12 @@ class EmbeddingPlugin:
                     "Engine settings not provided in context - required for embedding",
                     operation="ai.generate_embedding",
                 )
-            from chaoscypher_core.adapters.embedding import create_embedding_provider
+            from chaoscypher_core.adapters.embedding import (
+                embedding_provider_for,
+                require_embedding_provider,
+            )
 
-            provider = create_embedding_provider(settings)
+            provider = require_embedding_provider(embedding_provider_for(settings), "Embedding")
         embed_result = await provider.embed(text)
 
         embedding = embed_result.embedding

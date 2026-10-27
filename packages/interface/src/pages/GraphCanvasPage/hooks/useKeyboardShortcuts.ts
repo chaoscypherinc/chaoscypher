@@ -5,12 +5,15 @@
  * useKeyboardShortcuts: Keyboard shortcuts for the graph canvas.
  *
  * Uses sigma camera for zoom/fit and selection IDs for actions.
- * Returns pending delete state for confirmation dialogs.
+ * Returns pending delete state for confirmation dialogs. A synthetic node
+ * (a source root, the Unresolved hub) is never offered for delete or
+ * duplicate.
  */
 
 import { useEffect, useState, useCallback } from 'react';
 import { useSigma } from '@react-sigma/core';
 import type { GraphNodeData, NodeAttributes, EdgeAttributes } from '../types';
+import { isSyntheticNode } from '../types';
 
 interface UseKeyboardShortcutsProps {
   selectedNodeId: string | null;
@@ -56,6 +59,9 @@ export function useKeyboardShortcuts({
   }, []);
 
   useEffect(() => {
+    // Only a real node can be deleted or duplicated.
+    const realNodeId = selectedNodeId && !isSyntheticNode(selectedNodeId) ? selectedNodeId : null;
+
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
@@ -64,11 +70,11 @@ export function useKeyboardShortcuts({
 
       // Delete selected
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedNodeId && selectedNodeData) {
+        if (realNodeId && selectedNodeData) {
           e.preventDefault();
           setPendingDelete({
             type: 'node',
-            id: selectedNodeId,
+            id: realNodeId,
             message: `Are you sure you want to delete "${selectedNodeData.title || 'this item'}"?`,
           });
         } else if (selectedEdgeId) {
@@ -103,9 +109,9 @@ export function useKeyboardShortcuts({
       }
 
       // Duplicate
-      if (e.key === 'd' && !e.ctrlKey && !e.metaKey && selectedNodeId && selectedNodeData) {
+      if (e.key === 'd' && !e.ctrlKey && !e.metaKey && realNodeId && selectedNodeData) {
         e.preventDefault();
-        handleNodeDuplicate(selectedNodeId, selectedNodeData);
+        handleNodeDuplicate(realNodeId, selectedNodeData);
       }
     };
 

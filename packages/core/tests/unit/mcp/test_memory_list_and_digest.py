@@ -56,7 +56,7 @@ async def test_list_memories_filters_by_scope_and_says_when_empty(world: SimpleN
     await call(world.server, "remember", {"text": "The weather was grey.", "scope": "diary"})
     text = await call(world.server, "list_memories", {"scope": "diary"})
     assert text.splitlines() == [
-        f'[user {datetime.now(UTC).date().isoformat()}] "The weather was grey."'
+        f'[user {datetime.now(UTC).date().isoformat()}] "The weather was grey." (no facts found)'
     ]
     assert await call(world.server, "list_memories", {"scope": "nothing-here"}) == (
         "Nothing remembered yet."

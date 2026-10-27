@@ -437,7 +437,8 @@ def resolve_queries_file(recorded: str | None, dataset_queries: Path | None) -> 
     ``recorded`` is what the row says it was asked (:func:`recorded_queries_file`);
     a row that records nothing, or records the dataset's own file (the same
     path, a file with the same content in another checkout, or the same last
-    three parts when the checkout moved), is the dataset's. Identity is by
+    three parts, ``datasets/<id>/queries.yaml``, in another or a moved checkout
+    whatever its content), is the dataset's. Identity is by
     content, never by where a checkout lives: two worktrees of one fixture
     are one question file (2026-10-07, the v5 rows refused against B0).
     Anything else is a holdout set, which until 2026-10-06 (audit wave 2)
@@ -458,7 +459,10 @@ def resolve_queries_file(recorded: str | None, dataset_queries: Path | None) -> 
 
             if file_sha256(path) == file_sha256(dataset_queries):
                 return None
-        if not path.exists() and path.parts[-3:] == dataset_queries.parts[-3:]:
+        if path.parts[-3:] == dataset_queries.parts[-3:]:
+            # the dataset's file in another checkout, moved or not, whatever its content: a
+            # worktree that edits the fixture rescores the main checkout's rows against its own
+            # (the Book One fix round, 2026-10-23)
             return None
     if not path.is_file():
         msg = f"the question file the row was asked is missing: {recorded}"

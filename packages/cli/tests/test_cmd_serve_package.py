@@ -153,7 +153,10 @@ class TestServeHappyPathCortex:
 
         assert result.exit_code == 0, result.output
         env_used = mock_run.call_args[1]["env"]
-        assert env_used["CHAOSCYPHER_DATABASE"] == "my-project"
+        # The top-level ``current_database`` setting; ``CHAOSCYPHER_DATABASE`` would be
+        # read as the ``database:`` section and replace it with {} (2026-10-19 audit).
+        assert env_used["CHAOSCYPHER_CURRENT_DATABASE"] == "my-project"
+        assert "CHAOSCYPHER_DATABASE" not in env_used
 
     def test_serve_output_shows_api_url(self) -> None:
         runner = CliRunner()

@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC052 — loop.run_in_executor() without the caller's context in Core.
+#
+# run_in_executor runs the function in a thread WITHOUT the caller's
+# contextvars, so whatever a context variable carries is lost there: above
+# all private_text() (utils/logging/privacy.py), which keeps a memory's text
+# out of the logs (spec 2026-10-24 D16). A log written in that thread would
+# carry the memory. asyncio.to_thread copies the context.
+
+rules:
+  - id: cc-052-bare-run-in-executor
+    message: |
+      loop.run_in_executor() runs its function without the caller's context
+      variables, so private_text() (a memory's logs withheld) does not reach
+      the thread. Use `await asyncio.to_thread(fn, *args)`, or pass the
+      context: `loop.run_in_executor(executor, contextvars.copy_context().run, fn, *args)`.
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - "/packages/core/src/**"
+        - "/tools/semgrep/tests/cc-052-*.py"
+    patterns:
+      - pattern: $LOOP.run_in_executor(...)
+      - pattern-not: $LOOP.run_in_executor($EXECUTOR, contextvars.copy_context().run, ...)
+      - pattern-not: $LOOP.run_in_executor($EXECUTOR, $CONTEXT.run, ...)

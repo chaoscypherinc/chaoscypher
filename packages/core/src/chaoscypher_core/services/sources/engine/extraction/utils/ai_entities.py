@@ -66,12 +66,19 @@ from chaoscypher_core.services.sources.engine.extraction.utils.entity_cleaner im
 from chaoscypher_core.services.sources.engine.extraction.utils.line_parser import (
     parse_extraction_output,
 )
+from chaoscypher_core.services.sources.engine.extraction.utils.offered_types import (
+    OfferedType,
+    offered_in_prompt,
+    render_offered_types,
+    stamp_offered_types,
+)
 from chaoscypher_core.services.sources.engine.extraction.utils.prompts import (
     ENTITY_HARVEST_TEMPLATE,
     EXCLUSIONS_HEADER,
     EXTRACTION_RULES_TEMPLATE,
     RELATIONSHIP_HARVEST_TEMPLATE,
     SYSTEM_PROMPT,
+    declared_type_names,
     render_entity_format_example,
     render_relationship_format_example,
     strict_type_instruction,
@@ -94,6 +101,7 @@ from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue impor
     TypeVocabulary,
     rescue_invalid_entity_types,
 )
+from chaoscypher_core.utils.logging.privacy import log_failure
 from chaoscypher_core.utils.tokens import estimate_message_tokens, estimate_tokens
 
 
@@ -2494,6 +2502,7 @@ class AIEntityExtractor:
         source_id: str | None = None,
         database_name: str | None = None,
         seed: Sequence[Mapping[str, Any]] = (),
+        offered_types: Sequence[OfferedType] = (),
     ) -> dict[str, Any]:
         """Extract entities and relationships from text chunks.
 
@@ -2512,6 +2521,10 @@ class AIEntityExtractor:
                 provided but this is omitted.
             seed: Records the KNOWN ENTITIES list starts with (the memory
                 path's graph nodes and speaker); empty for the document path.
+            offered_types: Templates offered as known types (a scoped memory's,
+                D26): listed under the type list of this call's prompts, and an
+                entity written with one is stamped for the commit to bind. Empty
+                (every document) leaves the prompts as they are.
 
         Returns:
             Dictionary with entities, relationships, domain info
@@ -2548,7 +2561,7 @@ class AIEntityExtractor:
         )
         stack = DomainStack.from_stored(registry, packs)
         plan = build_extraction_plan(stack, self.settings)
-        chunk_kwargs = plan.chunk_kwargs
+        chunk_kwargs, shown_types = _with_offered_types(plan.chunk_kwargs, offered_types)
 
         # Phase 6 (2026-05-08): get per-domain system-prompt override.
         # When set, temporarily replaces self._system_prompt for all chunk calls
@@ -2578,6 +2591,9 @@ class AIEntityExtractor:
         )
 
         known = KnownEntities.for_plan(chunk_kwargs, self.settings, seed=seed)
+        # The groups whose extraction raised (each yields nothing): a strict caller
+        # (a memory's link) reads a model that failed as a failure, not as no facts.
+        chunk_failures = 0
 
         for chunk_idx, chunk in enumerate(chunks):
             try:
@@ -2602,6 +2618,8 @@ class AIEntityExtractor:
                     database_name=database_name,
                     known=known,
                 )
+                # The written type is still on each entity here (the stamp reads it).
+                stamp_offered_types(chunk_entities, shown_types)
                 # Folded in here, with the chunk-local edge indices: the offset loop
                 # below rewrites them in place. That loop cannot raise on indices
                 # ``validate_relationships`` checked, so a group added here is one
@@ -2631,12 +2649,9 @@ class AIEntityExtractor:
                 )
 
             except Exception as e:
-                logger.exception(
-                    "chunk_extraction_failed",
-                    chunk_number=chunk_idx + 1,
-                    error_type=type(e).__name__,
-                    error_message=str(e),
-                )
+                chunk_failures += 1
+                # the error may quote the chunk: inside private_text() (a memory) only its type
+                log_failure(logger, "chunk_extraction_failed", e, chunk_number=chunk_idx + 1)
                 if adapter is not None and source_id is not None:
                     await increment_quality_counter(
                         adapter=adapter,
@@ -2690,9 +2705,30 @@ class AIEntityExtractor:
             "type_vocabulary": chunk_kwargs["type_vocabulary"],
             # The running list's size: the groups folded in and the entities named.
             "known_entities": known.stats(),
+            "chunk_failures": chunk_failures,
         }
 
         return result
+
+
+def _with_offered_types(
+    chunk_kwargs: Mapping[str, Any], offered_types: Sequence[OfferedType]
+) -> tuple[Mapping[str, Any], list[OfferedType]]:
+    """``chunk_kwargs`` with the offered types' lines under its type list, and those types.
+
+    A copy for one call; with no offered types, or none the prompt shows
+    (``offered_types.offered_in_prompt``), ``chunk_kwargs`` itself and no types. Only the
+    types returned are stamped: a type the prompt hid binds nothing.
+    """
+    if not offered_types:
+        return chunk_kwargs, []
+    listed = str(chunk_kwargs["node_templates_formatted"] or "").rstrip("\n")
+    shown = offered_in_prompt(offered_types, declared_type_names(listed))
+    if not shown:
+        return chunk_kwargs, []
+    block = render_offered_types(shown, ())
+    typed = f"{listed}\n{block}" if listed else block
+    return {**chunk_kwargs, "node_templates_formatted": typed}, shown
 
 
 def _merge_within_task_relationships(

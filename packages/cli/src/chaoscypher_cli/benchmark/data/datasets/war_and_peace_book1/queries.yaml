@@ -98,7 +98,8 @@ queries:
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: 'the post of ambassador at Vienna'.
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'wanted to be appointed'; 'for himself'.
     # Full pass 2026-10-03 (every real answer graded): bundle 03
-    must_not_contain: ["ambassador", "wanted to be appointed", "for himself", "his son, Borís"]
+    # Review 2026-10-23 (answers): 'his son Borís' without the comma binds Borís as Vasíli's son just the same.
+    must_not_contain: ["ambassador", "wanted to be appointed", "for himself", "his son, Borís", "his son Borís"]
     gold_answer: |
       The post of first secretary at Vienna.
 
@@ -172,7 +173,9 @@ queries:
     answer_terms: ["rum", ["fifty", "50"]]
     # must_not_contain: the drink everyone expects of a Russian officer's bet
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: 'a hundred imperials', the counter-offer.
-    must_not_contain: ["vodka", "hundred imperials for", "for a hundred"]
+    # Review 2026-10-23 (answers): the stake raised to a hundred (the Englishman held it at fifty); 'offered to raise it to a
+    # hundred' stays right.
+    must_not_contain: ["vodka", "hundred imperials for", "for a hundred", "increased the bet to a hundred", "raised the bet to a hundred"]
     gold_answer: |
       A whole bottle of rum, without taking it from his mouth and without
       holding on, for fifty imperials.
@@ -230,7 +233,8 @@ queries:
     # Audit 2026-10-03: a one-member group so the whole phrase is required ('the old King' met it by one word).
     answer_terms: [["King of Prussia"]]
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'served the King of Prussia'; 'because he served'.
-    must_not_contain: ["served the King of Prussia", "because he served"]
+    # Review 2026-10-23 (answers): the nickname bound to Prince Vasíli, whose soirée chunk opens the graph + vector context.
+    must_not_contain: ["served the King of Prussia", "because he served", "given to Prince Vasíli", "father, Prince Vasíli"]
     gold_answer: |
       He was nicknamed "the King of Prussia".
 
@@ -260,7 +264,8 @@ queries:
     gold_entities: ["Véra", "Nicholas Rostóv"]
     answer_terms: ["Genlis"]
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'Véra gave Natásha'; 'Véra gave the nickname'.
-    must_not_contain: ["Véra gave Natásha", "Véra gave the nickname"]
+    # Review 2026-10-23 (answers): Borís named as the Rostóvs' son (he is Anna Mikháylovna's).
+    must_not_contain: ["Véra gave Natásha", "Véra gave the nickname", "Rostóvs' son (Borís", "Rostóvs' son, Borís", "Rostóvs' son Borís"]
     gold_answer: |
       Madame de Genlis - the nickname Nicholas gave Véra.
 
@@ -307,9 +312,13 @@ queries:
     # Audit 2026-10-06 (H12, scorer v6): a phrase no longer extends to a possessive; the possessive wrong form is written out.
     # Audit 2026-10-06 wave 2 (the possessive matches again): bare 'Anatole, Prince Vasíli' matched the right
     # 'a match involving Anatole, Prince Vasíli's son' (2026-10-05-p2-policy-v1-5090, Qwen3.5 9B); the speaker forms are written whole.
-    must_not_contain: ["Anatole promised", "Anatole, Prince Vasíli's son, promised", "Anatole, Prince Vasíli's son, who promised", "Anatole, Prince Vasíli Kurágin's son, promised", "Anatole, Vasíli's son"]
+    # Review 2026-10-23 (answers): the question restated with Anatole as its answer ('... arranged a match for him is Anatole');
+    # the graph rung's evidence form below would pass it otherwise.
+    must_not_contain: ["Anatole promised", "Anatole, Prince Vasíli's son, promised", "Anatole, Prince Vasíli's son, who promised", "Anatole, Prince Vasíli Kurágin's son, promised", "Anatole, Vasíli's son", "for him is Anatole", "for him was Anatole"]
     # Full pass 2026-10-03 (every real answer graded): the speaker is only identifiable when the context ties Vasíli to the speech; hybrid contexts never do (bundle 01)
-    evidence: ["greeted Prince Vasíli", "Prince Vasíli did not reply", "Vasíli Kurágin parent_of Anatole"]
+    # Review 2026-10-23 (answers): the graph rung's knowledge graph writes the tie the other way round ('Anatole child_of
+    # Prince Vasíli Kurágin', beside C3's 'your prodigal son Anatole'); its answers naming Vasíli were failed as ungrounded.
+    evidence: ["greeted Prince Vasíli", "Prince Vasíli did not reply", "Vasíli Kurágin parent_of Anatole", "Anatole child_of Prince Vasíli Kurágin"]
     gold_answer: |
       Prince Vasíli Kurágin, who wanted her to arrange a marriage for Anatole.
 
@@ -385,7 +394,9 @@ queries:
     # since scorer v6 a phrase never extends to a possessive, so the wrong fact is written whole.
     # Audit 2026-10-06 wave 2 (the possessive matches again): 'Pierre Bezúkhov' would fail the right 'Count Bezúkhov, Pierre Bezúkhov's father'; the wrong statement is written whole.
     # Audit 2026-10-06 wave 3: the wave-2 forms of 'Pierre Bezúkhov' (with ',', '.', '(', ';', 'and', ...) let a citation, a line break, a dash or the end of the answer through; written once with the no-possessive marker '|'.
-    must_not_contain: ["Pierre Bezúkhov|", "Vasíli is Borís's godfather", "Vasíli is his godfather"]
+    # Review 2026-10-23 (answers): the godfather glossed as Pierre in parentheses ('Count ... Bezúkhov (Pierre)'); not its
+    # possessive ('Bezúkhov (Pierre's father)').
+    must_not_contain: ["Pierre Bezúkhov|", "Vasíli is Borís's godfather", "Vasíli is his godfather", "Bezúkhov (Pierre|"]
     gold_answer: |
       Borís's godfather is Count Cyril Vladímirovich Bezúkhov.
 
@@ -401,7 +412,10 @@ queries:
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: Anatole sent back to Moscow like Pierre.
     # Verification 2026-10-03, round three (checked against the 5,358 real answers): Gemma 4 26B: 'only that his father was ordered out' (it was Anatole).
     # Full pass 2026-10-03 (every real answer graded): bundle 07
-    must_not_contain: ["Anatole was sent back", "Anatole was expelled", "father was ordered out", "his father was ordered", "father was later ordered out", "the father was expelled"]
+    # Review 2026-10-23 (answers): the source sentence's 'his son' read as a son of Anatole ('Anatole Kurágin's son was
+    # ordered out') or of Vasíli ('Prince Vasíli Kurágin's father hushed it up'); and the father as the subject of 'but was later
+    # ordered out'.
+    must_not_contain: ["Anatole was sent back", "Anatole was expelled", "father was ordered out", "his father was ordered", "father was later ordered out", "the father was expelled", "Anatole's son", "Anatole Kurágin's son", "Vasíli's father", "Vasíli Kurágin's father", "but was later ordered out"]
     gold_answer: |
       Prince Vasíli got his son Anatole's affair hushed up, but even Anatole
       was ordered out of Petersburg.
@@ -412,15 +426,24 @@ queries:
     gold_entities: ["Princess Mary Bolkónskaya", "Prince Andrew", "Kutúzov"]
     # Hand check 2026-10-02 (Gemma 4 31B, v2 pack, all three rungs): the text itself calls him 'young Bolkónski'; a correct identification by that name was failed.
     # Full pass 2026-10-03: 'young Prince Bolkónski' is the text's own identification; 'Andrew' counts only where the context ties him to the brother (the naive contexts name Prince Andrew only in an unrelated scene).
-    answer_terms: [["Andrew", "Andréy", "young Bolkónski", "young Prince Bolkónski"], "Kutúzov"]
-    alias_evidence: {"Andrew": ["wife of Prince Andrew", "Prince Andrew's wife", "appointed Prince Andrew", "Andrew Bolkónski", "married Prince Andrew"], "Andréy": ["wife of Prince Andrew", "Prince Andrew's wife", "appointed Prince Andrew", "Andrew Bolkónski", "married Prince Andrew"]}
+    # Review 2026-10-23 (answers): where the context never names the brother (the graph + vector and naive
+    # rungs: no 'young Bolkónski', no 'wife of Prince Andrew'), a grounded description identifies him ('the man who
+    # married Lise Meinen', 'Prince Bolkónski's son', 'Princess Mary's brother'), as the review passed and the
+    # 'personal name' caveat meant; each is gated with '!' phrases (counts only where none of the naming phrases is
+    # retrieved), so where the context names him the description still fails, as the 10-03 reviews failed it.
+    answer_terms: [["Andrew", "Andréy", "young Bolkónski", "young Prince Bolkónski", "married Lise Meinen", "Prince Bolkónski's son", "son of Prince Bolkónski", "Bolkónski's son", "Princess Mary's brother", "Mary's brother", "brother of Princess Mary", "Mary Bolkónskaya's brother"], "Kutúzov"]
+    alias_evidence: {"Andrew": ["wife of Prince Andrew", "Prince Andrew's wife", "appointed Prince Andrew", "Andrew Bolkónski", "married Prince Andrew"], "Andréy": ["wife of Prince Andrew", "Prince Andrew's wife", "appointed Prince Andrew", "Andrew Bolkónski", "married Prince Andrew"], "married Lise Meinen": ["!young Bolkónski", "!wife of Prince Andrew", "!Prince Andrew's wife", "!appointed Prince Andrew", "!Andrew Bolkónski", "!married Prince Andrew"], "Prince Bolkónski's son": ["!young Bolkónski", "!wife of Prince Andrew", "!Prince Andrew's wife", "!appointed Prince Andrew", "!Andrew Bolkónski", "!married Prince Andrew"], "son of Prince Bolkónski": ["!young Bolkónski", "!wife of Prince Andrew", "!Prince Andrew's wife", "!appointed Prince Andrew", "!Andrew Bolkónski", "!married Prince Andrew"], "Bolkónski's son": ["!young Bolkónski", "!wife of Prince Andrew", "!Prince Andrew's wife", "!appointed Prince Andrew", "!Andrew Bolkónski", "!married Prince Andrew"], "Princess Mary's brother": ["!young Bolkónski", "!wife of Prince Andrew", "!Prince Andrew's wife", "!appointed Prince Andrew", "!Andrew Bolkónski", "!married Prince Andrew"], "Mary's brother": ["!young Bolkónski", "!wife of Prince Andrew", "!Prince Andrew's wife", "!appointed Prince Andrew", "!Andrew Bolkónski", "!married Prince Andrew"], "brother of Princess Mary": ["!young Bolkónski", "!wife of Prince Andrew", "!Prince Andrew's wife", "!appointed Prince Andrew", "!Andrew Bolkónski", "!married Prince Andrew"], "Mary Bolkónskaya's brother": ["!young Bolkónski", "!wife of Prince Andrew", "!Prince Andrew's wife", "!appointed Prince Andrew", "!Andrew Bolkónski", "!married Prince Andrew"]}
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'bride is Lise'; 'her brother Prince Andrew'; 'Lise Meinen, and her brother'.
     # Full pass 2026-10-03 (every real answer graded): bundle 08
     # Audit 2026-10-06 wave 2 (the possessive matches again): 'brother of the young Bolkónski' matched the right
     # 'the brother of the young Bolkónski's sister is the young Bolkónski himself' (2026-10-05-p2-u-v8-3090, Gemma 4 26B);
     # the wrong statement (Andrew as young Bolkónski's brother, 2026-10-03-chat-probes-v2, Phi-4 14B) is written whole.
     # Audit 2026-10-06 wave 3: the wave-2 forms of 'brother of the young Bolkónski' (with ',', '.', '(', ';', 'and', ...) let a citation, a line break, a dash or the end of the answer through; written once with the no-possessive marker '|'.
-    must_not_contain: ["bride is Lise", "her brother Prince Andrew", "Lise Meinen, and her brother", "brother of the young Bolkónski|", "proposed Lise Meinen"]
+    # Review 2026-10-23 (answers): another man of the soirée named as the bride's brother ('the bride's brother is
+    # Borís, ... who married Lise Meinen'): the descriptions below would ground it otherwise.
+    # Review 2026-10-23 (answers): an invented brother of Prince Andrew as the bride's husband (the graph rung's 'wife of
+    # Prince Andrew' evidence let it through).
+    must_not_contain: ["bride is Lise", "her brother Prince Andrew", "Lise Meinen, and her brother", "brother of the young Bolkónski|", "proposed Lise Meinen", "Prince Andrew's brother", "brother is Borís", "brother is Anatole", "brother is Hippolyte", "brother is Pierre"]
     # Verification 2026-10-03, round four (301 changed real verdicts reviewed): the hybrid context never links the name Andrew to young Bolkónski
     caveats: ["personal name"]
     gold_answer: |
@@ -430,10 +453,15 @@ queries:
   - id: q030
     band: multi_hop
     # Fixture audit 2026-10-01 (chat scorer v4): where Pierre was sent afterwards is not in the retrieved context. Re-audited 2026-10-02 on the qwen3-embedding:8b and 4b packs: still not retrieved. Re-audited 2026-10-02 on the war_and_peace_book1-v2 graph (Gemma 4 31B, entities merged with qwen3-embedding:4b, indexed with it): still not retrieved.
-    answerable: false
+    # Review 2026-10-23 (answers): on the 2026-10-20 board the graphrag context does hold it (the Moscow entity reads 'City where Bezúkhov's son was sent back to', with 'Pierre child_of Count Bezúkhov'); the graph + vector and naive contexts still lack it (their only Moscow is Pierre's return from abroad at twenty). The flag is the caller's to revisit.
+    # Review 2026-10-24 (answerable): the corpus holds the whole answer, so the flag is lifted: ch. IX 'He went to Kurágin's' (Anatole's house, after 'On my honor!'), where Pierre 'caught the bear'; ch. X 'Bezúkhov's son sent back to Moscow' (the bear affair), with Pierre 'an illegitimate son of Count Bezúkhov' (ch. II). answerable_check on the v5f-literary pins: STALE on both graphrag pins and on naive.
+    answerable: true
     question: "Pierre gave Prince Andrew his word of honor not to go somewhere that night. Where did he go instead, and where was he sent afterwards?"
     gold_entities: ["Pierre", "Anatole Kurágin"]
-    answer_terms: ["Anatole", "Moscow"]
+    # Review 2026-10-23 (answers): the text's own words are 'He went to Kurágin's' (Anatole's house); 'Kurágin's' names the place.
+    answer_terms: [["Anatole", "Kurágin's"], "Moscow"]
+    # Review 2026-10-23 (answers): failed answers give the childhood return from abroad ('returned to Moscow at twenty') or the father's earlier 'go to Petersburg' as where he was sent afterwards, or decline part two mid-answer ('does not state where he was sent').
+    must_not_contain: ["Moscow at twenty", "Moscow at age twenty", "Moscow at the age of twenty", "to Petersburg", "to St. Petersburg", "not state where", "not say where", "not specify where", "not mention where"]
     gold_answer: |
       He went to Anatole Kurágin's gathering anyway; after the bear affair he
       was sent back to Moscow.
@@ -459,11 +487,15 @@ queries:
     # Audit 2026-10-03 (six reviewers over the 21-model runs, scorer v5): bare 'Bezúkhov' is Pierre's surname too, so any answer hit it; the rival and the count are required.
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): 'the count' matched any count.
     # Verification 2026-10-03, round two (the wrong answers that still passed): 'the dying Bezúkhov' is a correct way to name the count.
-    answer_terms: ["Vasíli", ["Count Bezúkhov", "Cyril", "Bezúkhov's fortune", "Bezúkhov's heir", "the dying Bezúkhov", "dying count"]]
+    # Review 2026-10-23 (answers): the question asks only whose fortune, so a bare 'Count Bezúkhov's' answers it where the context also holds the first hop ('Educate this bear for me!', graphrag and graph + vector); without that sentence (naive) the man must be named, so 'Bezúkhov' meets the first term only where the context holds it.
+    alias_evidence: {"Bezúkhov": ["educate this bear for me"]}
+    answer_terms: [["Vasíli", "Bezúkhov"], ["Count Bezúkhov", "Cyril", "Bezúkhov's fortune", "Bezúkhov's heir", "the dying Bezúkhov", "dying count"]]
     # Re-audited 2026-10-03 on pinned retrieval (war_and_peace_book1-v2/pins, one context per rung for every model): the 'next heir' sentence is in the hybrid context only, not the GraphRAG or naive one. Answerable, kept: a measured retrieval miss of those rungs.
+    # Review 2026-10-23 (answers): stale for the 2026-10-20 board: the rival-heir sentence is in all three contexts (graphrag C2 S1, graph + vector C3 S1, naive C2 S4); naive lacks only the 'Educate this bear' sentence.
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks Pierre as the rival heir.
     # Full pass 2026-10-03 (every real answer graded): bundle 09
-    must_not_contain: ["rival heir to Prince Vasíli", "heir to Prince Vasíli's", "Pierre, Count Bezúkhov's son, is the rival", "heir to Pierre's fortune"]
+    # Review 2026-10-23 (answers): failed answers cast the wrong man as the one asked ('making Pierre a rival heir', 'the rival heir to the fortune is Pierre', 'this bear is Pierre/Count Cyril', 'the rival heir is Count Cyril') or invert the relation ('the fortune of Prince Vasíli').
+    must_not_contain: ["rival heir to Prince Vasíli", "heir to Prince Vasíli's", "Pierre, Count Bezúkhov's son, is the rival", "heir to Pierre's fortune", "making Pierre a rival heir", "Pierre is a rival heir", "heir to the fortune is Pierre", "rival heir is Count", "this bear is Pierre", "this bear is Count", "this bear' is Pierre", "this bear' is Count", "fortune of Prince Vasíli|"]
     # Full pass 2026-10-03 (every real answer graded): answers without the rival-heir passage in their context were inferred or remembered (bundle 09)
     evidence: ["next heir", "who will inherit his immense fortune"]
     gold_answer: |
@@ -476,7 +508,8 @@ queries:
     gold_entities: ["Prince Vasíli Kurágin", "Anatole Kurágin", "Princess Mary Bolkónskaya"]
     # answer_terms: chapter VIII says 'Prince Andrew's sister'; her name, Mary, is in chapter I
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): 'Kurágin' was met by 'the Kurágins planned', so Pierre at Prince Andrew's passed.
-    answer_terms: [["Vasíli", "Kurágin's", "Kurágins'"], ["Mary", "Andrew's sister", "sister of Prince Andrew"]]
+    # Review 2026-10-23 (answers): 'Prince Andrew Bolkónski's sister' (the surname before the possessive) names her too.
+    answer_terms: [["Vasíli", "Kurágin's", "Kurágins'"], ["Mary", "Andrew's sister", "sister of Prince Andrew", "Bolkónski's sister"]]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: the wrong host, and 'Moscow, not Petersburg'.
     must_not_contain: ["at Prince Andrew's", "staying with Prince Andrew", "not Petersburg"]
     # Verification 2026-10-03, round four (301 changed real verdicts reviewed): the chunk does not say Petersburg
@@ -498,7 +531,8 @@ queries:
     # Verification 2026-10-03, round five (301 changed real verdicts reviewed): Qwen3.6 35B MoE called the sister-in-law Lise
     # Full pass 2026-10-03 (every real answer graded): bundle 01
     # Audit 2026-10-06 (H12, scorer v6): a phrase no longer extends to a possessive; the possessive wrong form is written out.
-    must_not_contain: ["the little princess's father", "little princess' father", "the little princess’s father", "the little princess's father's", "Anatole's father", "Lise's father", "Vasíli must consent", "marry Anatole herself", "promised to marry", "sister-in-law, Lise", "sister-in-law Lise", "Lise to write to her father", "likely gave her consent"]
+    # Review 2026-10-23 (answers): failed answers name a wrong father ('Anna Mikháylovna's husband', 'the consent of Prince Vasíli', 'the father of Lise', 'the princess's father's consent'), the sister-in-law's own consent ('consent of the sister-in-law', not her father's), the sister-in-law as Lise in brackets, or invert who writes ('the little princess asked Anna Pávlovna to write').
+    must_not_contain: ["the little princess's father", "little princess' father", "the little princess’s father", "the little princess's father's", "Anatole's father", "Lise's father", "Vasíli must consent", "marry Anatole herself", "promised to marry", "sister-in-law, Lise", "sister-in-law Lise", "Lise to write to her father", "likely gave her consent", "Anna Mikháylovna's husband", "consent of Prince Vasíli", "father of Lise", "princess's father's consent", "consent of the sister-in-law|", "sister-in-law (Lise", "asked Anna Pávlovna to write"]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the gold named Mary, who is not in the retrieved context (the chunks say 'sister-in-law' and 'her father').
     gold_answer: |
       To help with the match between Anatole and her sister-in-law, the old
@@ -523,6 +557,7 @@ queries:
     gold_entities: ["Borís", "Nicholas Rostóv"]
     answer_terms: ["Borís", "cornet"]
     # Re-audited 2026-10-03 on pinned retrieval: 'cornet' is in the hybrid context only; the GraphRAG one holds the friendship sentence without the rank, the naive one neither. Answerable, kept: a measured retrieval miss of those rungs.
+    # Review 2026-10-23 (answers): stale for the 2026-10-20 board: the graphrag context has the rank too (C0 S6 'Semënov Guards with the rank of cornet', C1 S2, the Borís entity); only naive lacks 'cornet'.
     # Full pass 2026-10-03 (every real answer graded): bundle 03
     must_not_contain: ["not specify the rank"]
     gold_answer: |
@@ -539,7 +574,8 @@ queries:
     answer_terms: ["Vasíli", ["Count Bezúkhov", "Cyril", "Bezúkhov, his godfather", "Borís's godfather", "Bóry's godfather"]]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: Count Rostóv as the hoped-for paymaster.
     # Full pass 2026-10-03 (every real answer graded): bundle 04
-    must_not_contain: ["Count Rostóv will", "relied on Count Cyril", "relied on Count Bezúkhov", "Prince Vasíli will pay", "Vasíli would pay"]
+    # Review 2026-10-23 (answers): failed answers bind the Guards favour to the countess's son ('her son Nicholas') or conflate the godfather with his son ('Bezúkhov (Pierre)').
+    must_not_contain: ["Count Rostóv will", "relied on Count Cyril", "relied on Count Bezúkhov", "Prince Vasíli will pay", "Vasíli would pay", "her son Nicholas", "her son, Nicholas", "Bezúkhov (Pierre"]
     gold_answer: |
       Prince Vasíli arranged the transfer; she hopes Count Cyril Vladímirovich
       Bezúkhov, Borís's godfather, will provide for his equipment.
@@ -570,7 +606,8 @@ queries:
     # Audit 2026-10-03 (six reviewers over the 21-model runs, scorer v5): the hybrid and naive contexts name him only as 'the vicomte' (every failing answer was correct).
     answer_terms: ["Russian", ["Mortemart", "vicomte"]]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: the wrong passenger.
-    must_not_contain: ["take Pierre home", "little princess home"]
+    # Review 2026-10-23 (answers): the bare 'vicomte' term also met 'the vicomte (Pierre)', the wrong passenger; 'take the princess home' is the little princess trap without 'little'.
+    must_not_contain: ["take Pierre home", "little princess home", "the princess home", "vicomte (Pierre"]
     gold_answer: |
       He told it in Russian, and he had promised to take the vicomte,
       Mortemart, home.
@@ -578,6 +615,7 @@ queries:
   - id: q040
     band: multi_hop
     # Fixture audit 2026-10-01 (chat scorer v4): 'Uncle' and the sister are not in the retrieved context; only 'she will go to the country'. Re-audited 2026-10-02 on the qwen3-embedding:8b and 4b packs: still not retrieved. Re-audited 2026-10-02 on the war_and_peace_book1-v2 graph (Gemma 4 31B, entities merged with qwen3-embedding:4b, indexed with it): still not retrieved.
+    # Review 2026-10-23 (answers): on the 2026-10-20 board 'Uncle' is in all three contexts (graphrag C7 S3, graph + vector C5 S3, naive C1 S12); the second part is in none: they say only 'She will go to the country' (graphrag and graph + vector C1 S1 place Andrew's father and Mary in the country, never Lise with them).
     answerable: false
     question: "What does Prince Andrew's wife call Kutúzov, and with whom will she live in the country while Andrew is at the war?"
     gold_entities: ["Lise Bolkónskaya", "Kutúzov", "Prince Andrew"]
@@ -589,7 +627,9 @@ queries:
   - id: q041
     band: multi_hop
     # Fixture audit 2026-10-02 (chat scorer v4): no rung retrieves the answer terms on the qwen3-embedding:8b or 4b pack (they were retrieved on the 0.6b pack). Re-audited 2026-10-02 on the war_and_peace_book1-v2 graph (Gemma 4 31B, entities merged with qwen3-embedding:4b, indexed with it): still not retrieved.
-    answerable: false
+    # Review 2026-10-23 (answers): on the 2026-10-20 board graphrag holds the answer (the entity line 'the Rumyántsovs' theatricals ... where the countess and Prince Vasíli acted together', with its participates_in edges) and naive holds it (C2 S8-S10, 'Has Prince Vasíli aged much?' then the theatricals line); only graph + vector lacks the man's name (C1 S1 says 'him'). The flag is the caller's to revisit.
+    # Review 2026-10-24 (answerable): the corpus holds the whole answer, so the flag is lifted: ch. XIV '"Has Prince Vasíli aged much?" asked the countess. "I have not seen him since we acted together at the Rumyántsovs' theatricals."' answerable_check on the v5f-literary pins: STALE on both graphrag pins and on naive.
+    answerable: true
     question: "With which man did the Countess Rostóva once act in theatricals, and at whose house?"
     gold_entities: ["Countess Rostóva", "Prince Vasíli Kurágin"]
     # answer_terms: 'Rumyántsov' (the theatricals); not 'Rumyántsev', whom Prince Vasíli suggests appealing to
@@ -615,6 +655,7 @@ queries:
     gold_entities: ["Sónya", "Nicholas Rostóv"]
     answer_terms: ["Sónya", "verses"]
     # Re-audited 2026-10-03 on pinned retrieval (war_and_peace_book1-v2/pins, one context per rung for every model): the verses sentence is in the naive context only, not the GraphRAG or hybrid one. Answerable, kept: a measured retrieval miss of those rungs. The evidence pins the sentence ('verses' alone could come from elsewhere); it flips none of the 2026-10-03 verdicts.
+    # Review 2026-10-23 (answers): stale for the 2026-10-20 board: the verses sentence is in graphrag (C1 S9) and graph + vector (C4 S9) too. The premise 'followed Natásha into the drawing room' is in no rung's context (naive has no age either), which invites premise declines.
     evidence: ["copying out some verses"]
     gold_answer: |
       Sónya, the count's niece; Nicholas copied out verses for her, the first
@@ -635,11 +676,16 @@ queries:
     # Re-audited 2026-10-02 on the qwen3-embedding:4b pack: the 'ask Pierre to dine' passage is retrieved again (it dropped out on 8b).
     question: "Pierre came back to Moscow in disgrace. What does Count Rostóv ask Anna Mikháylovna to do about him when she leaves for Count Bezúkhov's?"
     gold_entities: ["Count Rostóv", "Pierre", "Anna Mikháylovna Drubetskáya"]
-    answer_terms: ["dine"]
+    # Review 2026-10-23 (answers): 'invite Pierre to dinner' is the same request; the alias is tied to Pierre so another dinner in the chunk (Count Orlov's) does not meet it.
+    answer_terms: [["dine", "Pierre to dinner", "him to dinner"]]
     # Re-audited 2026-10-03 on pinned retrieval: the invitation is in the hybrid and naive contexts, not the GraphRAG one. Answerable, kept. The evidence pins the sentence: 'dine' alone also matches 'you dine at four' in another chunk. It flips none of the 2026-10-03 verdicts.
+    # Review 2026-10-23 (answers): stale for the 2026-10-20 board: graphrag has it too (C5 S4 'ask Pierre to dine with us').
     evidence: ["ask Pierre to dine"]
+    # Review 2026-10-23 (answers): an opening note that the context does not mention the return 'in disgrace' is about the question's premise, not the asked request.
+    caveats: ["in disgrace"]
     # Verification 2026-10-03, round two (scored against the whole corpus): blocks the reversed request.
-    must_not_contain: ["not to dine"]
+    # Review 2026-10-23 (answers): blocks the count bound to Pierre's father ('Count Rostóv (Count Cyril Vladímirovich)').
+    must_not_contain: ["not to dine", "Rostóv (Count Cyril"]
     gold_answer: |
       If the old count is better, she should ask Pierre to dine with the
       Rostóvs.
@@ -667,7 +713,8 @@ queries:
     answer_terms: [["Mikháylovna", "Drubetskáya", "Mikhailovna", "Drubetskaya"]]
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'Mikháylovna only listened'; 'Pávlovna who begged'.
     # Full pass 2026-10-03 (every real answer graded): bundle 02
-    must_not_contain: ["Mikháylovna only listened", "Pávlovna who begged", "Drubetskáya rather than Anna", "not the one who initially begged"]
+    # Review 2026-10-23 (answers): failed answers bind the context's 'had obtained an invitation ... solely to meet Prince Vasíli' to Anna Pávlovna, or split the one woman in two ('identified as Princess Drubetskáya, not as Anna').
+    must_not_contain: ["Mikháylovna only listened", "Pávlovna who begged", "Drubetskáya rather than Anna", "not the one who initially begged", "Pávlovna had obtained", "not as Anna"]
     gold_answer: |
       Anna Mikháylovna, Princess Drubetskáya.
 
@@ -679,7 +726,8 @@ queries:
     wrong_entities: ["Pávlovna", "Schérer"]
     answer_terms: ["Mikháylovna"]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: 'It is not Anna Mikháylovna but ...', which leads_with_gold read as leading with the gold.
-    must_not_contain: ["not Anna Mikháylovna", "not Mikháylovna"]
+    # Review 2026-10-23 (answers): the term is met by answers that bind 'Annette' to Anna Pávlovna while naming Anna Mikháylovna as the friend, or merge the two women; these block that binding as readers state it ('Annette is Anna Pávlovna Schérer', 'referring to / refers to Anna Pávlovna', 'also known as Anna Pávlovna', 'the name of Anna Pávlovna', 'attached to Anna Pávlovna') and the decline 'does not specify which Anna' before a guess. Right answers that name Anna Pávlovna as Prince Vasíli's 'Annette' say 'distinct from', 'also called' or 'not Anna Pávlovna'.
+    must_not_contain: ["not Anna Mikháylovna", "not Mikháylovna", "is Anna Pávlovna|", "refers to Anna Pávlovna", "referring to Anna Pávlovna", "known as Anna Pávlovna", "name of Anna Pávlovna|", "attached to Anna Pávlovna", "not specify which Anna"]
     gold_answer: |
       Anna Mikháylovna Drubetskáya.
 
@@ -693,6 +741,8 @@ queries:
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'elder brother, Hippolyte'; 'Hippolyte, whom she'.
     # Full pass 2026-10-03 (every real answer graded): bundle 04
     must_not_contain: ["elder brother, Hippolyte", "Hippolyte, whom she", "not Anna Pávlovna", "not made by Anna Pávlovna", "not attributed to Anna Pávlovna", "not explicitly attribute", "Prince Vasíli himself said"]
+    # Review 2026-10-23 (answers): the dislike must be in the context (her line 'I don't like him', or the graph's 'He is not liked by Anna Pávlovna'); the graph + vector context lacks both, and 'Anatole' there was inferred from 'prodigal son', his cost or the match.
+    evidence: ["don't like him", "not liked by Anna Pávlovna"]
     gold_answer: |
       Anatole, his youngest.
 
@@ -730,7 +780,8 @@ queries:
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'translated his own terms'; 'Dólokhov was the host'.
     # Verification 2026-10-03, round four (301 changed real verdicts reviewed): Qwen3 8B (naive): Anatole translated 'not the host'
     # Full pass 2026-10-03 (every real answer graded): bundle 06
-    must_not_contain: ["translated his own terms", "Dólokhov was the host", "Anatole, not the host", "he was not the host", "Anatole, who was not the host", "Anatole was not the host", "host was not the one doing the translation", "host did not translate", "is likely Prince Vasíli"]
+    # Review 2026-10-23 (answers): blocks 'the host is distinct from Anatole' (the host set against him) and Dólokhov's description bound to Anatole ('Anatole is described as an officer of the Semënov regiment').
+    must_not_contain: ["translated his own terms", "Dólokhov was the host", "Anatole, not the host", "he was not the host", "Anatole, who was not the host", "Anatole was not the host", "host was not the one doing the translation", "host did not translate", "is likely Prince Vasíli", "host is distinct from Anatole", "Anatole is described as an officer"]
     # Verification 2026-10-03, round four (301 changed real verdicts reviewed): the text never names the host, only the one who repeated the terms
     caveats: ["host"]
     gold_answer: |
@@ -744,7 +795,10 @@ queries:
     wrong_entities: ["Anatole"]
     answer_terms: ["Dólokhov"]
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'Dólokhov escaped'; 'it was his friend who was degraded'.
-    must_not_contain: ["Dólokhov escaped", "it was his friend who was degraded"]
+    # Review 2026-10-23 (answers): blocks the wrong young man named outright ('degraded to the ranks is Bezúkhov's son').
+    must_not_contain: ["Dólokhov escaped", "it was his friend who was degraded", "ranks is Bezúkhov", "ranks is Pierre", "ranks is Anatole"]
+    # Review 2026-10-23 (answers): the degradation must be in the context ('Dólokhov has been degraded to the ranks', in the chunk or the Dólokhov entity); the naive context has the bear story without it, so 'Dólokhov' there came from memory. The question's own 'was degraded to the ranks' does not count.
+    evidence: ["been degraded"]
     gold_answer: |
       Dólokhov was degraded to the ranks.
 
@@ -754,7 +808,8 @@ queries:
     gold_entities: ["Natásha"]
     wrong_entities: ["Sónya"]
     # alias: the text gives her formal name Nataly as well
-    answer_terms: [["Natásha", "Nataly"]]
+    # Review 2026-10-23 (answers): the other spellings of the formal name ('Natalya Rostóva', 'Natalia'; the graphrag context opens with "Natalia's day").
+    answer_terms: [["Natásha", "Nataly", "Natalya", "Natalia"]]
     gold_answer: |
       Natásha, the youngest daughter.
 
@@ -786,9 +841,11 @@ queries:
     question: "Of the two friends, the student and the officer, which one is short with curly hair?"
     gold_entities: ["Nicholas"]
     wrong_entities: ["Borís"]
-    answer_terms: ["Nicholas"]
+    # Review 2026-10-23 (answers): 'the student' answers 'which one' of the two as asked (graphrag: Nicholas is the undergraduate and the short one).
+    answer_terms: [["Nicholas", "the student"]]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: the descriptions swapped.
-    must_not_contain: ["Nicholas is tall", "Nicholas was tall", "Borís is short", "Borís was short"]
+    # Review 2026-10-23 (answers): the roles swapped, the officer given the student's description (failed answers that also name Nicholas and call him the officer).
+    must_not_contain: ["Nicholas is tall", "Nicholas was tall", "Borís is short", "Borís was short", "officer is short", "officer is the one who is short"]
     gold_answer: |
       Nicholas Rostóv, the student; the officer is tall and fair.
 
@@ -839,7 +896,8 @@ queries:
     # Verification 2026-10-03, round seven: Gemma 4 12B (naive) gave the epithet to Anna Pávlovna
     # Harness review 2026-10-03 (Opus 5.5 and Sonnet 5.5 on the v2 pack): guard for the lead check that now counts 'little princess' as the gold (harness review)
     # Audit 2026-10-06 wave 3: no punctuation at a phrase's ends (it bounds nothing); the same wrong forms, written from a word to a word.
-    must_not_contain: ["Prince Andrew's sister", "Andrew's sister", "refers to Anna Pávlovna as", "does not link them", "identifies Anna Pávlovna as", "as Princess Mary Bolkónskaya", "Bolkónskaya (Princess Mary Bolkónskaya"]
+    # Review 2026-10-23 (answers): the answer given as Princess Mary in the question's own frame ('... in Petersburg is Princess Mary', 'Princess Mary Bolkónskaya is the Princess Bolkónskaya who ...'): the lead check counts 'princess' of the alias as the gold, so these passed; and the invented 'Hélène's mother' for her.
+    must_not_contain: ["Prince Andrew's sister", "Andrew's sister", "refers to Anna Pávlovna as", "does not link them", "identifies Anna Pávlovna as", "as Princess Mary Bolkónskaya", "Bolkónskaya (Princess Mary Bolkónskaya", "in Petersburg is Princess Mary", "Mary Bolkónskaya is the Princess Bolkónskaya", "Hélène's mother"]
     # Verification 2026-10-03, round four (301 changed real verdicts reviewed): 'Lise' is in no chunk of some contexts
     caveats: ["first name"]
     gold_answer: |
@@ -854,7 +912,8 @@ queries:
     answer_terms: [["Mary", "Márya", "Maria"]]
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'Lise is the one'; 'Lise, who is unhappy'.
     # Full pass 2026-10-03 (every real answer graded): bundle 06
-    must_not_contain: ["Lise is the one", "Lise, who is unhappy", "bride for Anatole is Lise"]
+    # Review 2026-10-23 (answers): the term is met by nearly every answer (all quote 'Princess Mary Bolkónskaya' for the unhappiness), so the traps bind the Anatole match: the little/young princess given as the answer ('bride for Anatole is the little ...', 'the young Princess Bolkónskaya is the one'), the bride (the little princess's sister-in-law) named as Lise ('sister-in-law in question is Lise', 'sister-in-law - Lise'), Lise made a sister-in-law's wife ('wife of the little princess' brother'), Mary merged with the little princess ('the little princess is Princess Mary'), and the bride part declined or denied ('does not state that any Princess Bolkónskaya ...', 'not directly for Princess Mary').
+    must_not_contain: ["Lise is the one", "Lise, who is unhappy", "bride for Anatole is Lise", "bride for Anatole is the little", "bride for Anatole is the young", "young Princess Bolkónskaya is the one", "little Princess Bolkónskaya is the one", "sister-in-law is Lise", "sister-in-law in question is Lise", "sister-in-law - Lise", "wife of the little princess", "little princess is Princess Mary", "not state that any Princess Bolkónskaya", "not directly for Princess Mary"]
     gold_answer: |
       Mary, Prince Andrew's sister.
 
@@ -874,7 +933,8 @@ queries:
     # Verification 2026-10-03, round five (301 changed real verdicts reviewed): Qwen3 8B conflated Borís with the aide-de-camp
     # Audit 2026-10-06 wave 2 (the possessive matches again): 'Old Prince Bolkónski' would fail the right 'Prince Andrew, old Prince Bolkónski's son'; the wrong statement is written whole.
     # Audit 2026-10-06 wave 3: the wave-2 forms of 'Old Prince Bolkónski' (with ',', '.', '(', ';', 'and', ...) let a citation, a line break, a dash or the end of the answer through; written once with the no-possessive marker '|'.
-    must_not_contain: ["Old Prince Bolkónski|", "old prince rejoins", "Borís, being recommended as adjutant"]
+    # Review 2026-10-23 (answers): two young men given as Kutúzov's aides ('going to the war as aides-de-camp to General Kutúzov': Prince Andrew and Borís, who got no appointment). Not wrong_members: right answers name Borís beside Andrew in prose ('despite Borís's efforts ... being unsuccessful').
+    must_not_contain: ["Old Prince Bolkónski|", "old prince rejoins", "Borís, being recommended as adjutant", "as aides-de-camp"]
     gold_answer: |
       Prince Andrew Bolkónski.
 
@@ -886,7 +946,8 @@ queries:
     answer_terms: ["Nicholas"]
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'Borís, who is leaving the university'; 'Borís is leaving the university'.
     # Full pass 2026-10-03 (every real answer graded): bundle 08
-    must_not_contain: ["Borís, who is leaving the university", "Borís is leaving the university", "Borís who is leaving the university", "Borís leaving the university"]
+    # Review 2026-10-23 (answers): more forms that give the leaving to Borís (the count's 'he' is Nicholas): the past tense, 'departing', an apposition, 'Borís is the young man leaving', and the count's line misread as 'Borís has become an officer and is leaving the university'.
+    must_not_contain: ["Borís, who is leaving the university", "Borís is leaving the university", "Borís who is leaving the university", "Borís leaving the university", "Borís left the university", "Borís departing university", "Borís departing the university", "Borís, leaving the university", "Borís is the young man leaving", "officer and is leaving the university"]
     gold_answer: |
       Nicholas Rostóv, the count's eldest son.
 
@@ -917,6 +978,8 @@ queries:
     band: out_of_scope
     question: "Where was Pierre's duel with Dólokhov fought?"
     decoy_entities: ["Sokólniki"]
+    # Review 2026-10-23 (answers): an in-text place asserted as where it was fought (the rum-wager window: 'fought on the outer ledge of the third-floor window'); the window itself is named by right declines, so the trap is the assertion.
+    must_not_contain: ["fought on the", "fought at the"]
     expect_refusal: true
 
   - id: q068
@@ -947,6 +1010,8 @@ queries:
     # Verification 2026-10-03, round two (the wrong answers that still passed): a decline that then names the estate's region; bare 'Tula' occurs in the corpus.
     # Verification 2026-10-03, round two (scored against the whole corpus): 'family estate' occurs in the corpus; the phrase does not.
     decoy_entities: ["Yasnaya Polyana", "Yasnaya", "Iasnaia", "Polyana", "Poliana", "near Tula", "estate near Tula"]
+    # Review 2026-10-23 (answers): a decline that opens by denying the true premise ('The author did not write this novel on a family estate').
+    must_not_contain: ["did not write this novel on", "did not write the novel on"]
     expect_refusal: true
 
   - id: q072
@@ -970,6 +1035,8 @@ queries:
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): variants; bare 'Nicholas' is Nicholas Rostóv.
     # Verification 2026-10-03, round two (the wrong answers that still passed): more forms of the fact a decline must not state.
     decoy_entities: ["Andréevich", "Nikolai", "Andreyevich", "Andreevitch", "Nikolay", "Nicholas Andr", "first name is Nicholas", "named Nicholas"]
+    # Review 2026-10-23 (answers): Count Bezúkhov (Pierre's father, in the text) given as Prince Andrew's father before or instead of the decline; the graphrag graph's 'my father' entity merges the two fathers.
+    must_not_contain: ["Andrew's father is Bezúkhov", "Andrew's father is Count Bezúkhov", "Andrew's father is identified as Count Bezúkhov", "same person as Count Bezúkhov", "Andrew is the son of Count Bezúkhov", "Andrew is the son of Bezúkhov"]
     expect_refusal: true
 
   - id: q075
@@ -979,7 +1046,8 @@ queries:
     # Full pass 2026-10-03 (every real answer graded): bundle 09
     # Audit 2026-10-06 (H12, scorer v6): a phrase no longer extends to a possessive, so the
     # possessive form this caught ('no separate squadron commander beyond Schubert's role') is written out.
-    must_not_contain: ["squadron commander beyond Schubert", "squadron commander beyond Schubert's"]
+    # Review 2026-10-23 (answers): Schubert offered as the answer ('Schubert commanded ...', 'Schubert is the commanding officer under whom Nicholas serves', 'no more specific answer than Colonel Schubert'); a decline that only notes he is the regiment's colonel passes.
+    must_not_contain: ["squadron commander beyond Schubert", "squadron commander beyond Schubert's", "Schubert commanded", "Schubert is the commanding officer", "!more specific answer than Colonel Schubert", "!more specific answer than Schubert"]
     decoy_entities: ["Denísov"]
     expect_refusal: true
 
@@ -988,6 +1056,8 @@ queries:
     question: "What did Lise and Prince Andrew name their son?"
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): Maude's translation calls the son Nicholas; a bare 'Nicholas' decoy would hit Nicholas Rostóv.
     decoy_entities: ["Nikolenka", "Nikolúshka", "Nikolai", "Nicholas Andréevich", "little Nicholas", "named him Nicholas", "called Nicholas"]
+    # Review 2026-10-23 (answers): Prince Vasíli's sons (Anatole, Hippolyte, both in the text, so no decoys) given to Prince Andrew before the decline.
+    must_not_contain: ["Andrew has two sons", "Andrew's children (Anatole", "Andrew's children, Anatole"]
     expect_refusal: true
 
   - id: q077
@@ -1016,7 +1086,8 @@ queries:
     # decoy: chapter XXI of Book One, after this cut; Anna Mikháylovna and Borís are only setting out for the count's house at the end of chapter XIV
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the object in other words.
     # Full pass 2026-10-03 (every real answer graded): bundle 04
-    must_not_contain: ["struggled over the inheritance", "inheritance dispute"]
+    # Review 2026-10-23 (answers): 'inheritance dispute' failed a clean decline that names the context's Pierre-vs-Vasíli inheritance question as background; the struggle asserted is the trap ('struggled over' / 'struggling over' anything, which every right decline negates), and so is the substitute every rung invites, the plea to recommend Borís as Kutúzov's adjutant ('disagreed over whether he would recommend', 'the substance of their struggle', 'the subject of their disagreement').
+    must_not_contain: ["struggled over", "struggling over", "disagreed over", "substance of their struggle", "subject of their disagreement"]
     decoy_entities: ["portfolio", "inlaid", "briefcase", "letter case", "mosaic"]
     expect_refusal: true
 
@@ -1073,7 +1144,8 @@ queries:
     # Verification 2026-10-03, round three (checked against the 5,358 real answers): 'got a place on' and 'obtained a place' occurred in correct answers restating the question before answering no.
     # Verification 2026-10-03, round five (301 changed real verdicts reviewed): Qwen3.8 27B (naive) left the yes/no open
     # Verification 2026-10-03, round six: Muse Glimmer (naive) left the yes/no open
-    must_not_contain: ["was appointed adjutant", "became adjutant", "became an adjutant", "was made adjutant", "yes, he did", "yes, borís", "borís did get", "borís got the post", "ultimately secured is not stated", "staff appointment, is not in"]
+    # Review 2026-10-23 (answers): Kutúzov made Prince Andrew's father ('Prince Andrew's father, Michael Ilariónovich Kutúzov'), a wrong relation bound to the asked general.
+    must_not_contain: ["was appointed adjutant", "became adjutant", "became an adjutant", "was made adjutant", "yes, he did", "yes, borís", "borís did get", "borís got the post", "ultimately secured is not stated", "staff appointment, is not in", "Andrew's father, Michael", "Andrew's father, Kutúzov"]
     gold_answer: |
       General Kutúzov, whose aide-de-camp Prince Andrew is to be. Prince
       Vasíli would not promise to recommend Borís to him as adjutant, and
@@ -1092,7 +1164,8 @@ queries:
     answer_terms: ["Vasíli", ["debauchery", "dissipation", "dissipated", "those Kurágins", "Kurágins", "that sort of life", "that life", "debauch", "word of honor", "word of honour", "not to go"]]
     # Verification 2026-10-03, round three (checked against the 5,358 real answers): the wrong reading the verifier found.
     # Full pass 2026-10-03 (every real answer graded): bundle 06
-    must_not_contain: ["give up his word of honor", "give up his word of honour", "part of the question is not in the sources", "to give up at supper is not in"]
+    # Review 2026-10-23 (answers): more part-declines of the supper advice ('does not state what Prince Andrew told Pierre to give up at supper', 'do not give the specific content of what he said at that supper', 'does not quote the content of that supper speech'); the advice quoted after one of them does not answer.
+    must_not_contain: ["give up his word of honor", "give up his word of honour", "part of the question is not in the sources", "to give up at supper is not in", "not state what Prince Andrew told Pierre", "not give the specific content", "not quote the content"]
     gold_answer: |
       At Prince Vasíli Kurágin's. Prince Andrew told him to give up visiting
       those Kurágins and leading that sort of life - the debauchery and
@@ -1123,7 +1196,10 @@ queries:
     answer_terms: ["Wednesday", ["English ambassador", "ambassador"]]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: the wrong host.
     # Audit 2026-10-06 (H12, scorer v6): a phrase no longer extends to a possessive; the possessive wrong form is written out.
-    must_not_contain: ["French ambassador", "not the ambassador", "not the ambassador's"]
+    # Review 2026-10-23 (answers): failed answers say the day of the week is not stated and then infer
+    # Wednesday from 'Today is Wednesday' as a hedge; the decline of the day is the wrong statement (every
+    # rung's context holds the line), written with its own negation so it is stated wherever it stands.
+    must_not_contain: ["French ambassador", "not the ambassador", "not the ambassador's", "day of the week is not", "not state the day of the week", "not state the specific day of the week", "not explicitly state the day of the week", "not specify the day of the week"]
     gold_answer: |
       It was a Wednesday, and Hélène came to take her father on to the fete
       at the English ambassador's.
@@ -1136,7 +1212,11 @@ queries:
     # chapter I (Lise Meinen), chapter VI ('It is settled')
     answer_terms: ["Meinen", "settled"]
     # Full pass 2026-10-03 (every real answer graded): bundle 09
-    must_not_contain: ["maiden name is Bolkónskaya", "maiden name is not explicitly mentioned"]
+    # Review 2026-10-23 (answers): the terms check words, not speakers. Failed answers give 'It is settled'
+    # to Anna Pávlovna, give her 'Write to her ... Au revoir!' to Lise ('she said Au revoir', 'instructed Anna
+    # Pávlovna to'), deny Lise said anything as she left, decline which part of 'Lise Meinen' is the maiden
+    # name, or marry Lise to an invented 'Hippolyte Bolkónski' / name the little princess 'Annette Bolkónskaya'.
+    must_not_contain: ["maiden name is Bolkónskaya", "maiden name is not explicitly mentioned", "Anna Pávlovna said, It is settled", "Anna Pávlovna remarked, It is settled", "Anna Pávlovna herself remarked", "she said Au revoir", "instructed Anna Pávlovna to", "did not say anything directly", "!which part of her name was her maiden name", "Hippolyte Bolkónski", "Annette Bolkónskaya"]
     gold_answer: |
       She was Lise Meinen before her marriage; in the hall she told Anna
       Pávlovna in a low voice, "It is settled."
@@ -1180,9 +1260,17 @@ queries:
     answer_terms: ["Pierre", ["danced", "dancing", "lifted", "in his arms"]]
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'Anatole lift the bear'; 'Anatole lifted the bear'; 'watched Anatole'.
     # Full pass 2026-10-03 (every real answer graded): bundle 02
-    must_not_contain: ["Anatole lift the bear", "Anatole lifted the bear", "watched Anatole", "called Anatole a", "his son Anatole as a"]
+    # Review 2026-10-23 (answers): failed answers give the bear to someone else ('Anatole caught the bear',
+    # 'Prince Vasíli, who caught the bear'), make it 'not real', or decline part two while the terms stand
+    # in a quote ('information regarding what Pierre did ...', 'not identified as Pierre', 'do not name the
+    # "he" who ... as Pierre', 'the part of the
+    # question about what Pierre did ... cannot be answered'); the declines are marked to count inside a negation.
+    must_not_contain: ["Anatole lift the bear", "Anatole lifted the bear", "watched Anatole", "called Anatole a", "his son Anatole as a", "Anatole caught the bear", "Vasíli caught the bear", "Vasíli, who caught the bear", "was not real", "!information regarding what Pierre did", "not identified as Pierre", "!name the he who", "question about what Pierre did"]
     # Harness review 2026-10-03 (Opus 5.5 and Sonnet 5.5 on the v2 pack): the house 'in which Anatole lived' is in the text but not in every context (harness review)
-    caveats: ["at Anatole's"]
+    # Review 2026-10-23 (answers): no rung's context ties the scene to Anatole's house, and an answer's
+    # note about it is a caveat however it names the place ('the reference to "Anatole's" is not in the
+    # sources'), so the caveat is the name's possessive, not only 'at Anatole's'.
+    caveats: ["at Anatole's", "Anatole's"]
     gold_answer: |
       Pierre. At Anatole's he caught the bear, lifted it in his arms and
       began dancing round the room with it.
@@ -1228,7 +1316,13 @@ queries:
     # Verification 2026-10-03, round three (checked against the 5,358 real answers): Llama 3.1 8B: 'Borís is also his illegitimate child'.
     # Verification 2026-10-03, round four (301 changed real verdicts reviewed): the count is the second cousin of Anna Mikháylovna's mother, not of Anna Mikháylovna
     # Full pass 2026-10-03 (every real answer graded): bundle 05
-    must_not_contain: ["Borís is an illegitimate", "Borís is his illegitimate", "Borís is one of the count's illegitimate", "illegitimate son Borís", "Borís is the count's godfather", "Borís is his godfather", "also his illegitimate", "Borís is also his illegitimate", "second cousin of Borís's mother", "second cousin to Borís's mother", "Borís's mother, is the count's second cousin", "is the mother's second cousin", "another of Bezúkhov's children", "another child of Bezúkhov"]
+    # Review 2026-10-23 (answers): 'second cousin of Borís's mother' also matched the right 'second cousin of
+    # Borís's mother's mother'; it now ends with '|'. Failed answers make Anna Mikháylovna herself the count's
+    # second cousin ('Drubetskáya, who is a second cousin of', the graphrag graph lines' wrong join), or give
+    # the count's fondness for Pierre and care of his education to Borís ('very fond of Borís'). Not blocked:
+    # 'Borís is connected to Count ... Bezúkhov as his godfather' (failed by this review, passed by the 10-03
+    # reviews; the two reviews disagree on that wording).
+    must_not_contain: ["Borís is an illegitimate", "Borís is his illegitimate", "Borís is one of the count's illegitimate", "illegitimate son Borís", "Borís is the count's godfather", "Borís is his godfather", "also his illegitimate", "Borís is also his illegitimate", "second cousin of Borís's mother|", "second cousin to Borís's mother|", "Borís's mother, is the count's second cousin", "is the mother's second cousin", "another of Bezúkhov's children", "another child of Bezúkhov", "Drubetskáya, who is a second cousin", "Drubetskáya, is the second cousin", "Drubetskáya, Borís's mother, is the second cousin", "fond of Borís", "Borís's upbringing"]
     gold_answer: |
       The count is Borís's godfather; he is also a second cousin of Anna
       Mikháylovna's mother, which is why she hopes he will provide for his
@@ -1243,7 +1337,12 @@ queries:
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: the wrong go-between.
     # Audit 2026-10-06 wave 2 (the possessive matches again): 'through Prince Andrew' and 'through her brother' would fail the right 'through Prince Andrew's wife' and 'through her brother's wife'; the wrong statement is written whole.
     # Audit 2026-10-06 wave 3: the wave-2 forms of 'through Prince Andrew' and 'through her brother' (with ',', '.', '(', ';', 'and', ...) let a citation, a line break, a dash or the end of the answer through; written once with the no-possessive marker '|'.
-    must_not_contain: ["through Prince Andrew|", "through her brother|"]
+    # Review 2026-10-23 (answers): 'Lise' alone passed answers that bind her to the wrong husband or
+    # relation: Anatole's wife, the wife of Prince Vasíli's son, the wife of Prince Bolkónski's brother,
+    # Prince Bolkónski's daughter and Mary's sister (the graphrag graph lines' wrong edges); and answers
+    # that go through Prince Vasíli, deny the match is with Mary, open by declining it, or give young
+    # Bolkónski the old prince's name ('young Bolkónski (Prince Nikolai Bolkónski)', absent from every context).
+    must_not_contain: ["through Prince Andrew|", "through her brother|", "Anatole's wife", "Bolkónski (Anatole", "through Prince Vasíli", "wife of Prince Vasíli's son", "Prince Bolkónski's brother", "Lise Meinen is the child of", "both daughters of", "not Princess Mary", "!information regarding a marriage", "young Bolkónski (Prince Nikolai"]
     gold_answer: |
       Through Lise, young Bolkónski's wife and Mary's sister-in-law, whom
       she spoke to that evening and asked to write to Mary.
@@ -1259,7 +1358,14 @@ queries:
     # Verification 2026-10-03, round four (301 changed real verdicts reviewed): Llama 3.1 8B and Qwen2.5 14B gave the count's care and Borís's godfather to Vasíli
     # Full pass 2026-10-03 (every real answer graded): bundle 07
     # Audit 2026-10-06 (H12, scorer v6): phrases no longer extend to a possessive; 'looking after' / 'taking care of Pierre's education' are written out.
-    must_not_contain: ["nephew", "is Pierre's father", "Pierre is Vasíli's son", "Vasíli's son Pierre", "Vasíli's brother", "Pierre is his heir", "has been taking care of Pierre", "has been taking care of Pierre's", "Vasíli has also promised to educate", "Pierre's godfather", "vowing to", "and is very fond of Pierre, having looked after", "Vasíli has been staying with Pierre", "Vasíli has been looking after Pierre", "Vasíli has been looking after Pierre's"]
+    # Review 2026-10-23 (answers): 'is Pierre's father' failed the right 'the "count" here is Pierre's
+    # father'; the wrong statement is written whole ('Vasíli is Pierre's father'). Failed answers give the
+    # count's care of Pierre (C1/C3 S1) to Vasíli in more wordings ('Vasíli is very fond of Pierre', 'is
+    # described as very fond', 'is fond of him', 'looked after Pierre's education', 'involved in Pierre's
+    # upbringing'), have Vasíli promise to educate him (Anna Pávlovna promised to take him in hand), invert
+    # the tie (the graph's 'a connection of Prince Vasíli's father'), route it through Anna Pávlovna, or take
+    # Pierre for the vicomte ('addresses Pierre as "dear Vicomte"').
+    must_not_contain: ["nephew", "Vasíli is Pierre's father", "Kurágin is Pierre's father", "Pierre is Vasíli's son", "Vasíli's son Pierre", "Vasíli's brother", "Pierre is his heir", "has been taking care of Pierre", "has been taking care of Pierre's", "Vasíli has also promised to educate", "Pierre's godfather", "vowing to", "and is very fond of Pierre, having looked after", "Vasíli has been staying with Pierre", "Vasíli has been looking after Pierre", "Vasíli has been looking after Pierre's", "Vasíli is very fond of Pierre", "Vasíli is described as very fond", "Vasíli is fond of him", "Vasíli looked after Pierre's education", "involved in Pierre's upbringing", "overseeing Pierre's upbringing", "promised to help Pierre with his education", "promises to educate him", "promising to educate him", "connection of Prince Vasíli's father", "Vasíli through Anna Pávlovna", "Pierre as dear Vicomte"]
     gold_answer: |
       Pierre's father, Count Bezúkhov, is a connection of Prince Vasíli's;
       Pierre came to Petersburg with a letter to Prince Vasíli and has been
@@ -1273,7 +1379,10 @@ queries:
     gold_entities: ["Sónya", "Nicholas Rostóv", "Count Rostóv"]
     # Audit 2026-10-03 (six reviewers over the 21-model runs, scorer v5): bare 'niece' passed 'the niece of Nicholas', the wrong relation.
     # Verification 2026-10-03, round seven: Gemma 4 12B (naive): 'the count's fifteen-year-old niece' is the text's own phrase
-    answer_terms: [["cousin", "count's niece", "niece of the count", "the count's niece", "count's fifteen-year-old niece"]]
+    # Review 2026-10-23 (answers): the naive rung's only cousin wording is 'Cousinage' (footnote 'Cousinhood
+    # is a dangerous neighborhood'); an answer that names the relation as cousinhood answers ('as cousinhood',
+    # 'as Cousinage'), one that only mentions the word does not.
+    answer_terms: [["cousin", "count's niece", "niece of the count", "the count's niece", "count's fifteen-year-old niece", "as cousinhood", "as cousinage"]]
     # must_not_contain: the tempting wrong join for a girl in the household
     # Audit 2026-10-03 (six reviewers over the 21-model runs, scorer v5): 'sister' alone failed a correct answer that quoted 'her sister' from the text.
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): bare 'brother' failed a correct answer; the phrases keep the wrong join blocked.
@@ -1283,7 +1392,12 @@ queries:
     # Nicholas's father' (2026-10-06-p3-v3-qfirst-b-5090, Qwen3.5 9B); the wrong statement is written whole, as the
     # archived wrong answers made it ('the niece of Nicholas Rostóv', 'being the niece of Nicholas, indicating').
     # Audit 2026-10-06 wave 3: the wave-2 forms of 'niece of Nicholas' (and 'niece of Nicholas Rostóv') (with ',', '.', '(', ';', 'and', ...) let a citation, a line break, a dash or the end of the answer through; written once with the no-possessive marker '|'.
-    must_not_contain: ["his sister", "Nicholas's sister", "Nicholas’s sister", "his brother", "her brother", "Nicholas's niece", "niece of Nicholas|", "relation cannot be determined", "shared uncle"]
+    # Review 2026-10-23 (answers): the graphrag graph line 'Sónya: The niece and cousin to Nicholas' is itself
+    # the wrong join, and failed answers assert it ('the niece and cousin of Nicholas', 'the niece and cousin
+    # to Nicholas Rostóv', 'Nicholas Rostóv's niece'); a right answer that quotes the line ('describes Sónya as
+    # "the niece and cousin to Nicholas"') is not caught. 'Both are children of the count' makes them siblings;
+    # 'the countess (Anna Mikháylovna)' takes the wrong woman for Nicholas's mother.
+    must_not_contain: ["his sister", "Nicholas's sister", "Nicholas’s sister", "his brother", "her brother", "Nicholas's niece", "niece of Nicholas|", "relation cannot be determined", "shared uncle", "niece and cousin of Nicholas", "niece and cousin to Nicholas Rostóv", "Nicholas Rostóv's niece", "are children of the count", "countess (Anna Mikháylovna"]
     gold_answer: |
       She is his cousin: the count's fifteen-year-old niece.
 
@@ -1293,7 +1407,11 @@ queries:
     question: "What is the connection between the little princess and General Kutúzov?"
     gold_entities: ["Lise Bolkónskaya", "Kutúzov", "Prince Andrew"]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the names alone passed a reversed relation.
-    answer_terms: ["Andrew", ["aide-de-camp", "adjutant", "Uncle"], ["husband", "wife", "married"]]
+    # Review 2026-10-23 (answers): 'spouse' (the graph's spouse_of path) and 'through her marriage to' are the marriage too; correct graphrag answers failed on them.
+    answer_terms: ["Andrew", ["aide-de-camp", "adjutant", "Uncle"], ["husband", "wife", "married", "spouse", "marriage"]]
+    # Review 2026-10-23 (answers): the graph makes the little princess Mary's sibling and has 'Lise Meinen serves Kutúzov';
+    # failed answers made Andrew her brother or had her serve Kutúzov.
+    must_not_contain: ["through her brother", "she serves him", "princess serves"]
     gold_answer: |
       Her husband Prince Andrew is Kutúzov's aide-de-camp; she speaks of the
       general as "Uncle".
@@ -1324,7 +1442,8 @@ queries:
     # Audit 2026-10-03 (six reviewers over the 21-model runs, scorer v5): 'Emperor' is not what the question asks; ten complete answers failed on it.
     answer_terms: ["Vasíli", ["Mikháylovna", "Drubetskáya", "his mother", "Borís's mother"]]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: the asker and the channel swapped.
-    must_not_contain: ["at Prince Vasíli's request", "Vasíli asked for it"]
+    # Review 2026-10-23 (answers): the asker conflated with the hostess ('Princess Drubetskáya (Anna Pávlovna)') binds the asked role to the wrong person.
+    must_not_contain: ["at Prince Vasíli's request", "Vasíli asked for it", "Drubetskáya (Anna Pávlovna", "Anna Pávlovna Drubetskáya"]
     gold_answer: |
       Prince Vasíli mentioned the matter to the Emperor at the request of
       Borís's mother, Anna Mikháylovna, and an exception was made.
@@ -1334,9 +1453,11 @@ queries:
     kind: relationship_path
     question: "Why did Prince Vasíli feel he owed something to Anna Mikháylovna?"
     gold_entities: ["Prince Vasíli Kurágin", "Anna Mikháylovna Drubetskáya"]
-    answer_terms: ["father", ["first steps", "career", "indebted"]]
+    # Review 2026-10-23 (answers): the help her father gave him is the same debt ('the assistance her father had provided him').
+    answer_terms: ["father", ["first steps", "career", "indebted", "her father had provided", "her father had helped", "help her father", "assistance her father", "her father's help", "her father's assistance"]]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: the debt reversed.
-    must_not_contain: ["indebted to him", "indebted to Prince Vasíli"]
+    # Review 2026-10-23 (answers): the text never names her father; failed answers named him (Count Bezúkhov, Prince Bolkónski) or made him Vasíli's father-in-law.
+    must_not_contain: ["indebted to him", "indebted to Prince Vasíli", "her father, Count", "her father, Prince", "father-in-law"]
     gold_answer: |
       He had been indebted to her father for the first steps in his career,
       as she reminded him.
@@ -1348,12 +1469,14 @@ queries:
     gold_entities: ["Borís", "Rostóvs", "Anna Mikháylovna Drubetskáya"]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): a friendship answer for the second half is what the text supports too.
     # Full pass 2026-10-03 (every real answer graded): bundle 03
-    answer_terms: [["relations", "relatives", "relation", "related", "is a member of the Rostóv family", "as a member of the Rostóv family", "a member of that family", "a member of the Rostóvs"], ["educated", "brought up", "childhood", "lived for years", "friend"]]
+    # Review 2026-10-23 (answers): 'part of the family' (his mother, a member of the household) is the kinship as loosely as 'a member of that family'.
+    answer_terms: [["relations", "relatives", "relation", "related", "is a member of the Rostóv family", "as a member of the Rostóv family", "a member of that family", "a member of the Rostóvs", "part of the family"], ["educated", "brought up", "childhood", "lived for years", "friend"]]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: Borís as the Rostóvs' son.
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'Rostóvs' eldest son'; 'eldest son'; 'related to them by blood'.
     # Verification 2026-10-03, round three (checked against the 5,358 real answers): 'eldest son' occurred in correct answers about Nicholas; the Rostóvs are his mother's relations, not her siblings.
     # Full pass 2026-10-03 (every real answer graded): bundle 03
-    must_not_contain: ["is the Rostóvs' son", "Borís, the Rostóvs' son", "as the Rostóvs' son", "Rostóvs' son Borís", "count's son", "related to them by blood", "Borís is the Rostóvs' eldest", "Borís, the eldest", "Borís is the eldest", "count's sister", "countess's sister", "Borís's father", "through his godfather", "Bezúkhov, who is related", "not mention a formal familial tie"]
+    # Review 2026-10-23 (answers): the Rostóvs' son in other word orders, a godson, Natásha's sibling (a false graph edge), Véra as his sister, a cousin.
+    must_not_contain: ["son of the Rostóvs|", "as their son", "their godson", "sibling of Natásha", "his sister Véra", "him as a cousin", "is the Rostóvs' son", "Borís, the Rostóvs' son", "as the Rostóvs' son", "Rostóvs' son Borís", "count's son", "related to them by blood", "Borís is the Rostóvs' eldest", "Borís, the eldest", "Borís is the eldest", "count's sister", "countess's sister", "Borís's father", "through his godfather", "Bezúkhov, who is related", "not mention a formal familial tie"]
     gold_answer: |
       The Rostóvs are his mother's rich relations, with whom she stays in
       Moscow; Borís was educated in their house from childhood and lived
@@ -1369,11 +1492,13 @@ queries:
     # Hand check 2026-10-02 (Gemma 4 31B, v2 pack, all three rungs): the window bet at Anatole's is the same party and a correct connection; an answer giving it was failed for not naming the bear.
     # Verification 2026-10-03, round four (301 changed real verdicts reviewed): bare 'Anatole' passed 'connected through a gathering'; the link must be stated
     # Verification 2026-10-03, round six: naming Anatole as the host or organiser of the gathering identifies him as the link
-    answer_terms: [["through Anatole", "via Anatole", "through Prince Vasíli's son", "lives with Anatole", "lived with Anatole", "living with Anatole", "Anatole, who lives with", "Anatole Kurágin, who lives with", "friends of Anatole", "Anatole's friends", "Anatole's companions", "shares Anatole's", "hosted by Anatole", "Anatole's house", "Anatole's gathering", "Anatole's party", "at Anatole's", "Anatole orchestrating", "Anatole Kurágin orchestrating"], ["bear", "policeman", "Moyka", "bet", "window", "rum"]]
+    # Review 2026-10-23 (answers): Anatole's circle, a friend of both, Anatole as the host, sharing Anatole's dissipated life: the link in other words.
+    answer_terms: [["through Anatole", "via Anatole", "through Prince Vasíli's son", "lives with Anatole", "lived with Anatole", "living with Anatole", "Anatole, who lives with", "Anatole Kurágin, who lives with", "friends of Anatole", "Anatole's friends", "Anatole's companions", "shares Anatole's", "hosted by Anatole", "Anatole's house", "Anatole's gathering", "Anatole's party", "at Anatole's", "Anatole orchestrating", "Anatole Kurágin orchestrating", "Anatole's circle", "Anatole Kurágin's circle", "friend of both", "Anatole, the host", "dissipated life of Anatole", "dissipated lifestyle of Anatole"], ["bear", "policeman", "Moyka", "bet", "window", "rum"]]
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'are cousins'; 'Dólokhov's second'; 'introduced them'.
     # Verification 2026-10-03, round four (301 changed real verdicts reviewed): Qwen3.6 35B MoE invented the introduction
     # Scorer fix 2026-10-04 (sentence openers are not names): Qwen3.8 27B (hybrid) made the rum bet the scandal that degraded Dólokhov; it had failed only on its headings
-    must_not_contain: ["are cousins", "Dólokhov's second", "introduced them", "introduced by his father", "bet) that led to", "bet that led to"]
+    # Review 2026-10-23 (answers): Pierre holds no commission ('fellow officers'); the bettor with the Englishman is Dólokhov, not Anatole.
+    must_not_contain: ["are cousins", "Dólokhov's second", "introduced them", "introduced by his father", "bet) that led to", "bet that led to", "fellow officers", "Anatole is betting", "Anatole Kurágin is betting"]
     gold_answer: |
       Through Anatole Kurágin: Dólokhov lives with Anatole, Pierre shares
       Anatole's dissipated life, and the three were together in the bear
@@ -1389,7 +1514,8 @@ queries:
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'and Borís'; 'Anatole and Borís'.
     # Verification 2026-10-03, round five (301 changed real verdicts reviewed): Qwen3.5 27B (hybrid) left Anatole out
     # Full pass 2026-10-03 (every real answer graded): bundle 05
-    must_not_contain: ["and Borís", "Anatole and Borís", "not explicitly label Anatole", "exclude Anatole", "Borís, his son", "Borís, who is listed in the knowledge graph", "Vasíli Kurágin as Borís's parent"]
+    # Review 2026-10-23 (answers): failed answers named both sons only to give them to another prince ('the only child ... is Hélène', 'a different prince', 'Prince Andrew's younger son').
+    must_not_contain: ["and Borís", "Anatole and Borís", "not explicitly label Anatole", "exclude Anatole", "Borís, his son", "Borís, who is listed in the knowledge graph", "Vasíli Kurágin as Borís's parent", "the only child", "different prince", "Andrew's younger son"]
     gold_answer: |
       Three: his daughter Hélène and his sons Hippolyte and Anatole.
 
@@ -1420,7 +1546,13 @@ queries:
     # Verification 2026-10-03, round four (301 changed real verdicts reviewed): DeepSeek-R1, GPT-OSS and Qwen3 8B answered Pierre or nobody
     # Full pass 2026-10-03 (every real answer graded): bundle 07
     # Harness review 2026-10-03 (Opus 5.5 and Sonnet 5.5 on the v2 pack): Sonnet 5.5 declined the soirée half (harness review)
-    must_not_contain: ["Prince Vasíli and Pierre", "Pierre also", "Prince Vasíli also", "and Pierre attend", "Drubetskáya) or exclusively in Moscow", "no person appears at both", "ties him to the Rostóvs' name day", "her presence is implied", "would be an inference"]
+    # Review 2026-10-23 (answers): the hostess put at the name day beside Anna Mikháylovna; 'none' answers worded outside 'no person appears at both'.
+    must_not_contain: ["Prince Vasíli and Pierre", "Pierre also", "Prince Vasíli also", "and Pierre attend", "Drubetskáya) or exclusively in Moscow", "no person appears at both", "ties him to the Rostóvs' name day", "her presence is implied", "would be an inference", "Anna Pávlovna appears at both", "Anna Pávlovna and Princess Anna Mikháylovna", "Anna Pávlovna and Anna Mikháylovna", "No person is", "No name appears in both", "None of the people"]
+    # Review 2026-10-23 (answers): lists that put Prince Vasíli Kurágin, Sónya or Véra beside Anna Mikháylovna at both events fail; holders are the
+    # two gatherings, so a clause about one of them ('Prince Vasíli Kurágin interacts with her regarding the soirée') lists nothing. Bare 'Vasíli',
+    # 'Borís', 'Nicholas' and 'Pierre' stand beside her in correct answers that tell what she did there (her appeal for Borís), so they are not members.
+    wrong_members: ["Vasíli Kurágin", "Sónya", "Véra"]
+    holders: [["soiree", "reception", "Petersburg"], ["name day", "Moscow", "Rostóvs"]]
     gold_answer: |
       Only Anna Mikháylovna Drubetskáya: the careworn elderly lady beside the
       aunt at the soirée, and the countess's childhood friend receiving
@@ -1436,7 +1568,8 @@ queries:
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'Pétya, who is going'; 'little Pétya, who'.
     # Full pass 2026-10-03 (every real answer graded): bundle 08
     # Scorer fix 2026-10-04 (sentence openers are not names): Qwen3.5 9B (v5) gave Nicholas only as the undergraduate, in contrast; it had failed only on 'Described'. Roles were tried and failed 30 reviewed correct answers ('Nicholas, the undergraduate, ...')
-    must_not_contain: ["Nicholas is already", "Borís is leaving the university", "Borís is joining the hussars", "Pétya, who is going", "little Pétya, who", "young Bolkónski", "undergraduate but also an officer", "officer and is leaving the university", "officer, and he is leaving the university", "while Nicholas is identified as an undergraduate", "In contrast, Nicholas is described as"]
+    # Review 2026-10-23 (answers): 'little Pétya, who' dropped: it fired on the right exclusion 'Sónya and little Pétya, who were not officers'; 'Pétya, who is going' still blocks Pétya as a member. 'officer and is joining the hussars' blocks the count's two sentences merged onto Borís (the graphrag entity line seeds it), the role swap 'Borís is joining the hussars' misses.
+    must_not_contain: ["Nicholas is already", "Borís is leaving the university", "Borís is joining the hussars", "Pétya, who is going", "young Bolkónski", "officer and is joining the hussars", "undergraduate but also an officer", "officer and is leaving the university", "officer, and he is leaving the university", "while Nicholas is identified as an undergraduate", "In contrast, Nicholas is described as"]
     gold_answer: |
       Borís, already an officer of the Guards, and Nicholas, who is leaving
       the university to join the hussars.
@@ -1447,7 +1580,8 @@ queries:
     question: "Which men in the text are going to the war, and in what capacity each?"
     gold_entities: ["Prince Andrew", "Nicholas Rostóv", "Borís"]
     # Audit 2026-10-03 (six reviewers over the 21-model runs, scorer v5): the question asks 'in what capacity'; the terms were names only, so swapped capacities passed.
-    answer_terms: ["Andrew", "Nicholas", "Borís", ["aide-de-camp", "adjutant"], ["hussar", "cornet"], ["Guards", "officer"]]
+    # Review 2026-10-23 (answers): 'cornet' moved from Nicholas's group to Borís's: it is Borís's rank (Semënov Guards), never Nicholas's. No rung's context holds it, so no verdict moves.
+    answer_terms: ["Andrew", "Nicholas", "Borís", ["aide-de-camp", "adjutant"], "hussar", ["Guards", "officer", "cornet"]]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: the capacities swapped (partial; a clause-level role check is the real fix).
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'Pierre in the Horse'; 'and Pierre'.
     # Full pass 2026-10-03 (every real answer graded): bundle 09
@@ -1468,7 +1602,8 @@ queries:
     gold_entities: ["Anatole Kurágin", "Pierre", "Dólokhov"]
     # Audit 2026-10-03 (six reviewers over the 21-model runs, scorer v5): the gossip's own words are 'Prince Vasíli's son'; seven correct answers failed.
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): bare 'Bezúkhov' also fit the father.
-    answer_terms: [["Anatole", "Vasíli's son", "Prince Vasíli's son"], ["Pierre", "Bezúkhov's son"], "Dólokhov"]
+    # Review 2026-10-23 (answers): the naive context's own form 'Cyril Vladímirovich Bezúkhov's son' is also written 'the son of Count (Cyril Vladímirovich) Bezúkhov'; both name Pierre as the gossip does.
+    answer_terms: [["Anatole", "Vasíli's son", "Prince Vasíli's son"], ["Pierre", "Bezúkhov's son", "son of Count Bezúkhov", "son of Count Cyril Vladímirovich Bezúkhov"], "Dólokhov"]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: Hippolyte as Vasíli's son in the affair.
     # Verification 2026-10-03, round five (301 changed real verdicts reviewed): Qwen3.5 27B (hybrid) declined
     must_not_contain: ["Hippolyte", "does not explicitly link them"]
@@ -1485,7 +1620,8 @@ queries:
     # Full pass 2026-10-03 (every real answer graded): bundle 01
     # Audit 2026-10-06 wave 2 (the possessive matches again): 'by Prince Andrew' would fail the right 'by Prince Andrew's wife' (Lise calls her Annette); the archived wrong forms go on with ',', 'and', 'in', 'to', 'is'; the wrong statement is written whole.
     # Audit 2026-10-06 wave 3: the wave-2 forms of 'by Prince Andrew' (with ',', '.', '(', ';', 'and', ...) let a citation, a line break, a dash or the end of the answer through; written once with the no-possessive marker '|'.
-    must_not_contain: ["by Prince Andrew|", "also identified as Anna Mikháylovna"]
+    # Review 2026-10-23 (answers): the two women merged into one ('Anna Mikháylovna (also referred to as Anna Pávlovna)' and the reverse) and Lise made an Annette (C2 S2 is Lise addressing Anna Pávlovna) passed on the names alone.
+    must_not_contain: ["by Prince Andrew|", "also identified as Anna Mikháylovna", "also referred to as Anna Mikháylovna", "also referred to as Anna Pávlovna", "Lise is also called Annette", "Lise is called Annette"]
     gold_answer: |
       Anna Pávlovna Schérer, who signs her invitations "Annette" and is called
       so by Prince Vasíli and Lise; and Anna Mikháylovna, whom the Countess
@@ -1499,7 +1635,9 @@ queries:
     answer_terms: ["Pávlovna", "Hélène"]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: the little princess as a maid of honor.
     # Full pass 2026-10-03 (every real answer graded): bundle 02
-    must_not_contain: ["little princess", "is the character described as a maid of honor", "is the only character described as a maid of honor"]
+    # Review 2026-10-23 (answers): bare 'little princess' failed right two-name answers that quote or mention her in passing (C2 S2's 'little Princess Bolkónskaya'; the little princess glancing at the maid of honor); Lise as a member is now a wrong member of the set, and the little princess named in it ('and the little princess are/were maids of honor', 'and the little princess, both maids of honor') a trap: as a wrong member she failed a right answer that cites the context's 'little Princess Bolkónskaya' in the same sentence. The 'only character' traps take the singular claim in any word order ('the only character explicitly described as a maid of honor is Hélène'); the plural 'only characters' of right answers is not matched.
+    must_not_contain: ["is the character described as a maid of honor", "only character described as a maid of honor", "only character explicitly described as a maid of honor", "only character identified as a maid of honor", "only character explicitly identified as a maid of honor", "and the little princess are maids", "and the little princess were maids", "and the little princess, both maids"]
+    wrong_members: ["Lise"]
     gold_answer: |
       Anna Pávlovna Schérer, maid of honor and favorite of the Empress, and
       Hélène, who wore her badge as maid of honor to the soirée.
@@ -1513,7 +1651,8 @@ queries:
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the gold named Enghien, Mademoiselle George and Moscow, none of which is in the retrieved context, so the gold itself failed the names check.
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'Hippolyte told the vicomte's'; 'vicomte translated'.
     # Full pass 2026-10-03 (every real answer graded): bundle 03
-    must_not_contain: ["Hippolyte told the vicomte's", "vicomte translated", "The guest who entertained the soirée with a story was Prince Hippolyte"]
+    # Review 2026-10-23 (answers): the terms passed answers that name the vicomte only to exclude him as a teller or merge him into Hippolyte. Blocked: Hippolyte as the one teller ('Hippolyte is the guest who ...', 'only Prince Hippolyte is'), the vicomte denied ('not the storyteller', 'not clear if/whether the vicomte'), his story said to be cut off ('interrupted by Prince Hippolyte', 'not fully delivered'; C9 S6 has it told), and the merge ('also referred to as the vicomte').
+    must_not_contain: ["Hippolyte told the vicomte's", "vicomte translated", "The guest who entertained the soirée with a story was Prince Hippolyte", "Hippolyte is the guest", "only Prince Hippolyte is", "not the storyteller", "not clear if the vicomte", "not clear whether the vicomte", "interrupted by Prince Hippolyte", "not fully delivered", "also referred to as the vicomte"]
     gold_answer: |
       The vicomte de Mortemart and Prince Hippolyte.
   - id: q118
@@ -1538,7 +1677,10 @@ queries:
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: the two Annas swapped (a conflation 'Anna Pávlovna is both' still passes: term scoring has no roles).
     # Verification 2026-10-03, round two (the wrong answers that still passed): blocks 'Pávlovna is both'; 'is both: the hostess'.
     # Full pass 2026-10-03 (every real answer graded): bundle 05
-    must_not_contain: ["Mikháylovna is the Petersburg hostess", "Pávlovna is Borís's mother", "Anna Pávlovna, Borís's mother", "Pávlovna is Borís", "Pávlovna is both", "is both: the hostess", "but she is not his mother"]
+    # Review 2026-10-23 (answers): the conflation worded as one Anna that 'fulfills both roles' / 'fills both roles',
+    # and the countess relabelled 'the countess (Anna Pávlovna)' / 'the countess, Anna Pávlovna' (the hostess merged
+    # with Countess Rostóva), fail.
+    must_not_contain: ["Mikháylovna is the Petersburg hostess", "Pávlovna is Borís's mother", "Anna Pávlovna, Borís's mother", "Pávlovna is Borís", "Pávlovna is both", "is both: the hostess", "but she is not his mother", "fulfills both roles", "fills both roles", "countess (Anna Pávlovna", "countess, Anna Pávlovna"]
     gold_answer: |
       Anna Pávlovna Schérer is the hostess of the July soirée; Anna
       Mikháylovna Drubetskáya is Borís's mother.
@@ -1564,12 +1706,16 @@ queries:
     # Hand check 2026-10-02 (Gemma 4 31B, v2 pack, all three rungs): 'the prince who had to retire under the late Emperor' is the old prince, in the text's own words; that identification was failed.
     # Audit 2026-10-03 (six reviewers over the 21-model runs, scorer v5): 'retire' is matched as a whole word, so 'retired' missed; the son is 'young Bolkónski' in the text (as q029).
     # Full pass 2026-10-03 (every real answer graded): the text: 'She has a brother' (bundle 07)
-    answer_terms: [["father", "old prince", "Mary's father", "the elder", "retire", "retired", "late Emperor"], ["Andrew", "Andréy", "young Bolkónski", "younger Prince Bolkónski", "Mary's brother"]]
+    # Review 2026-10-23 (answers): the son named as the context's own 'André' ("'André,' said his wife") or only as
+    # 'his son' (the aide-de-camp of Kutúzov's) is a right identification; both accepted.
+    answer_terms: [["father", "old prince", "Mary's father", "the elder", "retire", "retired", "late Emperor"], ["Andrew", "Andréy", "André", "young Bolkónski", "younger Prince Bolkónski", "Mary's brother", "his son"]]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: the father and son swapped (the graph's own mix-up).
     # Full pass 2026-10-03 (every real answer graded): bundle 07
     # Scorer v7 (2026-10-08): the wrong decline 'does not contain information identifying which ...' is the
     # negation itself, which would now exempt the phrase; marked '!' so it is stated wherever it stands.
-    must_not_contain: ["Andrew is nicknamed", "Andrew is the King", "Andrew, nicknamed", "young Bolkónski, who retired", "father is going to the war", "His brother, Prince Andrew", "!information identifying which Prince Bolkónski is going to the war", "going to the war is not explicitly named"]
+    # Review 2026-10-23 (answers): failed answers that merge the two princes ('the same person who is going to the
+    # war') or give the princess a wrong husband going to the war ('husband, Prince Vasíli').
+    must_not_contain: ["same person who is going to the war", "husband, Prince Vasíli", "Andrew is nicknamed", "Andrew is the King", "Andrew, nicknamed", "young Bolkónski, who retired", "father is going to the war", "His brother, Prince Andrew", "!information identifying which Prince Bolkónski is going to the war", "going to the war is not explicitly named"]
     gold_answer: |
       The old prince, Princess Mary's father who retired from the army under
       the late Emperor, is "the King of Prussia"; his son Prince Andrew is
@@ -1586,7 +1732,14 @@ queries:
     # Verification 2026-10-03, round seven: Qwen3 8B (naive) gave the wife's description to the sister
     # Full pass 2026-10-03 (every real answer graded): bundle 08
     # Harness review 2026-10-03 (Opus 5.5 and Sonnet 5.5 on the v2 pack): Sonnet 5.5 married Lise to Andrew's brother (harness review)
-    must_not_contain: ["Mary is his wife", "Lise is his sister", "Mary, his wife", "is likely his sister", "married to his brother", "who married Lise Meinen) is his wife", "does not explicitly state that Princess Mary is", "Lise Meinen, not a princess", "Andrew's brother"]
+    # Review 2026-10-23 (answers): more failed answers. The sister declined in other words (the '!' forms are stated
+    # inside the answer's own 'does not'): 'does not (explicitly) state which Princess Bolkónskaya is his sister',
+    # '... that she is his sister', '... Princess Mary Bolkónskaya's relationship', 'not explicitly identified',
+    # 'does not identify a sister of Prince Andrew'. The wife given to the wrong woman ('wife is Princess Mary', 'wife
+    # is Anna Pávlovna'). The graphrag graph's false child_of edge retold: 'both women are daughters' of the old
+    # prince, 'the wife is the daughter of' him ('daughter-in-law' is not matched). Mary as 'sister of Lise' (the
+    # false sibling_of edge) is left alone: the review passed answers that repeat it beside the right pair.
+    must_not_contain: ["Mary is his wife", "Lise is his sister", "Mary, his wife", "is likely his sister", "married to his brother", "who married Lise Meinen) is his wife", "does not explicitly state that Princess Mary is", "Lise Meinen, not a princess", "Andrew's brother", "!state which Princess Bolkónskaya is", "!state that she is his sister", "!state she is his sister", "!explicitly state Princess Mary Bolkónskaya's relationship", "not explicitly identified", "!identify a sister of Prince Andrew", "wife is Princess Mary", "wife is Anna Pávlovna", "both women are daughters", "both daughters of", "wife is the daughter of"]
     gold_answer: |
       Lise, the little princess, is his wife; Mary is his sister, who lives
       in the country with their father.
@@ -1601,7 +1754,10 @@ queries:
     # Audit 2026-10-03 (six reviewers over the 21-model runs, scorer v5): GLM4 9B passed with the masculine patronymics.
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: the three Máryas' patronymics permuted.
     # Verification 2026-10-03, round four (301 changed real verdicts reviewed): Qwen2.5 14B invented 'her father's name was Lvó'
-    must_not_contain: ["Fëdorovich", "Ivánovich", "Lvóvich", "Empress Márya Ivánovna", "Empress Márya Lvóvna", "Empress is Márya Ivánovna", "name was Lvó"]
+    # Review 2026-10-23 (answers): a part declined while the full name (which meets the term) stands beside it: 'no
+    # patronymic given', 'does not provide a patronymic' ('!': stated inside the answer's own negation), 'patronymic is
+    # not given / stated / in the sources'.
+    must_not_contain: ["Fëdorovich", "Ivánovich", "Lvóvich", "Empress Márya Ivánovna", "Empress Márya Lvóvna", "Empress is Márya Ivánovna", "name was Lvó", "no patronymic given", "!provide a patronymic", "patronymic is not given", "patronymic is not stated", "patronymic is not in the sources"]
     gold_answer: |
       The Empress is Márya Fëdorovna, Dólokhov's mother is Márya Ivánovna
       Dólokhova, and the visitor is Márya Lvóvna Karágina.
@@ -1614,7 +1770,14 @@ queries:
     answer_terms: ["Anatole", "Hippolyte"]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: the brothers swapped.
     # Harness review 2026-10-03 (Opus 5.5 and Sonnet 5.5 on the v2 pack): Opus 5.5 hedged the host and declined the coat of arms (harness review)
-    must_not_contain: ["Hippolyte hosted", "Anatole traced", "Anatole, who traced", "Hippolyte, who hosted", "seems to have been hosted", "Nothing in the sources says who traced"]
+    # Review 2026-10-23 (answers): failed answers that give the tracing to Pierre ('Pierre traced', 'Pierre Kurágin'),
+    # give the host only as a guess ('likely Anatole'), or deny the asked relation ('not a Kurágin brother': the
+    # graph + vector context is silent on it, it does not deny it).
+    must_not_contain: ["Hippolyte hosted", "Anatole traced", "Anatole, who traced", "Hippolyte, who hosted", "seems to have been hosted", "Nothing in the sources says who traced", "Pierre traced", "Pierre Kurágin", "likely Anatole", "not a Kurágin brother"]
+    # Review 2026-10-23 (answers): the graph + vector context never calls Hippolyte a Kurágin, so a closing note that
+    # the sources do not say he is one is an honest caveat, not a decline (a decline of which brother traced it does
+    # not contain 'is a Kurágin').
+    caveats: ["is a Kurágin"]
     # Review 2026-10-04 (pinned Opus 5.5 and Sonnet 5.5): both declined the coat of arms but named Hippolyte as arriving with Mortemart, which met the term; the context lacked the passage. The evidence pins the fact's own sentence; checked against every reviewed answer, it flips only those two.
     evidence: ["tracing the Condé coat of arms"]
     gold_answer: |
@@ -1628,12 +1791,19 @@ queries:
     gold_entities: ["Count Bezúkhov", "Count Rostóv"]
     # Audit 2026-10-03 (six reviewers over the 21-model runs, scorer v5): 'Count Rostóv' never appears in any context; three correct answers named him through the countess.
     # Full pass 2026-10-03 (every real answer graded): the text's own phrasing (bundle 01)
-    answer_terms: ["Bezúkhov", ["Rostóv", "Ilyá", "husband of Countess Rostóva", "Countess Rostóva's husband", "husband of the Countess Rostóva", "Countess Rostóva's house"]]
+    # Review 2026-10-23 (answers): 'husband of the countess' (the graphrag entity line's own wording for the host) and
+    # 'Countess Rostóva's big house' (the text's) accepted for the host. Open: the naive context never says 'Bezúkhov',
+    # only (Count) Cyril Vladímirovich, so the 19 right naive answers fail; accepting that name would also pass a naive
+    # answer that names the host 'Ilya', which the naive context lacks (the names check accepts a made-up first name
+    # beside a supported surname), so it waits for that scorer rule.
+    answer_terms: ["Bezúkhov", ["Rostóv", "Ilyá", "husband of Countess Rostóva", "Countess Rostóva's husband", "husband of the Countess Rostóva", "husband of the countess", "Countess Rostóva's house", "Countess Rostóva's big house"]]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: the two counts swapped.
     # Verification 2026-10-03, round five (301 changed real verdicts reviewed): GPT-OSS 20B gave the dinner to the countess and never named the count
     # Audit 2026-10-06 wave 2 (the possessive matches again): 'hosted by Countess Rostóva' would fail 'hosted by Countess Rostóva's husband', which answer_terms accept; the wrong statement is written whole.
     # Audit 2026-10-06 wave 3: the wave-2 forms of 'hosted by Countess Rostóva' (with ',', '.', '(', ';', 'and', ...) let a citation, a line break, a dash or the end of the answer through; written once with the no-possessive marker '|'.
-    must_not_contain: ["Rostóv is dying", "Rostóv lies dying", "Bezúkhov gives", "Bezúkhov is giving", "hosted by Countess Rostóva|"]
+    # Review 2026-10-23 (answers): the swap written with the naive rung's name for the dying count is blocked too, and
+    # an invented patronymic for the host ('Ilyich': in no context and not in the text) fails.
+    must_not_contain: ["Rostóv is dying", "Rostóv lies dying", "Bezúkhov gives", "Bezúkhov is giving", "hosted by Countess Rostóva|", "Vladímirovich gives", "Vladímirovich is giving", "Ilyich"]
     gold_answer: |
       Count Cyril Vladímirovich Bezúkhov is dying; Count Ilyá Rostóv is
       giving the dinner for his wife's and daughter's name day.
@@ -1674,10 +1844,15 @@ queries:
     question: "Which 'prince' was the first to arrive at Anna Pávlovna's, and which 'prince' arrived later as the little princess's husband?"
     gold_entities: ["Prince Vasíli Kurágin", "Prince Andrew"]
     # Audit 2026-10-03 (six reviewers over the 21-model runs, scorer v5): the naive context names him only as 'young Bolkónski'.
+    # Review 2026-10-23 (answers): that note is stale for the 10-20 board's naive context, which names Prince Andrew
+    # (in the hall, listening to his wife's chatter); 'young Bolkónski' stays for other graphs.
     answer_terms: ["Vasíli", ["Andrew", "young Bolkónski"]]
     # Verification 2026-10-03 (adversarial answer probes, scored with the real checks): the wrong answer this blocks: the two princes swapped.
     # Verification 2026-10-03, round five (301 changed real verdicts reviewed): Qwen3.6 35B and Qwen3.8 27B (naive) declined or denied the arrival
-    must_not_contain: ["Andrew arrived first", "Hippolyte arrived first", "son, arrived first", "Vasíli came later", "Vasíli, the little princess", "does not specify who arrived first", "had not arrived"]
+    # Review 2026-10-23 (answers): 'Andrew' is met by a quote of the hall scene, so failed answers that make Hippolyte
+    # the husband ('Hippolyte arrived later', 'husband is Prince Hippolyte', 'Hippolyte is the husband') or the little
+    # princess Hélène ('little princess (Hélène', 'little princess, Hélène') are blocked.
+    must_not_contain: ["Andrew arrived first", "Hippolyte arrived first", "son, arrived first", "Vasíli came later", "Vasíli, the little princess", "does not specify who arrived first", "had not arrived", "Hippolyte arrived later", "husband is Prince Hippolyte", "Hippolyte is the husband", "little princess (Hélène", "little princess, Hélène"]
     gold_answer: |
       Prince Vasíli Kurágin arrived first; Prince Andrew Bolkónski, the
       little princess's husband, came in later.

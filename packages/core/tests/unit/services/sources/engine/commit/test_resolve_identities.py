@@ -16,6 +16,7 @@ import pytest
 from sqlmodel import SQLModel
 from structlog.testing import capture_logs
 
+from chaoscypher_core.adapters.embedding import factory
 from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
 from chaoscypher_core.adapters.sqlite.engine import get_engine
 from chaoscypher_core.adapters.sqlite.repos.graph.sqlite_repository import GraphRepository
@@ -278,3 +279,55 @@ async def test_the_pass_keeps_to_the_committed_nodes_and_their_namesakes(tmp_pat
         assert repo.get_node("andrew-short") is not None
     finally:
         adapter.disconnect()
+
+
+def _raise(*_args: Any, **_kwargs: Any) -> Any:
+    raise AssertionError("an embedding provider was built behind the vector switch")
+
+
+@pytest.mark.asyncio
+async def test_the_pass_with_no_provider_reindexes_the_kept_node_for_keywords(
+    repo: GraphRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(factory, "create_embedding_provider", _raise)
+    service = _service(repo, None)
+    service.settings.search.enable_vector_search = False
+    with capture_logs() as logs:
+        await service._resolve_identities("file-1")
+    assert repo.get_node("mlle") is None
+    (batch,), _ = service.search_repository.index_nodes_batch.call_args  # type: ignore[attr-defined]
+    assert [n.id for n in batch] == ["anna"]
+    assert "Mlle Schérer" in batch[0].properties["aliases"]
+    assert not [e for e in logs if e["event"] == "identity_resolution_reembed_failed_non_fatal"]
+    assert [e for e in logs if e["event"] == "nodes_reindexed_for_keywords_only"]
+
+
+@pytest.mark.asyncio
+async def test_a_commit_service_with_vectors_off_builds_no_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(factory, "create_embedding_provider", _raise)
+    settings = EngineSettings()
+    settings.search.enable_vector_search = False
+    graph = MagicMock()
+    search = MagicMock()
+    search.has_pending_reindex = True
+    service = SourceCommitService(
+        graph_repository=graph,
+        source_repository=MagicMock(),
+        sources_repository=MagicMock(),
+        indexing_repository=MagicMock(),
+        search_repository=search,
+        settings=settings,
+        embedding_provider=None,
+    )
+    assert service._get_embedding_provider() is None
+    with capture_logs() as logs:
+        await service._embed_created_templates(["t1"])
+        await service._flush_pending_reindex()
+    graph.get_template.assert_not_called()
+    search.index_template.assert_not_called()
+    search.flush_reindex_with_service.assert_not_called()
+    events = [e["event"] for e in logs]
+    assert "commit_template_embedding_skipped_keyword_only" in events
+    assert "reindex_flush_skipped_keyword_only" in events

@@ -8,12 +8,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from chaoscypher_core.adapters.sqlite.mixins import source_recovery_events
+
 
 def test_list_recovery_events_uses_load_only() -> None:
     """Source contains a load_only(...) call in list_recovery_events."""
-    src = Path(
-        "packages/core/src/chaoscypher_core/adapters/sqlite/mixins/source_recovery_events.py"
-    ).read_text(encoding="utf-8")
+    src = Path(source_recovery_events.__file__).read_text(encoding="utf-8")
 
     # Find the list_recovery_events function body.
     match = re.search(

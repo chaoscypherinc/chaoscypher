@@ -5,8 +5,9 @@
  * PropertiesPanel: Slide-in drawer for graph node/edge properties.
  *
  * Orchestrates sub-components for node editing, edge display, source
- * group properties, and provenance. Uses useNodePropertyState for
- * local editing state and useConfirmDialog for delete confirmations.
+ * group properties, the read-only Unresolved hub, and provenance. Uses
+ * useNodePropertyState for local editing state and useConfirmDialog for
+ * delete confirmations.
  */
 
 import React, { useState } from 'react';
@@ -18,7 +19,8 @@ import { hexToRgba } from '../../../theme/cardStyles';
 import { ChaosCypherBackground } from '../../../theme/palette';
 import { Overlays } from '../../../theme/overlays';
 import type { GraphNodeData, GraphEdgeData, NodeAttributes, EdgeAttributes } from '../types';
-import { isSourceGroupNode } from '../types';
+import { isSourceGroupNode, isUnresolvedBucketNode } from '../types';
+import { unresolvedBucketLabel } from '../utils/unresolvedBucket';
 import type { SourceGroupState } from '../hooks/useSourceGroups';
 import { useNodePropertyState } from '../hooks/useNodePropertyState';
 import NodePropertiesForm from './NodePropertiesForm';
@@ -45,6 +47,8 @@ interface PropertiesPanelProps {
   onSelectNode?: (nodeId: string) => void;
   /** The graphology graph instance for reading connections. */
   graph?: Graph<NodeAttributes, EdgeAttributes>;
+  /** How many nodes the selected Unresolved hub holds. */
+  unresolvedCount?: number;
 }
 
 const PANEL_WIDTH = 400;
@@ -64,6 +68,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onNavigate,
   onSelectNode,
   graph,
+  unresolvedCount = 0,
 }) => {
   const nodeState = useNodePropertyState(selectedNodeData);
   const [confirmDeleteNode, setConfirmDeleteNode] = useState(false);
@@ -95,6 +100,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   };
 
   const isSourceGroup = selectedNodeId != null && isSourceGroupNode(selectedNodeId);
+  const isUnresolvedHub = selectedNodeId != null && isUnresolvedBucketNode(selectedNodeId);
 
   return (
     <Drawer
@@ -135,7 +141,18 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               onNavigate={onNavigate}
             />
           )}
-          {selectedNodeData && !isSourceGroup && (
+          {isUnresolvedHub && (
+            <>
+              <Typography variant="h6" gutterBottom>
+                {unresolvedBucketLabel(unresolvedCount)}
+              </Typography>
+              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                Nodes the import kept but is unsure about. Double-click it to show or hide
+                them; select one to see why.
+              </Typography>
+            </>
+          )}
+          {selectedNodeData && !isSourceGroup && !isUnresolvedHub && (
             <NodePropertiesForm
               selectedNodeId={selectedNodeId}
               selectedNodeData={selectedNodeData}

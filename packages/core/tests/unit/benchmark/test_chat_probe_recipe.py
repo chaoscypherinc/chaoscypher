@@ -40,6 +40,11 @@ RECIPE_BY_VERSION: dict[int, str] = {
     # 'No.', acronyms and keys, English openers, hyphen compounds) and no_wrong_members;
     # samples s52-s61
     8: "17fd2b9d6f27",
+    # v9 (2026-10-23): the Book One answer review's rules (hyphenated phrase terms, an
+    # out-of-scope candidate or concluded answer, the 'Entity' label and English openers, a
+    # wrong fact inside a quotation of the context, Russian given names, absent alias
+    # evidence and a name grounded only by a description); samples s62-s69
+    9: "6bc7008da866",
 }
 """The verdict recipe each scorer version produced; a new version adds its line, old ones stay."""
 
@@ -105,6 +110,14 @@ GOLDEN: dict[str, tuple[bool, list[str], str | None]] = {
     "s59_a_hyphenated_compound": (True, [], "uncited"),
     "s60_a_wrong_member_beside_the_gold": (False, ["no_wrong_members"], "uncited"),
     "s61_a_holder_s_own_list": (True, [], "uncited"),
+    "s62_a_phrase_term_with_hyphens": (True, [], "uncited"),
+    "s63_out_of_scope_offers_a_candidate": (False, ["declines_when_unsupported"], None),
+    "s64_out_of_scope_concludes_an_answer": (False, ["declines_when_unsupported"], None),
+    "s65_the_entity_label_and_english_openers": (True, [], "uncited"),
+    "s66_a_wrong_fact_inside_a_quotation_of_the_context": (True, [], "uncited"),
+    "s67_the_russian_form_of_a_given_name": (True, [], "uncited"),
+    "s68_a_description_where_the_context_names_no_one": (True, [], "uncited"),
+    "s69_a_name_from_memory_grounded_by_a_description": (False, ["answers_from_graph"], "uncited"),
 }
 
 

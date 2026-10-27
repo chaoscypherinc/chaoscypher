@@ -31,10 +31,8 @@ embedding failure degrades and re-raises for a queue retry.
 
 from __future__ import annotations
 
-import base64
 from typing import Any
 
-import numpy as np
 import structlog
 
 from chaoscypher_core.app_config import get_settings
@@ -44,6 +42,7 @@ from chaoscypher_core.services.quality.counters import (
     mark_search_indexing_degraded,
     mark_search_indexing_indexed,
 )
+from chaoscypher_core.services.search.engine.index import index_source_chunk_vectors
 from chaoscypher_core.services.sources.engine.deduplication.embedding_generator import (
     node_embedding_text,
 )
@@ -142,9 +141,13 @@ async def handle_index_imported_source(
 
     # 2. Re-embed unembedded chunks (the LLM-bound step). On failure, degrade +
     #    re-raise so the queue retries (embedded_at is the resume checkpoint).
+    #    With no provider (vector search off) the chunks stay without vectors
+    #    for ``rebuild-search --embed-missing``.
     try:
-        unembedded = adapter.list_unembedded_chunks(
-            source_id=source_id, database_name=database_name
+        unembedded = (
+            adapter.list_unembedded_chunks(source_id=source_id, database_name=database_name)
+            if provider is not None
+            else []
         )
         embedded_count = (
             await indexing_service.embed_chunks(
@@ -174,7 +177,12 @@ async def handle_index_imported_source(
         else []
     )
     try:
-        chunks_indexed = _index_chunk_vectors(adapter, search_repository, source_id)
+        chunks_indexed = index_source_chunk_vectors(
+            adapter,
+            search_repository,
+            source_id,
+            page_size=get_settings().batching.chunk_fetch_limit,
+        )
     except Exception:
         logger.warning(
             "index_imported_source_chunk_vectors_failed", source_id=source_id, exc_info=True
@@ -196,8 +204,11 @@ async def handle_index_imported_source(
         database_name=database_name,
         updates={
             "indexing_complete": True,
-            "embedding_model": settings.embedding.model,
-            "embedding_dimensions": settings.search.vector_dimensions,
+            # keyword-only (no provider): "none" and 0, as the CLI's index path records
+            "embedding_model": settings.embedding.model if provider is not None else "none",
+            "embedding_dimensions": settings.search.vector_dimensions
+            if provider is not None
+            else 0,
         },
     )
     if retry_rows:
@@ -467,23 +478,3 @@ async def _reembed_nodes(
     if updates:
         graph_repository.update_node_embeddings_batch(updates)  # one txn, not N writes
     return len(updates)
-
-
-def _index_chunk_vectors(adapter: Any, search_repository: Any, source_id: str) -> int:
-    """Decode each embedded chunk and push it into vec_search_chunks.
-
-    Streams ``(id, embedding)`` only — no chunk content (see
-    ``iter_chunk_embeddings``) — base64-decodes the float32 vector, prefixes the
-    id with ``chunk:``, and bulk-upserts. Best-effort (the embeddings are already
-    durably persisted; the ANN index can be rebuilt).
-    """
-    page_size = get_settings().batching.chunk_fetch_limit
-    embeddings_to_index: list[tuple[str, list[float]]] = []
-    for chunk_id, embedding in adapter.iter_chunk_embeddings(source_id, page_size=page_size):
-        vector = np.frombuffer(base64.b64decode(embedding), dtype=np.float32).tolist()
-        embeddings_to_index.append((f"chunk:{chunk_id}", vector))
-
-    if not embeddings_to_index:
-        return 0
-    search_repository.index_embeddings_batch(embeddings_to_index, item_type="chunk")
-    return len(embeddings_to_index)

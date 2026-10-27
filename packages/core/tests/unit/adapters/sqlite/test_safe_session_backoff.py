@@ -281,6 +281,40 @@ def test_flush_phase_lock_raises_instead_of_committing_nothing(
     assert "commit_succeeded_after_retry" not in caplog.text
 
 
+def test_a_standalone_commit_that_fails_leaves_the_session_usable(
+    sqlite_adapter: SqliteAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A commit outside any transaction that raises rolls the session back.
+
+    Nobody else will: a long-lived session (an MCP server's) whose standalone commit hit
+    a busy database would otherwise raise ``PendingRollbackError`` on every later read and
+    write, whose text quotes the lock error, so every later call would read as busy too.
+    """
+    _seed(sqlite_adapter)
+    dialect = sqlite_adapter._engine.dialect  # the driver boundary
+    real_do_execute = dialect.do_execute
+    inserts = {"count": 0}
+
+    def flaky_do_execute(cursor: Any, statement: str, parameters: Any, context: Any) -> None:
+        """Raise SQLITE_BUSY on the first INSERT into ``sources``, then behave."""
+        if statement.strip().upper().startswith("INSERT INTO SOURCES"):
+            inserts["count"] += 1
+            if inserts["count"] == 1:
+                raise sqlite3.OperationalError("database is locked")
+        real_do_execute(cursor, statement, parameters, context)
+
+    monkeypatch.setattr(dialect, "do_execute", flaky_do_execute)
+    _record_delays(monkeypatch)
+    sqlite_adapter.session.add(_source(NEW_ID, SourceStatus.EXTRACTED))
+    with pytest.raises(OperationalError, match="database is locked"):
+        sqlite_adapter._maybe_commit()  # depth 0, so this commits
+
+    assert sqlite_adapter.session.get(SourceRow, EXISTING_ID) is not None  # reads again
+    sqlite_adapter.session.add(_source(NEW_ID, SourceStatus.EXTRACTED))
+    sqlite_adapter._maybe_commit()  # and writes again
+    assert _statuses_on_disk(sqlite_adapter)[NEW_ID] == SourceStatus.EXTRACTED
+
+
 def test_explicit_multiplier_drives_the_retry_delays(
     sqlite_adapter: SqliteAdapter, monkeypatch: pytest.MonkeyPatch
 ) -> None:

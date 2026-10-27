@@ -13,6 +13,7 @@ same shape ``node_record`` / ``edge_record`` give.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 import pytest
@@ -36,6 +37,7 @@ from chaoscypher_core.adapters.sqlite.repos.graph.sqlite_membership_ops import (
 )
 from chaoscypher_core.adapters.sqlite.repos.graph.sqlite_repository import GraphRepository
 from chaoscypher_core.adapters.sqlite.safe_session import SafeSession
+from chaoscypher_core.adapters.sqlite.utils import SQL_IN_BATCH
 from chaoscypher_core.database.migrations.runner import downgrade_to, upgrade_to, upgrade_to_head
 from chaoscypher_core.models import (
     EdgeCreate,
@@ -44,6 +46,8 @@ from chaoscypher_core.models import (
     ReleasedRows,
     TemplateCreate,
 )
+from chaoscypher_core.ports.search import item_in_source_scope, item_visible
+from chaoscypher_core.services.graph.management.release import release_source_graph
 from chaoscypher_core.services.graph.resolution.apply import (
     edge_record,
     node_create_snapshot,
@@ -580,10 +584,21 @@ def test_release_all_sources_leaves_no_template_behind(repo: GraphRepository) ->
     assert "a_person" not in _template_ids(repo)
 
 
-def test_deleting_a_then_b_leaves_no_template_behind(repo: GraphRepository) -> None:
+@pytest.fixture
+def sources(tmp_path: Path, repo: GraphRepository) -> Iterator[SqliteAdapter]:
+    """The sources adapter on ``repo``'s file (what a source delete hands the release)."""
+    adapter = SqliteAdapter(str(tmp_path / "app.db"), database_name=DB)
+    adapter.connect()
+    yield adapter
+    adapter.disconnect()
+
+
+def test_deleting_a_then_b_leaves_no_template_behind(
+    repo: GraphRepository, sources: SqliteAdapter
+) -> None:
     """Review repro: A's release re-homes ``a_person`` to b, so B's release can delete it."""
     _shared_node_on_as_template(repo)
-    repo.release_source("a")
+    release_source_graph(repo, "a", sources=sources, database_name=DB)
     repo.session.delete(repo.session.get(SourceRow, "a"))
     repo.session.commit()
     repo.session.expire_all()
@@ -1145,3 +1160,150 @@ def test_0019_unhomes_instead_of_cascading_and_downgrade_restores_it(tmp_path: P
         assert "b1" not in {i for i, _ in rows["graph_nodes"]}
     finally:
         evict_engine(db)
+
+
+def _attested(repo: GraphRepository, labels_by_source: dict[str, list[str]]) -> dict[str, str]:
+    """Nodes by label, each attested by the sources that list it; the label -> id map."""
+    ids: dict[str, str] = {}
+    rows: list[tuple[str, str, dict[str, object]]] = []
+    for source_id, labels in labels_by_source.items():
+        if repo.session.get(SourceRow, source_id) is None:
+            repo.session.add(_source(source_id))
+        for label in labels:
+            if label not in ids:
+                ids[label] = repo.create_node(_node(label, None), custom_id=f"n-{label}").id
+            rows.append((ids[label], source_id, {}))
+    repo.session.commit()
+    repo.record_node_sources(rows)
+    repo.session.commit()
+    return ids
+
+
+def test_nodes_attested_by_puts_the_most_attested_first(repo: GraphRepository) -> None:
+    ids = _attested(
+        repo,
+        {"a": ["Bravo", "Alpha", "Charlie"], "b": ["Bravo", "Charlie"], "c": ["Bravo", "Delta"]},
+    )
+    # Bravo 3, Charlie 2, then Alpha and Delta 1 each (ties by node id); c is not asked for
+    assert repo.nodes_attested_by(["a", "b"], limit=10) == [
+        ids["Bravo"],
+        ids["Charlie"],
+        ids["Alpha"],
+    ]
+    assert repo.nodes_attested_by(["a", "b", "c"], limit=2) == [ids["Bravo"], ids["Charlie"]]
+    assert repo.nodes_attested_by([], limit=5) == []
+    assert repo.nodes_attested_by(["a"], limit=0) == []
+
+
+def test_nodes_attested_by_counts_across_more_sources_than_one_statement_binds(
+    repo: GraphRepository,
+) -> None:
+    """A large scope: its source ids go to SQL in slices, and the counts add up across them."""
+    many = {f"s{i:04d}": ["Common"] for i in range(SQL_IN_BATCH + 10)}
+    many["s0000"] = ["Common", "Rare"]
+    ids = _attested(repo, many)
+    assert repo.nodes_attested_by(list(many), limit=1) == [ids["Common"]]
+    assert repo.nodes_attested_by(list(many), limit=5) == [ids["Common"], ids["Rare"]]
+
+
+def _person_graph(repo: GraphRepository) -> tuple[str, str, str]:
+    """A journal and a desk a person made, their edge, all attested by source a."""
+    journal = repo.create_node(_node("Trading journal", None), person_made=True)
+    desk = repo.create_node(_node("Desk", None), person_made=True)
+    edge = repo.create_edge(_edge(journal.id, desk.id, None, label="part_of"), person_made=True)
+    repo.record_node_sources([(journal.id, "a", {"label": "Trading journal"})])
+    repo.record_edge_sources([(edge.id, "a", {"label": "part_of"})])
+    repo.session.commit()
+    return journal.id, desk.id, edge.id
+
+
+def test_release_never_deletes_a_node_or_edge_a_person_made(repo: GraphRepository) -> None:
+    """A person-made row (migration 0025) outlives the release of a source attesting it.
+
+    Releasing that source (a memory attached to it) takes the membership and nothing else.
+    """
+    journal, desk, edge = _person_graph(repo)
+
+    released = repo.release_source("a")
+
+    assert journal not in released.deleted_node_ids
+    assert edge not in released.deleted_edge_ids
+    assert {journal, desk} <= _ids(repo, GraphNode)
+    assert edge in _ids(repo, GraphEdge)
+    assert repo.node_members(journal) == {} and repo.edge_members(edge) == {}
+
+
+def test_a_row_with_no_home_that_no_person_made_goes_with_its_last_member(
+    repo: GraphRepository,
+) -> None:
+    """No home is not "a person made it": an import's edge, or a row whose home was
+    deleted without the rebuild, is released like any other.
+    """
+    pierre = repo.create_node(_node("Pierre", "b"))
+    lyon = repo.create_node(_node("Lyon", "b"))  # the endpoints outlive a: b attests them
+    edge = repo.create_edge(_edge(pierre.id, lyon.id, None))
+    repo.record_edge_sources([(edge.id, "a", {"label": "knows"})])
+    repo.session.commit()
+
+    released = repo.release_source("a")
+
+    assert edge.id in released.deleted_edge_ids
+    assert {pierre.id, lyon.id} <= _ids(repo, GraphNode)
+
+
+def test_a_reset_keeps_person_made_rows_and_strips_their_memberships(
+    repo: GraphRepository,
+) -> None:
+    """The source and data resets release every source at once: a person's rows stay,
+    whether or not a source ever attested them.
+    """
+    journal, desk, edge = _person_graph(repo)
+
+    repo.release_all_sources()
+
+    assert {journal, desk} <= _ids(repo, GraphNode)
+    assert edge in _ids(repo, GraphEdge)
+    assert repo.node_members(journal) == {} and repo.edge_members(edge) == {}
+
+
+def test_the_knowledge_graph_reset_deletes_person_made_rows_too(repo: GraphRepository) -> None:
+    """``clear_all`` is the knowledge-graph reset: everything goes, a person's rows with it."""
+    journal, _desk, edge = _person_graph(repo)
+
+    repo.clear_all()
+
+    assert journal not in _ids(repo, GraphNode)
+    assert edge not in _ids(repo, GraphEdge)
+
+
+def test_a_person_made_row_is_shown_when_every_source_attesting_it_is_off(
+    repo: GraphRepository,
+) -> None:
+    """Switching off the source a memory attached through hides the source's rows, never a
+    person's: their visibility does not depend on who attests them.
+    """
+    journal, _desk, edge = _person_graph(repo)
+    source = repo.session.get(SourceRow, "a")
+    assert source is not None
+    source.enabled = False
+    repo.session.add(source)
+    repo.session.commit()
+
+    listed = {n.id for n in repo.list_nodes(limit=100, include_embedding=False)}
+    assert journal in listed
+    assert edge in {e.id for e in repo.list_edges(limit=100)}
+    node = repo.get_node(journal, include_embedding=False)
+    assert node is not None
+    assert item_visible(node.model_copy(update={"member_source_ids": ["a"]}), {"a"})
+
+
+def test_a_person_made_row_is_in_every_source_scope(repo: GraphRepository) -> None:
+    """A lens or a source scope that names other sources still shows a person's rows,
+    whatever source attests them (a memory attached to one).
+    """
+    journal, _desk, _edge = _person_graph(repo)  # attested by a
+
+    assert journal in {n.id for n in repo.list_nodes_minimal(source_ids=["b"], limit=100)}
+    node = repo.get_node(journal, include_embedding=False)
+    assert node is not None
+    assert item_in_source_scope(node.model_copy(update={"member_source_ids": ["a"]}), {"b"})

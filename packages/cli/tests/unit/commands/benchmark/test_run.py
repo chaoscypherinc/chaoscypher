@@ -808,3 +808,32 @@ def test_reuse_graph_flag_reaches_run_full_benchmark(
 
     assert result.exit_code == 0, result.output
     assert captured == [expected]
+
+
+def test_run_refuses_graph_flags_on_an_extractors_only_config(tmp_path: Path):
+    """2026-10-19 audit: --reuse-graph / --rebuild-graphs were parsed and silently ignored here."""
+    builtin_ds, user_ds, builtin_cfg, user_cfg = _patch_roots(tmp_path)
+    _write_dataset(builtin_ds, "p1")
+    _write_config(builtin_cfg, "extraction", ["p1"])
+    out_dir = tmp_path / "out"
+
+    with (
+        patch("chaoscypher_cli.commands.benchmark.run.run_benchmark", return_value=[]) as mock_run,
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_dataset_bundle",
+            side_effect=_make_load_bundle_side_effect(builtin_ds, user_ds),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_config",
+            side_effect=lambda name: __import__(
+                "chaoscypher_cli.benchmark.config", fromlist=["load_config"]
+            ).load_config(name, builtin_root=builtin_cfg, user_root=user_cfg),
+        ),
+        patch("chaoscypher_cli.benchmark.models.assert_registry_coverage", return_value=[]),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(run, ["extraction", "--reuse-graph", "--out", str(out_dir)])
+
+    assert result.exit_code != 0
+    assert "apply to a full config" in result.output
+    mock_run.assert_not_called()

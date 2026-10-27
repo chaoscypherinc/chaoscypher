@@ -212,12 +212,13 @@ def _index_for_search(ctx: Any, stats: ImportStats, console: Console) -> bool:
         msg = "Engine not initialized — context.connect() must be called first"
         raise RuntimeError(msg)
 
-    embedding_model = getattr(getattr(ctx.settings, "embedding", None), "model", None)
-    console.print(
-        f"[dim]Indexing for search with the local embedding model"
-        f"{f' ({embedding_model})' if embedding_model else ''}; "
-        "the first use downloads it.[/dim]"
-    )
+    if ctx.embedding_service is not None:
+        embedding_model = getattr(getattr(ctx.settings, "embedding", None), "model", None)
+        console.print(
+            f"[dim]Indexing for search with the local embedding model"
+            f"{f' ({embedding_model})' if embedding_model else ''}; "
+            "the first use downloads it.[/dim]"
+        )
     try:
         counts = asyncio.run(
             index_imported_package(

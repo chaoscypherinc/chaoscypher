@@ -20,28 +20,35 @@ CC_TIER and by the ``auto_apply_destructive`` setting:
   apply``). If the backup can't be taken safely (disk), we block without
   applying anything.
 
-Fresh installs bypass the gate entirely (straight to head, no backup —
-there is no user data to protect).
+A database with no schema yet is not upgraded at all: a new one, or one whose
+first build did not finish (tables, no version row, no rows), is built straight
+to head with no backup and no upgrade record, so no surface offers a notice or a
+rollback (:func:`build_if_new`, which the explicit apply takes too, under the
+same lock).
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import structlog
 
 from chaoscypher_core.database.backup import backup_database, free_space_ok
 from chaoscypher_core.database.migrations.runner import (
-    _schema_has_non_alembic_tables,
-    current_revision,
+    SchemaStart,
+    drop_unfinished_schema,
     ensure_stamped,
     pending_revisions,
+    schema_start,
     upgrade_to,
     upgrade_to_head,
 )
 from chaoscypher_core.database.migrations.state import (
     clear_upgrade_state,
     describe_apply_failure,
+    get_upgrade_state,
     record_successful_upgrade,
     set_upgrade_state,
 )
@@ -58,18 +65,6 @@ if TYPE_CHECKING:
 
 
 logger = structlog.get_logger(__name__)
-
-
-def _is_fresh_install(db_path: Path) -> bool:
-    """True if the DB has no Alembic revision AND no user tables.
-
-    Fresh install: no rows in alembic_version, no non-alembic tables.
-    Safe to upgrade straight to head regardless of tier — constraint
-    migrations operate on empty tables and can't lose data.
-    """
-    return current_revision(db_path) is None and not _schema_has_non_alembic_tables(
-        db_path
-    )
 
 
 def _plan_apply(
@@ -123,36 +118,45 @@ def run_startup_migrations(
     Default (resolved to True from settings): apply ALL pending to head after
     a verified backup. When False: apply safe/data-changing migrations up to
     the first ``manual`` one, then block. If the backup can't be taken safely
-    (disk), block without applying. Fresh installs skip the gate (straight to
-    head, no backup — no data to protect).
+    (disk), block without applying. A database with no schema yet skips the
+    gate: built straight to head, no backup, no record (:func:`build_if_new`).
 
     Args:
         db_path: Path to the SQLite database.
         auto_apply_destructive: Override the settings default (mainly tests).
     """
     apply_destructive = _resolve_auto_apply_destructive(auto_apply_destructive)
-    fresh = _is_fresh_install(db_path)
+    with upgrade_lock(db_path):
+        # Everything is read under the lock: another process may have
+        # applied while we waited.
+        _migrate(db_path, apply_destructive=apply_destructive)
 
-    ensure_stamped(db_path)
-    pending = pending_revisions(db_path)
-    if not pending:
-        clear_upgrade_state(db_path)
-        return
 
-    if fresh:
-        logger.info("startup_migrations_fresh_install", pending=pending)
-        upgrade_to_head(db_path)
-        clear_upgrade_state(db_path)
-        return
+@contextmanager
+def upgrade_lock(db_path: Path) -> Iterator[None]:
+    """Hold the database's cross-process upgrade lock for one build or upgrade.
 
+    Not re-entrant: ``flock`` locks one open file description, so a second take in
+    this process waits on the first. The startup run and ``UpgradeService.apply``
+    each take it once, at their top.
+
+    A first build holds it as an upgrade does: two processes opening a database
+    that does not exist yet would otherwise both build its schema, and the second
+    fails on a table the first made.
+
+    The lock file is NEVER unlinked — matching engine.py's .init.lock.
+    flock binds to the inode, not the path: unlinking the name while a
+    waiter still holds (or is about to acquire) the old inode lets the
+    next process create a fresh inode at the same path and acquire its
+    lock instantly, so two migration runs (backup + upgrade_to_head)
+    proceed concurrently on the same SQLite file. A leftover lock file
+    is harmless litter; a recycled one is a broken mutex.
+
+    The lock sits beside the database, whose folder may not exist yet
+    (``chaoscypher mcp --database NEW`` migrates before any engine makes it).
+    """
     lock_path = db_path.with_suffix(db_path.suffix + ".upgrade.lock")
-    # The lock file is NEVER unlinked — matching engine.py's .init.lock.
-    # flock binds to the inode, not the path: unlinking the name while a
-    # waiter still holds (or is about to acquire) the old inode lets the
-    # next process create a fresh inode at the same path and acquire its
-    # lock instantly, so two migration runs (backup + upgrade_to_head)
-    # proceed concurrently on the same SQLite file. A leftover lock file
-    # is harmless litter; a recycled one is a broken mutex.
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     with open(lock_path, "w", encoding="utf-8") as lock_handle:
         try:
             lock_file(lock_handle, blocking=False)
@@ -160,16 +164,77 @@ def run_startup_migrations(
             logger.info("startup_migrations_waiting_for_lock", db=str(db_path))
             lock_file(lock_handle, blocking=True)
         try:
-            # Re-read under the lock: another process may have applied
-            # while we waited (or between the pre-lock read and
-            # acquiring the lock).
-            pending = pending_revisions(db_path)
-            if not pending:
-                clear_upgrade_state(db_path)
-                return
-            _run_locked(db_path, pending, apply_destructive=apply_destructive)
+            yield
         finally:
             unlock_file(lock_handle)
+
+
+def build_if_new(db_path: Path) -> bool:
+    """Build a new or unfinished database to head, quietly; else False. Hold :func:`upgrade_lock`.
+
+    A first build is not an upgrade. There is nothing to back up, so no backup is
+    taken, and the upgrade record is cleared, not written: no post-upgrade notice,
+    no rollback, nothing for MCP ``upgrade_status`` to report. Every tier goes, the
+    gated ones included, since they change data and a new database has none.
+
+    An unfinished first build (see :attr:`SchemaStart.UNFINISHED`) holds no rows, so
+    its tables are dropped and it is built again from nothing; stamping it at the
+    baseline instead would make finishing it look like a data-changing upgrade, and
+    fail outright when the baseline itself was cut short. When a row arrives before
+    the drop takes its write lock, nothing is dropped and this returns False: the
+    caller upgrades it as the unversioned install it now is. A search index opened on
+    it keeps its feed from ``document_chunks``: the rebuild drops those triggers with
+    the table, and they are put back.
+
+    The explicit apply (``chaoscypher upgrade``, ``db migrate apply``, the Maintenance
+    page, MCP ``apply_upgrade``) takes this first too, so applying to a new database
+    builds it exactly as opening it would.
+    """
+    start = schema_start(db_path)
+    if start not in (SchemaStart.NEW, SchemaStart.UNFINISHED):
+        return False
+    if start is SchemaStart.UNFINISHED and not drop_unfinished_schema(db_path):
+        return False
+    logger.info("startup_migrations_fresh_install", pending=pending_revisions(db_path))
+    upgrade_to_head(db_path)
+    if start is SchemaStart.UNFINISHED:
+        _restore_search_feed(db_path)
+    clear_upgrade_state(db_path)
+    return True
+
+
+def _restore_search_feed(db_path: Path) -> None:
+    """Put back the chunk index's triggers on ``document_chunks`` after a rebuild dropped it."""
+    from chaoscypher_core.adapters.sqlite.engine import get_engine
+    from chaoscypher_core.adapters.sqlite.repos.search import install_chunk_source_triggers
+
+    with get_engine(db_path).begin() as conn:
+        install_chunk_source_triggers(conn)
+
+
+def settle_nothing_pending(db_path: Path) -> None:
+    """Nothing is pending: clear a stale block, keep everything else.
+
+    A block (``ready`` false) waits on migrations; with none pending it is stale
+    (they were applied elsewhere) and would hold the app in maintenance for nothing.
+    A ready record is left as it is: it may be the post-upgrade record another
+    process has just written (``last_applied``, ``last_backup``), which the notice
+    and the rollback read. Only a run that built the database itself clears that.
+    """
+    if not get_upgrade_state(db_path).ready:
+        clear_upgrade_state(db_path)
+
+
+def _migrate(db_path: Path, *, apply_destructive: bool) -> None:
+    """The startup run itself, under the upgrade lock: a first build, nothing pending, or gated."""
+    if build_if_new(db_path):
+        return
+    ensure_stamped(db_path)
+    pending = pending_revisions(db_path)
+    if not pending:
+        settle_nothing_pending(db_path)
+        return
+    _run_locked(db_path, pending, apply_destructive=apply_destructive)
 
 
 def _record_apply_failure(
@@ -294,4 +359,4 @@ def _run_locked(
         clear_upgrade_state(db_path)
 
 
-__all__ = ["run_startup_migrations"]
+__all__ = ["build_if_new", "run_startup_migrations", "settle_nothing_pending", "upgrade_lock"]

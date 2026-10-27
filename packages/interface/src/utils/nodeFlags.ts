@@ -7,8 +7,9 @@
  * The import pipeline keeps records it is unsure about instead of deleting
  * them, and marks each one with a boolean property on the node (keep, flag,
  * never delete). This module is the interface's single reader of those
- * marks: the graph canvas's "Unresolved" region, its per-node badges, and
- * the entity chips all go through {@link nodeFlags}.
+ * marks: the graph canvas's "Unresolved (N)" hub (its members, their hover
+ * line and their detail panel) and the entity chips all go through
+ * {@link nodeFlags}.
  *
  * A flag is set only when its property is exactly boolean ``true``. A string
  * ``"true"``, ``1`` or any other value is an ordinary extracted property, not
@@ -26,45 +27,60 @@ export interface NodeFlagDefinition {
   readonly description: string;
 }
 
+/** A node flag, with the plain line saying why it leaves the node unresolved. */
+export interface NodeFlagEntry extends NodeFlagDefinition {
+  /** Why the flag leaves the node unresolved, in plain words (canvas hover, detail panel). */
+  readonly reason: string;
+}
+
 /** Every pipeline flag the interface knows, in display order. */
 export const NODE_FLAGS = [
   {
     key: 'orphan',
     label: 'Unconnected',
+    reason: 'No connections to other nodes',
     description:
       'Had no relationship when it was committed. Kept because it carries a description or evidence; it may gain relationships later.',
   },
   {
     key: 'descriptor_reference',
     label: 'Reference',
+    reason: 'Named by a description, not a proper name',
     description:
       'Labelled by a reference rather than a name (for example "the count", "Prince Andrew\'s wife" or "the army").',
   },
   {
     key: 'low_plausibility',
     label: 'Low plausibility',
+    reason: 'Its name may not be a real entity',
     description:
       'Its name scored below the plausibility bar. Kept because it carries a description or evidence; its score is in the plausibility property.',
   },
   {
     key: 'unplaced_type',
     label: 'Unplaced type',
+    reason: 'Its type fits none of the core types',
     description:
       'No core type answers to the type written for it, so it is kept as a Concept; the written type is in the written_type property.',
   },
   {
     key: 'unevidenced',
     label: 'Unevidenced',
+    reason: 'The sentence it cites does not name it',
     description:
       'The sentence it cites does not name it. Kept because it carries a description; why is in the evidence_reason property.',
   },
   {
     key: 'excluded_name',
     label: 'Excluded name',
+    reason: "Its name is on the domain's exclusion list",
     description:
       "Its name is one of the domain's exclusion examples. Kept because it carries a description or evidence; the rule that matched is in the excluded_by property.",
   },
-] as const satisfies readonly NodeFlagDefinition[];
+] as const satisfies readonly NodeFlagEntry[];
+
+/** The property keys the node flags write (hidden from a node's facts; its reasons show instead). */
+export const NODE_FLAG_KEYS: ReadonlySet<string> = new Set(NODE_FLAGS.map((flag) => flag.key));
 
 export type NodeFlag = (typeof NODE_FLAGS)[number];
 

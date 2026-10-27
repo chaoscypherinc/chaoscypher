@@ -4,10 +4,13 @@
 """Cost Tracker for LLM Token Usage.
 
 Tracks and calculates costs for different LLM providers based on token usage.
-Pricing is based on the official pricing as of January 2025.
+Prices come from the cloud model registry (``data/cloud_models.json``);
+the hand table below covers only the models it does not list.
 """
 
 import structlog
+
+from chaoscypher_core.adapters.llm.model_registry import get_model_registry
 
 
 logger = structlog.get_logger(__name__)
@@ -15,16 +18,16 @@ logger = structlog.get_logger(__name__)
 # Pricing tables (USD per 1M tokens)
 # Updated as of January 2025
 
-PRICING_TABLES = {
+_LEGACY_PRICING: dict[str, dict[str, dict[str, float]]] = {
+    # Models the cloud registry (data/cloud_models.json) does not list: dated
+    # snapshots, retired families and embeddings. Anything the registry lists
+    # is priced from it (PRICING_TABLES below) — the 2026-10-19 audit found
+    # this table billing claude-opus-4-6/4-7 at the opus-4 rate ($15/$75 vs
+    # $5/$25), every gpt-5.x and gemini-3.1 model at $0 and gemini-2.5-flash
+    # at half its price, because the two tables were kept by hand.
     "openai": {
-        # GPT-4.1 Series (2025)
-        "gpt-4.1": {"input": 2.00, "output": 8.00},
-        "gpt-4.1-mini": {"input": 0.40, "output": 1.60},
-        "gpt-4.1-nano": {"input": 0.10, "output": 0.40},
-        # GPT-4o (Omni)
-        "gpt-4o": {"input": 2.50, "output": 10.00},
+        # GPT-4o dated snapshots
         "gpt-4o-2024-08-06": {"input": 2.50, "output": 10.00},
-        "gpt-4o-mini": {"input": 0.15, "output": 0.60},
         "gpt-4o-mini-2024-07-18": {"input": 0.15, "output": 0.60},
         # O3 Models (Reasoning - 2025)
         "o3": {"input": 2.00, "output": 8.00},
@@ -43,11 +46,7 @@ PRICING_TABLES = {
         "text-embedding-ada-002": {"input": 0.10, "output": 0.00},
     },
     "anthropic": {
-        # Claude 4.5 Series (2025)
-        "claude-sonnet-4-5": {"input": 3.00, "output": 15.00},
-        "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
-        "claude-opus-4-5": {"input": 5.00, "output": 25.00},
-        # Claude 4 Series
+        # Claude 4 Series (undated family names)
         "claude-sonnet-4": {"input": 3.00, "output": 15.00},
         "claude-opus-4": {"input": 15.00, "output": 75.00},
         # Claude 3.5/3.7 Series (legacy)
@@ -58,17 +57,8 @@ PRICING_TABLES = {
         "claude-3-haiku-20240307": {"input": 0.25, "output": 1.25},
     },
     "gemini": {
-        # Gemini 3 Series (2025)
-        "gemini-3-flash-preview": {"input": 0.50, "output": 3.00},
-        "gemini-3-pro-preview": {"input": 2.00, "output": 12.00},
-        # Gemini 2.5 Series
-        "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
-        "gemini-2.5-flash": {"input": 0.15, "output": 0.60},
-        "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40},
-        # Gemini 2.0 Series
-        "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
+        # Gemini 2.0 experimental and 1.5 Series (legacy)
         "gemini-2.0-flash-exp": {"input": 0.10, "output": 0.40},
-        # Gemini 1.5 Series (legacy)
         "gemini-1.5-pro": {"input": 1.25, "output": 5.00},
         "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
         # Embeddings
@@ -80,6 +70,33 @@ PRICING_TABLES = {
         "*": {"input": 0.00, "output": 0.00}
     },
 }
+
+
+def _registry_pricing() -> dict[str, dict[str, dict[str, float]]]:
+    """Per-provider ``{model: {input, output}}`` for every registry model with a price."""
+    registry = get_model_registry()
+    tables: dict[str, dict[str, dict[str, float]]] = {}
+    for provider in registry.get_providers():
+        for model in registry.get_models(provider):
+            pricing = model.get("pricing") or {}
+            if "input_per_million" not in pricing or "output_per_million" not in pricing:
+                continue
+            tables.setdefault(provider, {})[model["id"]] = {
+                "input": float(pricing["input_per_million"]),
+                "output": float(pricing["output_per_million"]),
+            }
+    return tables
+
+
+def _pricing_tables() -> dict[str, dict[str, dict[str, float]]]:
+    """The legacy table with the registry's prices laid over it (the registry wins)."""
+    tables = {provider: dict(models) for provider, models in _LEGACY_PRICING.items()}
+    for provider, models in _registry_pricing().items():
+        tables.setdefault(provider, {}).update(models)
+    return tables
+
+
+PRICING_TABLES = _pricing_tables()
 
 
 class CostTracker:

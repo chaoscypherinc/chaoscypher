@@ -183,6 +183,31 @@ class TestEmbeddingPluginExceptions:
         assert err.operation == "ai.generate_embedding"
         assert "settings" in err.message.lower()
 
+    @pytest.mark.asyncio
+    async def test_the_generate_embedding_tool_with_vector_search_off_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No injected provider and vector search off → VectorSearchOff, no provider built."""
+        from chaoscypher_core.adapters.embedding import factory
+        from chaoscypher_core.exceptions import VectorSearchOff
+        from chaoscypher_core.services.workflows.tools.plugins.ai_generate_embedding_plugin import (
+            EmbeddingPlugin,
+        )
+        from chaoscypher_core.settings import EngineSettings
+
+        def _built(_settings: Any) -> Any:
+            raise AssertionError("an embedding provider was built behind the vector switch")
+
+        monkeypatch.setattr(factory, "create_embedding_provider", _built)
+        settings = EngineSettings()
+        settings.search.enable_vector_search = False
+        context = _make_context(
+            graph_manager=MagicMock(), embedding_provider=None, settings=settings
+        )
+
+        with pytest.raises(VectorSearchOff, match="Embedding needs vectors"):
+            await EmbeddingPlugin().execute({"text": "Lyon"}, context)
+
     def test_node_not_found_raises_not_found_error(self) -> None:
         """Line 181 — node lookup returns None → NotFoundError."""
         from chaoscypher_core.services.workflows.tools.plugins.ai_generate_embedding_plugin import (

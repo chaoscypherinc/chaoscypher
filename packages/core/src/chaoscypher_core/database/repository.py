@@ -113,14 +113,10 @@ class DatabaseRepository:
         # Create directory structure using centralized path settings
         os.makedirs(db_path, exist_ok=True)
 
-        # Initialize app.db (SQLModel database with graph tables)
+        # Initialize app.db: the schema, the shipped templates and the defaults
         from chaoscypher_core.database.engine import init_database
-        from chaoscypher_core.database.seed import seed_default_templates
 
         init_database(name)
-
-        # Seed default templates (node/edge types) for the new database
-        seed_default_templates(name)
 
         logger.info("database_created", database_name=name)
 

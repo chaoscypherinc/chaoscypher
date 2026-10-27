@@ -113,10 +113,9 @@ def test_extract_json_plugin_reads_context_field() -> None:
 
 def test_embedding_plugin_adapter_import_only_once_in_fallback() -> None:
     source = (PLUGINS_ROOT / "ai_generate_embedding_plugin.py").read_text(encoding="utf-8")
-    assert (
-        source.count("from chaoscypher_core.adapters.embedding import create_embedding_provider")
-        == 1
-    )
+    # the fallback builds through the one reader of the vector switch
+    assert source.count("from chaoscypher_core.adapters.embedding import (") == 1
+    assert "create_embedding_provider" not in source
 
 
 def test_extract_json_plugin_adapter_import_only_once_in_fallback() -> None:

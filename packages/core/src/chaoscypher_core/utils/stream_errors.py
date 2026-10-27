@@ -45,6 +45,7 @@ from chaoscypher_core.exceptions import (
     LLMModelError,
     LLMRateLimitError,
     LLMServiceError,
+    ToolCallingNotSupportedError,
 )
 
 
@@ -82,7 +83,12 @@ class ProviderErrorPatterns:
 
     Each field is a sequence of lowercase substrings matched against the
     lowercased error text, in a fixed order (rate limit, auth, model, content
-    filter, context length, server error, timeout, connection).
+    filter, context length, server error, timeout, connection). Two shapes
+    are not plain substrings (:func:`_mentions`): a bare status number
+    (``"403"``) matches the failure's own status when it carries one, and
+    otherwise only a number standing alone in the text — a context-length 400
+    reporting "142901 tokens" is not a rate limit (2026-10-19 audit) — and an indicator
+    with ``.*`` in it is a regular expression (``"max.*token"``).
 
     Attributes:
         provider: Provider name used in error messages (e.g. "openai").
@@ -124,6 +130,30 @@ OLLAMA_PATTERNS = ProviderErrorPatterns(
     unknown_retryable=False,
 )
 """Ollama's words: a local server has no auth, filter or quota; an unknown error is not retried."""
+
+
+def _mentions(text: str, status: int | None, indicators: tuple[str, ...]) -> bool:
+    """Whether any of a provider's indicator words describes ``text``.
+
+    A digit-only indicator is a status number: when the failure carries a
+    status it matches that status (a 403 is an auth failure whatever its
+    text says), and otherwise only a whole number in the text, never one
+    inside a token count. An indicator containing ``.*`` is a regular
+    expression; the rest are substrings.
+    """
+    for indicator in indicators:
+        if indicator.isdigit():
+            if status is not None:
+                if status == int(indicator):
+                    return True
+            elif re.search(rf"(?<!\d){indicator}(?!\d)", text):
+                return True
+        elif ".*" in indicator:
+            if re.search(indicator, text):
+                return True
+        elif indicator in text:
+            return True
+    return False
 
 
 def _status_of(error: BaseException) -> int | None:
@@ -206,7 +236,7 @@ def classify_llm_failure(  # noqa: PLR0911, C901 - one ordered rule list, each r
             reason=message or "Model not found or not available",
             details=details,
         )
-    if status == RATE_LIMIT_STATUS or any(ind in text for ind in patterns.rate_limit):
+    if status == RATE_LIMIT_STATUS or _mentions(text, status, patterns.rate_limit):
         retry_match = re.search(r"retry.?after[:\s]*(\d+)", text)
         return LLMRateLimitError(
             provider=provider,
@@ -233,18 +263,18 @@ def classify_llm_failure(  # noqa: PLR0911, C901 - one ordered rule list, each r
         )
 
     # 2. the provider's words
-    if any(ind in text for ind in patterns.auth):
+    if _mentions(text, status, patterns.auth):
         return LLMAuthenticationError(
             provider=provider, reason="Invalid or expired API key", model=model, details=details
         )
-    if any(ind in text for ind in patterns.model_not_found):
+    if _mentions(text, status, patterns.model_not_found):
         return LLMModelError(
             provider=provider,
             model=model_name,
             reason="Model not found or not available",
             details=details,
         )
-    if any(ind in text for ind in patterns.content_filter):
+    if _mentions(text, status, patterns.content_filter):
         filter_type = patterns.content_filter_type
         for keyword, override_type in patterns.extra_content_filter_rules.items():
             if keyword in text:
@@ -256,19 +286,19 @@ def classify_llm_failure(  # noqa: PLR0911, C901 - one ordered rule list, each r
             model=model,
             details=details,
         )
-    if any(ind in text for ind in patterns.context_length):
+    if _mentions(text, status, patterns.context_length):
         return LLMContextLengthError(provider=provider, model=model_name, details=details)
-    if any(ind in text for ind in patterns.server_error):
+    if _mentions(text, status, patterns.server_error):
         return LLMServiceError(
             provider=provider,
             reason="Service temporarily unavailable",
             model=model,
-            is_timeout="timeout" in text or "504" in text,
+            is_timeout="timeout" in text or _mentions(text, status, ("504",)),
             details=details,
         )
 
     # 3. timeouts and dropped connections
-    if kind == "timeout" or any(ind in text for ind in patterns.timeout):
+    if kind == "timeout" or _mentions(text, status, patterns.timeout):
         return LLMServiceError(
             provider=provider,
             reason=f"Request timed out [{error_type or 'timeout'}]: {message}",
@@ -276,7 +306,7 @@ def classify_llm_failure(  # noqa: PLR0911, C901 - one ordered rule list, each r
             is_timeout=True,
             details=details,
         )
-    if kind == "transport" or any(ind in text for ind in patterns.connection):
+    if kind == "transport" or _mentions(text, status, patterns.connection):
         return LLMServiceError(
             provider=provider,
             reason=connection_reason or f"Unable to connect to {provider.title()} API: {message}",
@@ -370,6 +400,8 @@ def _rebuilt(
             quota_exceeded=bool(details.get("quota_exceeded")),
             details=dict(details),
         )
+    elif code == "MODEL_CAPABILITY_ERROR" and details.get("capability") == "tool_calling":
+        error = ToolCallingNotSupportedError(model=model or "unknown", provider=provider)
     elif code.startswith("LLM_"):
         error = LLMError(
             message,

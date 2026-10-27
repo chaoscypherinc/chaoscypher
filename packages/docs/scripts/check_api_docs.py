@@ -274,6 +274,21 @@ def _build_wiring_map(  # noqa: C901, PLR0912 - AST walker; each branch maps a d
     return result
 
 
+def feature_source_files(wiring_map: dict[tuple[Path, str], str]) -> list[Path]:
+    """Every feature module that can define a route: each ``api.py`` plus every file router.py wires.
+
+    The list used to be ``api.py`` plus a hand-kept tuple of the other
+    ``*_api.py`` names; ``sites_api.py`` (2026-10-22) was wired in router.py and
+    never added, so its seven routes were invisible to this check and it reported
+    266/266 while they were undocumented. The wiring map's keys are the files
+    router.py actually includes, so a module the API serves is scanned by
+    construction.
+    """
+    files = {p.resolve() for p in FEATURES_DIR.rglob("api.py")}
+    files.update(path.resolve() for path, _var in wiring_map)
+    return sorted(files)
+
+
 def extract_routes_from_features(  # noqa: C901, PLR0912 - AST walker over many feature files; each branch handles a distinct decorator/router shape
     *,
     source_code: str | None = None,
@@ -323,19 +338,7 @@ def extract_routes_from_features(  # noqa: C901, PLR0912 - AST walker over many 
     # the argument is None.
     wiring_map = _build_wiring_map(ROUTER_FILE)
 
-    source_files: list[Path] = list(FEATURES_DIR.rglob("api.py"))
-    for extra in (
-        "extraction_api.py",
-        "chunks_api.py",
-        "tags_api.py",
-        "grounding_api.py",
-        "execution_api.py",
-        "ollama_models_api.py",
-        "chunk_attempts_api.py",
-        "chunk_rerun_api.py",
-        "vision_pages_api.py",
-    ):
-        source_files.extend(FEATURES_DIR.rglob(extra))
+    source_files = feature_source_files(wiring_map)
 
     for file_path in source_files:
         code = file_path.read_text(encoding="utf-8")

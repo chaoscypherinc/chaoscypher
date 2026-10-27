@@ -40,6 +40,7 @@ from chaoscypher_cli.context import (
     get_database_name,
     reset_context,
 )
+from chaoscypher_core.settings import EngineSettings
 
 
 if TYPE_CHECKING:
@@ -597,23 +598,32 @@ class TestPassContextDecorator:
 
 
 class TestEmbeddingService:
-    """The embedding provider is built lazily via the core factory and cached."""
+    """The provider is built lazily through the one reader of the vector switch, and cached."""
 
-    def test_embedding_provider_built_via_factory_and_cached(self) -> None:
+    def test_embedding_provider_built_via_the_switch_reader_and_cached(self) -> None:
         ctx, engine = _connected_context()
+        engine.settings = EngineSettings()
         provider = MagicMock(name="embedding")
-        factory = MagicMock(return_value=provider)
+        build = MagicMock(return_value=provider)
 
-        with patch(
-            "chaoscypher_core.adapters.embedding.create_embedding_provider",
-            factory,
-        ):
+        with patch("chaoscypher_core.adapters.embedding.factory.create_embedding_provider", build):
             first = ctx.embedding_service
             second = ctx.embedding_service
 
         assert first is provider
         assert second is provider
-        factory.assert_called_once_with(ctx.settings)
+        build.assert_called_once_with(ctx.settings)
+
+    def test_with_vector_search_off_the_context_builds_no_provider(self) -> None:
+        ctx, engine = _connected_context()
+        engine.settings = EngineSettings()
+        engine.settings.search.enable_vector_search = False
+        build = MagicMock(side_effect=AssertionError("built behind the vector switch"))
+
+        with patch("chaoscypher_core.adapters.embedding.factory.create_embedding_provider", build):
+            assert ctx.embedding_service is None
+            assert ctx.embedding_service is None
+        build.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

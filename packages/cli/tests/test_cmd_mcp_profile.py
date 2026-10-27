@@ -36,3 +36,72 @@ def test_an_unknown_profile_is_a_choice_error() -> None:
     result = CliRunner().invoke(cmd.mcp, ["--profile", "notes"])
     assert result.exit_code == 2
     assert "profile" in result.output and "notes" in result.output
+
+
+def test_serve_stdio_closes_the_memory_linker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the client disconnects, the links ``remember`` left running give their claims back."""
+    import sys
+    from collections.abc import AsyncIterator
+    from contextlib import asynccontextmanager
+    from pathlib import Path
+    from types import SimpleNamespace
+    from typing import Any
+
+    import chaoscypher_cli.mcp.command as cmd
+    from chaoscypher_core.mcp.memory_link import MemoryLinker
+
+    monkeypatch.setattr("chaoscypher_core.utils.logging.configure_logging", lambda **_k: None)
+    monkeypatch.setitem(sys.modules, "langchain_text_splitters", SimpleNamespace())
+    monkeypatch.setattr(cmd, "get_database_name", lambda _o: "journal")
+    monkeypatch.setattr(
+        "chaoscypher_core.database.engine.get_db_path", lambda _n: Path("/data/app.db")
+    )
+    monkeypatch.setattr(
+        "chaoscypher_core.database.migrations.startup.run_startup_migrations", MagicMock()
+    )
+    monkeypatch.setattr(
+        "chaoscypher_core.database.migrations.state.get_upgrade_state",
+        lambda _p: SimpleNamespace(ready=True, blocked_on=[], message=""),
+    )
+    ctx = SimpleNamespace(
+        _engine=object(),
+        database_name="journal",
+        settings=SimpleNamespace(
+            mcp=SimpleNamespace(mode="write", profile="memory", auto_extract=False)
+        ),
+    )
+    monkeypatch.setattr(cmd, "get_context", MagicMock(return_value=ctx))
+
+    events: list[str] = []
+    built: dict[str, Any] = {}
+
+    class _Server:
+        async def run(self, *_args: Any) -> None:
+            events.append("run")
+
+        def create_initialization_options(self) -> None:
+            return None
+
+    def create(engine: Any, **kwargs: Any) -> _Server:
+        built.update(kwargs)
+        return _Server()
+
+    monkeypatch.setattr("chaoscypher_core.mcp.server.create_mcp_server", create)
+
+    @asynccontextmanager
+    async def stdio(**_kw: Any) -> AsyncIterator[tuple[None, None]]:
+        yield None, None
+
+    monkeypatch.setattr("mcp.server.stdio.stdio_server", stdio)
+
+    async def close(self: MemoryLinker) -> None:
+        events.append("close")
+        built["closed"] = self
+
+    monkeypatch.setattr(MemoryLinker, "close", close)
+
+    cmd.serve_stdio(mode="write")
+
+    assert events == ["run", "close"]
+    assert isinstance(built["linker"], MemoryLinker)
+    assert built["closed"] is built["linker"]

@@ -709,20 +709,20 @@ def test_excluded_questions_leave_the_board(
 ) -> None:
     """A question the fixture flags unanswerable is dropped from every row's count and verdicts."""
     script = _load_script()
-    ids = ["q001", "q030", "q040"]  # q030 and q040 are flagged in the Book One fixture
-    row = _chat_row("ollama/m:1b", ["q030"], ids=tuple(ids))
+    ids = ["q001", "q040"]  # q040 is flagged in the Book One fixture
+    row = _chat_row("ollama/m:1b", ["q040"], ids=tuple(ids))
     row["metrics"]["verdicts"] = [
         {
             "id": q,
             "probe": q,
             "section": "multi_hop",
             "tier": "medium",
-            "passed": q != "q030",
+            "passed": q != "q040",
             "details": [],
         }
         for q in ids
     ]
-    row["metrics"]["probes_total"], row["metrics"]["probes_passed"] = 3, 2
+    row["metrics"]["probes_total"], row["metrics"]["probes_passed"] = 2, 1
     chat = _write(tmp_path / "c.json", [row])
 
     page, _ = _export(script, monkeypatch, tmp_path, "--chat", str(chat))
@@ -735,7 +735,7 @@ def test_excluded_questions_leave_the_board(
     fixture = load_queries(builtin_dataset_root() / "war_and_peace_book1" / "queries.yaml")
     assert set(suite["excluded_ids"]) == {q.id for q in fixture.queries if not q.answerable}
     flags = {q["id"]: q["answerable"] for q in suite["questions"]}
-    assert flags["q001"] is True and flags["q030"] is False
+    assert flags["q001"] is True and flags["q040"] is False
 
 
 def test_extra_sessions_become_a_note(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -786,13 +786,13 @@ def test_graph_advantage_questions_stay_out_of_the_chat_column(
 # The three-rung comparison: suites.chat.comparison
 # ---------------------------------------------------------------------------
 
-# Real Book One ids: q001 (single-hop, answer term "July"/"1805"), q030 (paraphrase,
-# flagged unanswerable, term "Archives"), q082 and q095 (graph_advantage,
+# Real Book One ids: q001 (single-hop, answer term "July"/"1805"), q040 (multi-hop,
+# flagged unanswerable, terms "Uncle", "father", "sister"), q082 and q095 (graph_advantage,
 # cross_chapter_join / relationship_path), q109 (cast_aggregate), q124 (disambiguation).
-_CMP_IDS = ["q001", "q030", "q082", "q095", "q109", "q124"]
+_CMP_IDS = ["q001", "q040", "q082", "q095", "q109", "q124"]
 _TERMS = {
     "q001": "In July, 1805.",
-    "q030": "To Anatole's, and then back to Moscow.",
+    "q040": "She calls him Uncle; she will live with his father and sister.",
     "q082": "General Kutúzov; Borís got no place on his staff.",
     "q095": "The count is his godfather.",
     "q109": "Hélène, Hippolyte and Anatole.",
@@ -804,7 +804,7 @@ _CONTEXT = (
     "[S1] It was in July, 1805, and the speaker was Anna Pávlovna Schérer.\n"
     "[S2] Kutúzov gave Borís no place on his staff.\n"
     "[S3] Count Bezúkhov is Borís's godfather, and Hélène, Hippolyte and Anatole are his children.\n"
-    "[S4] Anna Pávlovna is the hostess; Anna Mikháylovna is Borís's mother; Pierre went to Anatole's, then back to Moscow.\n"
+    "[S4] Anna Pávlovna is the hostess; Anna Mikháylovna is Borís's mother; Lise calls the general Uncle and will live with her husband's father and sister.\n"
     "</untrusted_document>\n"
     "<untrusted_document>\n[CHUNK C1 | war_and_peace_book1.txt]\n"
     "[S1] The rain had not stopped since morning.\n"
@@ -859,10 +859,10 @@ def _mode_row(
             ),
         }
         for qid in _CMP_IDS
-        if qid != "q030"
+        if qid != "q040"
     ]
     row["metrics"]["probes_total"] = 5
-    row["metrics"]["probes_passed"] = sum(1 for q in _CMP_IDS if q in right and q != "q030")
+    row["metrics"]["probes_passed"] = sum(1 for q in _CMP_IDS if q in right and q != "q040")
     return row
 
 
@@ -896,7 +896,7 @@ def test_mode_rows_group_by_mode_and_only_graphrag_feeds_the_chat_column(
 
     by_id = {m["id"]: m for m in page["models"]}
     m = by_id["ollama/m:1b"]["chat"]
-    # the chat column: the board bands only (q001; q030 is excluded by the audit), graphrag only
+    # the chat column: the board bands only (q001; q040 is excluded by the audit), graphrag only
     assert (m["passed"], m["total"], m["runs"]) == (1, 1, 1)
     assert m["citation_accuracy"] == 100.0
     cmp = page["suites"]["chat"]["comparison"]
@@ -929,7 +929,7 @@ def test_per_group_counts_lifts_and_intervals(
     assert modes["naive"]["graph_advantage"] == {"passed": 0, "total": 4}
     assert modes["graphrag"]["cross_chapter_join"] == {"passed": 1, "total": 1}
     assert modes["hybrid"]["relationship_path"] == {"passed": 0, "total": 1}
-    # the original questions are scored with the answerable flags off: q030 counts
+    # the original questions are scored with the answerable flags off: q040 counts
     assert modes["graphrag"]["original"] == {"passed": 2, "total": 2}
     assert modes["naive"]["original"] == {"passed": 1, "total": 2}
     assert modes["graphrag"]["citation_accuracy"] == 100.0
@@ -1075,7 +1075,7 @@ def test_value_block_measures_the_graph_four_ways_and_emits_only_true_headlines(
     assert (best["small"], best["big"]) == ("ollama/gemma4:12b", "ollama/gemma4:31b")
     assert best["ratio"] == round(20.0 / 7.6, 1)
     assert best["small_graphrag_pct"] >= best["big_naive_pct"]
-    # the ordinary questions (q001, q030): every model fails q030 on naive and nothing with
+    # the ordinary questions (q001, q040): every model fails q040 on naive and nothing with
     # the graph, so all three remove every failed answer there
     ordinary = value["errors_removed"]["original"]["naive"]
     assert ordinary["median_pct"] == 100.0 and ordinary["models_above_bar"] == 3
@@ -1168,7 +1168,7 @@ def test_a_timed_out_or_errored_chat_row_is_refused_by_name(
     errored = _mode_row("ollama/qwen3:14b", "graphrag", set(_CMP_IDS))
     errored["extras"]["per_query"][1]["error"] = "LLMServiceError: connection refused"
     chat = _write(tmp_path / "errored.json", [errored])
-    with pytest.raises(SystemExit, match=r"1 question\(s\) errored \(first q030: LLMServiceError"):
+    with pytest.raises(SystemExit, match=r"1 question\(s\) errored \(first q040: LLMServiceError"):
         _export(script, monkeypatch, tmp_path, "--chat", str(chat))
     # told to, the row pools as before: the errored question is a fail
     page, _ = _export(script, monkeypatch, tmp_path, "--chat", str(chat), "--include-errored")

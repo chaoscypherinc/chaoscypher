@@ -3,13 +3,14 @@
 
 /**
  * ContextMenus: Context menus for graph nodes, edges, and canvas.
- * Uses MUI Menu for consistent styling with the rest of the UI.
+ * Uses MUI Menu for consistent styling with the rest of the UI. A synthetic
+ * hub gets only its show/hide action, never one that edits it.
  */
 
 import React from 'react';
 import { Menu, MenuItem, Divider } from '@mui/material';
 import type { GraphNodeData, GraphEdgeData } from '../types';
-import { isSourceGroupNode, SOURCE_GROUP_PREFIX } from '../types';
+import { isSourceGroupNode, isUnresolvedBucketNode, SOURCE_GROUP_PREFIX } from '../types';
 import type {
   NodeContextMenuController,
   EdgeContextMenuController,
@@ -27,6 +28,10 @@ interface NodeContextMenuProps {
   onToggleSourceGroup?: (sourceId: string) => void;
   onNavigateToSource?: (sourceId: string) => void;
   isSourceGroupExpanded?: (sourceId: string) => boolean;
+  /** Show or hide an Unresolved hub's members. */
+  onToggleUnresolved?: (hubId: string) => void;
+  /** Whether an Unresolved hub shows its members. */
+  isUnresolvedExpanded?: (hubId: string) => boolean;
   menuState: NodeContextMenuController;
 }
 
@@ -39,11 +44,27 @@ export const NodeContextMenu: React.FC<NodeContextMenuProps> = ({
   onToggleSourceGroup,
   onNavigateToSource,
   isSourceGroupExpanded,
+  onToggleUnresolved,
+  isUnresolvedExpanded,
   menuState,
 }) => {
   const { state, close } = menuState;
   const open = state.position !== null;
   const { nodeId, data } = state.props ?? { nodeId: '', data: {} as GraphNodeData };
+  const anchorPosition = state.position
+    ? { top: state.position.mouseY, left: state.position.mouseX }
+    : undefined;
+
+  // An Unresolved hub: show or hide its members, nothing else
+  if (isUnresolvedBucketNode(nodeId)) {
+    return (
+      <Menu open={open} onClose={close} anchorReference="anchorPosition" anchorPosition={anchorPosition}>
+        <MenuItem onClick={() => { onToggleUnresolved?.(nodeId); close(); }}>
+          {isUnresolvedExpanded?.(nodeId) ? 'Hide Unresolved Nodes' : 'Show Unresolved Nodes'}
+        </MenuItem>
+      </Menu>
+    );
+  }
 
   // Source group nodes get a different context menu
   if (isSourceGroupNode(nodeId)) {
@@ -198,4 +219,3 @@ export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = ({
     </Menu>
   );
 };
-

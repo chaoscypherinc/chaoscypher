@@ -18,6 +18,7 @@ import structlog
 
 from chaoscypher_core.ports.llm import TaskType
 from chaoscypher_core.utils.llm_response import extract_content_with_fallback
+from chaoscypher_core.utils.tool_failure import log_tool_failure
 
 
 logger = structlog.get_logger(__name__)
@@ -204,9 +205,4 @@ You can respond with JSON or clear prose."""
             }
 
         except Exception as e:
-            logger.exception(
-                "research_topic_failed",
-                error_type=type(e).__name__,
-                error_message=str(e),
-            )
-            return {"success": False, "error": "Search operation failed"}
+            return log_tool_failure(logger, "research_topic_failed", e)

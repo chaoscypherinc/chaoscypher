@@ -6,21 +6,31 @@
  *
  * Applies visual effects — selection highlights, search dimming,
  * spotlight hover, gradient edges, zoom-adaptive icon visibility,
- * pipeline-flagged edges (``utils/edgeFlags``: capped thin, unevidenced dashed), and provenance edge styling — via sigma's nodeReducer / edgeReducer
- * settings.
+ * pipeline-flagged edges (``utils/edgeFlags``: capped thin, unevidenced dashed), and
+ * synthetic hubs (source roots, the Unresolved hubs) with their faint edges — via
+ * sigma's nodeReducer / edgeReducer settings.
  */
 
 import { useEffect } from 'react';
 import { useSigma } from '@react-sigma/core';
 import type Graph from 'graphology';
 import type { NodeAttributes, EdgeAttributes } from '../types';
-import { isSourceGroupNode, isProvenanceEdge } from '../types';
+import { isSyntheticEdge, isSyntheticNode, isUnresolvedBucketNode } from '../types';
 import { GraphColors } from '../../../theme/colors';
 import { ChaosCypherPalette } from '../../../theme/palette';
 import { FLAGGED_EDGE_SIZE, edgeDrawing } from '../../../utils/edgeFlags';
+import { unresolvedEdgeId } from '../utils/unresolvedBucket';
 
 /** Minimum connections for a node to keep full template color intensity. */
 const CONNECTION_THRESHOLD = 2;
+
+/**
+ * A node's connections for the low-connection look: its degree, less its link
+ * to the Unresolved hub, so a member looks as it would without the hub.
+ */
+function connectionCount(graph: Graph<NodeAttributes, EdgeAttributes>, node: string): number {
+  return graph.degree(node) - (graph.hasEdge(unresolvedEdgeId(node)) ? 1 : 0);
+}
 
 /** Mix a hex color toward the dark background (#0A0E17) by a given intensity (0-1). */
 function mixColorWithBackground(hex: string, intensity: number): string {
@@ -96,8 +106,13 @@ export function useGraphReducers({
         res.type = 'circle';
       }
 
-      // Source group nodes: add glow border, skip other filters
-      if (isSourceGroupNode(node)) {
+      // Synthetic hubs (source roots, the Unresolved hubs): glow border, skip other
+      // filters. An Unresolved hub hides only with its collapsed document.
+      if (isSyntheticNode(node)) {
+        if (isUnresolvedBucketNode(node) && hiddenNodeIds.has(node)) {
+          res.hidden = true;
+          return res;
+        }
         const sgColor = res.color || GraphColors.fadedFallback;
         res.borderColor = sgColor;
         res.borderSize = 0.5;
@@ -116,7 +131,7 @@ export function useGraphReducers({
       res.borderSize = 0.4;
 
       // Desaturate low-connection nodes — keeps their cluster hue but muted
-      if (graph.degree(node) < CONNECTION_THRESHOLD) {
+      if (connectionCount(graph, node) < CONNECTION_THRESHOLD) {
         res.color = mixColorWithBackground(nodeColor, 0.35);
         res.borderColor = mixColorWithBackground(nodeColor, 0.35);
       }
@@ -177,23 +192,23 @@ export function useGraphReducers({
       const source = graph.source(edge);
       const target = graph.target(edge);
 
-      // Provenance edges: hide when source group is collapsed,
-      // otherwise show as subtle gradient
-      if (isProvenanceEdge(edge)) {
-        // Check if either endpoint is in a collapsed group
+      // Synthetic hub edges (provenance, Unresolved, root to Unresolved): hide when
+      // an endpoint is hidden (a collapsed group or bucket), otherwise a faint
+      // gradient in the colour of the hub they come from
+      if (isSyntheticEdge(edge)) {
         if (hiddenNodeIds.has(source) || hiddenNodeIds.has(target)) {
           res.hidden = true;
           return res;
         }
         res.type = 'line';
         const sourceIsLeaf = graph.degree(source) <= graph.degree(target);
-        const provenanceBase = ChaosCypherPalette.primary;
+        const hubBase = graph.getNodeAttribute(source, 'color') || ChaosCypherPalette.primary;
         if (sourceIsLeaf) {
-          res.color = mixColorWithBackground(provenanceBase, 0.18);
-          res.targetColor = mixColorWithBackground(provenanceBase, 0.06);
+          res.color = mixColorWithBackground(hubBase, 0.18);
+          res.targetColor = mixColorWithBackground(hubBase, 0.06);
         } else {
-          res.color = mixColorWithBackground(provenanceBase, 0.06);
-          res.targetColor = mixColorWithBackground(provenanceBase, 0.18);
+          res.color = mixColorWithBackground(hubBase, 0.06);
+          res.targetColor = mixColorWithBackground(hubBase, 0.18);
         }
         return res;
       }

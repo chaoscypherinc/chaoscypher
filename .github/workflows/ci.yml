@@ -325,7 +325,9 @@ jobs:
   public-gates:
     name: Public Gates (internal-ref scan, license policy, docs build)
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
-    timeout-minutes: 25
+    # 35, not 25 (2026-10-24): the benchmark tools' tests doubled with the second corpus (697),
+    # 13-18 min of the job on a shared runner, and #860's run was cancelled in the docs build.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 

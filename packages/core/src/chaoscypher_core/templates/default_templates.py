@@ -762,3 +762,12 @@ def get_all_default_templates() -> list[dict[str, Any]]:
         + DEFAULT_LENS_TEMPLATES
         + DEFAULT_WORKFLOW_TEMPLATES
     )
+
+
+SHIPPED_TEMPLATE_IDS: frozenset[str] = frozenset(str(t["id"]) for t in get_all_default_templates())
+"""The id of every template above: what every open gives a database that lacks it."""
+
+
+def shipped_template(template_id: str) -> dict[str, Any] | None:
+    """The definition of the shipped template with this id, or None when none has it."""
+    return next((t for t in get_all_default_templates() if t["id"] == template_id), None)

@@ -92,9 +92,7 @@ def test_clear_resets_record(tmp_path) -> None:
     )
 
     db = tmp_path / "app.db"
-    record_successful_upgrade(
-        db, applied=["0010"], last_backup="/tmp/x.db", data_changing=True
-    )
+    record_successful_upgrade(db, applied=["0010"], last_backup="/tmp/x.db", data_changing=True)
     clear_upgrade_state(db)
     state = get_upgrade_state(db)
     assert state.last_applied == []

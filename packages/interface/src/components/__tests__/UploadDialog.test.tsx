@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { makeWrapper } from '../../test/renderWithProviders';
 import { UploadDialog } from '../UploadDialog';
 import type { ExtractionDomain } from '../../services/api/sources';
 
 const DOMAINS: ExtractionDomain[] = [
-  { name: 'science', description: 'Science', builtin: true },
-  { name: 'legal', description: 'Legal', builtin: true },
+  { name: 'scientific', description: 'Science', builtin: true, role: 'pack' },
+  { name: 'legal', description: 'Legal', builtin: true, role: 'pack' },
 ];
 
 type Props = Parameters<typeof UploadDialog>[0];
@@ -63,18 +63,36 @@ describe('<UploadDialog /> pack selector placement', () => {
     const { unmount } = render(<UploadDialog {...makeProps({ selectedFiles: [file()] })} />, {
       wrapper: makeWrapper(),
     });
-    await screen.findByRole('combobox', { name: /packs/i });
+    await screen.findByRole('switch', { name: /detect packs automatically/i });
     unmount();
   });
   beforeEach(() => vi.clearAllMocks());
 
-  it('surfaces the Pack selector at the top level once a file is selected', () => {
+  it('surfaces the pack choice once a file is selected: detection on, no picker', () => {
     render(<UploadDialog {...makeProps({ selectedFiles: [file()] })} />, { wrapper: makeWrapper() });
+    expect(screen.getByRole('switch', { name: /detect packs automatically/i })).toBeChecked();
+    expect(screen.queryByRole('combobox', { name: /packs/i })).not.toBeInTheDocument();
+  });
+
+  it('shows the Pack picker once detection is off', () => {
+    render(<UploadDialog {...makeProps({ selectedFiles: [file()], selectedPacks: [] })} />, {
+      wrapper: makeWrapper(),
+    });
+    expect(screen.getByRole('switch', { name: /detect packs automatically/i })).not.toBeChecked();
     expect(screen.getByRole('combobox', { name: /packs/i })).toBeInTheDocument();
+  });
+
+  it('explains packs with the registered packs as examples, reviewed before extraction', async () => {
+    render(<UploadDialog {...makeProps({ selectedFiles: [file()] })} />, { wrapper: makeWrapper() });
+    fireEvent.mouseOver(screen.getByLabelText('What are packs?'));
+    const tooltip = await screen.findByRole('tooltip');
+    expect(tooltip).toHaveTextContent('for example Scientific and Legal.');
+    expect(tooltip).toHaveTextContent('you review them before extraction starts.');
   });
 
   it('hides the Pack selector when no file is selected', () => {
     render(<UploadDialog {...makeProps({ selectedFiles: [] })} />, { wrapper: makeWrapper() });
+    expect(screen.queryByRole('switch', { name: /detect packs automatically/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: /packs/i })).not.toBeInTheDocument();
   });
 
@@ -83,6 +101,7 @@ describe('<UploadDialog /> pack selector placement', () => {
       <UploadDialog {...makeProps({ selectedFiles: [file()], extractEntities: false })} />,
       { wrapper: makeWrapper() },
     );
+    expect(screen.queryByRole('switch', { name: /detect packs automatically/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: /packs/i })).not.toBeInTheDocument();
   });
 });

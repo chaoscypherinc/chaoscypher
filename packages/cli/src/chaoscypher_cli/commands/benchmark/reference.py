@@ -12,6 +12,7 @@ local chat models did. See :mod:`chaoscypher_core.benchmark.reference`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -292,11 +293,17 @@ def export_cmd(
         raise click.ClickException(msg)
 
     base = data_dir or _default_data_dir()
-    root = reference_root(base) / pack_name
+    final = reference_root(base) / pack_name
+    if final.exists() and not force:
+        msg = f"pack {pack_name!r} exists at {final}; pass --force"
+        raise click.ClickException(msg)
+    # Built under a sibling of the reference root (the manifest's name must
+    # match its directory, and a building pack must not be listed) and swapped
+    # in whole: ``--force`` used to delete the old pack first, so a build that
+    # failed (or a Ctrl+C) left no pack at all, or a half-written one
+    # (2026-10-19 audit).
+    root = final.parent.with_name(f"{final.parent.name}.building") / pack_name
     if root.exists():
-        if not force:
-            msg = f"pack {pack_name!r} exists at {root}; pass --force"
-            raise click.ClickException(msg)
         shutil.rmtree(root)
     root.mkdir(parents=True)
     try:
@@ -343,10 +350,18 @@ def export_cmd(
                 **store_fields,
             },
         )
-        pack = load_pack(base, pack_name)
-    except Exception:
+    except BaseException:
         shutil.rmtree(root, ignore_errors=True)
         raise
+    if final.exists():
+        shutil.rmtree(final)
+    final.parent.mkdir(parents=True, exist_ok=True)
+    building_root = root.parent
+    root.replace(final)
+    root = final
+    with contextlib.suppress(OSError):
+        building_root.rmdir()  # only when nothing else is building
+    pack = load_pack(base, pack_name)
     console.print(f"[green]Wrote reference pack[/green] {pack_name} to {root}")
     if index:
         console.print(f"Indexing with {embedder} ...")

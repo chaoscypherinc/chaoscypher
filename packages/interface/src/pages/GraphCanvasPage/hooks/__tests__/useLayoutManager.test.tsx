@@ -7,6 +7,12 @@ import Graph from 'graphology';
 import type { NodeAttributes, EdgeAttributes } from '../../types';
 import { SOURCE_GROUP_PREFIX, SOURCE_PROVENANCE_PREFIX } from '../../types';
 import { useLayoutManager } from '../useLayoutManager';
+import { unresolvedBucketId } from '../../types';
+import { syncUnresolvedBuckets } from '../../utils/unresolvedBucket';
+import { addSourceGroupNode } from '../../utils/transformers';
+
+/** The hub for unresolved nodes with no known source. */
+const UNRESOLVED_BUCKET_ID = unresolvedBucketId(null);
 
 // ---------------------------------------------------------------------------
 // Fake sigma: exposes only the methods the hook calls.
@@ -193,16 +199,21 @@ describe('useLayoutManager', () => {
 
   // ── Return shape ──────────────────────────────────────────────────────────
 
-  // ── Unresolved region ─────────────────────────────────────────────────────
+  // ── Unresolved hub ────────────────────────────────────────────────────────
+
+  function addUnresolved(graph: Graph<NodeAttributes, EdgeAttributes>) {
+    graph.addNode('O1', nodeAttrs({ nodeId: 'O1', content: { orphan: true } }));
+    graph.addNode('O2', nodeAttrs({ nodeId: 'O2', content: { descriptor_reference: true } }));
+    graph.addNode('O3', nodeAttrs({ nodeId: 'O3', content: { orphan: 'true' } })); // not a flag
+    graph.addEdgeWithKey('O2A', 'O2', 'A', edgeAttrs({ edgeId: 'O2A' }));
+  }
 
   it.each(['force', 'grid', 'mindmap', 'hierarchical', 'radial'])(
-    '%s: lays pipeline-flagged nodes out together, clear of the rest of the graph',
+    '%s: lays the unresolved nodes out around their hub, clear of the rest of the graph',
     async (layout) => {
       const graph = buildGraph();
-      graph.addNode('O1', nodeAttrs({ nodeId: 'O1', content: { orphan: true } }));
-      graph.addNode('O2', nodeAttrs({ nodeId: 'O2', content: { descriptor_reference: true } }));
-      graph.addNode('O3', nodeAttrs({ nodeId: 'O3', content: { orphan: 'true' } })); // not a flag
-      graph.addEdgeWithKey('O2A', 'O2', 'A', edgeAttrs({ edgeId: 'O2A' }));
+      addUnresolved(graph);
+      syncUnresolvedBuckets(graph);
       const order = graph.order;
       const size = graph.size;
 
@@ -212,14 +223,101 @@ describe('useLayoutManager', () => {
       const mainMaxX = Math.max(
         ...['A', 'B', 'C', 'D', 'O3'].map((id) => graph.getNodeAttribute(id, 'x')),
       );
+      const hub = graph.getNodeAttributes(UNRESOLVED_BUCKET_ID);
+      expect(hub.x).toBeGreaterThan(mainMaxX);
       for (const id of ['O1', 'O2']) {
-        expect(graph.getNodeAttribute(id, 'x')).toBeGreaterThan(mainMaxX);
+        const member = graph.getNodeAttributes(id);
+        expect(member.x).toBeGreaterThan(mainMaxX);
+        // Around the hub, as a source's nodes sit around their root.
+        expect(Math.hypot(member.x - hub.x, member.y - hub.y)).toBeLessThan(100);
       }
       // Layout only: no node or edge added or removed.
       expect(graph.order).toBe(order);
       expect(graph.size).toBe(size);
     },
   );
+
+  it('places the unresolved nodes before the hub exists, so a new hub starts among them', async () => {
+    const graph = buildGraph();
+    addUnresolved(graph);
+
+    const { applyLayout } = renderLayoutManager(graph);
+    await runLayout(applyLayout, 'mindmap');
+    syncUnresolvedBuckets(graph);
+
+    const hub = graph.getNodeAttributes(UNRESOLVED_BUCKET_ID);
+    for (const id of ['O1', 'O2']) {
+      const member = graph.getNodeAttributes(id);
+      expect(Math.hypot(member.x - hub.x, member.y - hub.y)).toBeLessThan(100);
+    }
+  });
+
+  /** Two documents, each with real nodes, a root, and unresolved nodes of its own. */
+  function buildTwoSourceGraph(withRoots: boolean) {
+    const graph = new Graph<NodeAttributes, EdgeAttributes>({ type: 'directed' });
+    for (const src of ['s1', 's2']) {
+      const ids = [0, 1, 2, 3].map((i) => `${src}-n${i}`);
+      ids.forEach((id) => graph.addNode(id, nodeAttrs({ nodeId: id, sourceDocumentId: src })));
+      graph.addEdgeWithKey(`${src}-e1`, ids[0], ids[1], edgeAttrs({ edgeId: `${src}-e1` }));
+      graph.addEdgeWithKey(`${src}-e2`, ids[1], ids[2], edgeAttrs({ edgeId: `${src}-e2` }));
+      for (const u of ['u1', 'u2']) {
+        graph.addNode(`${src}-${u}`, nodeAttrs({ nodeId: `${src}-${u}`, sourceDocumentId: src, content: { orphan: true } }));
+      }
+      if (withRoots) {
+        addSourceGroupNode(graph, {
+          source_id: src, title: src, source_type: 'text', filename: `${src}.txt`,
+          entity_count: 6, entity_node_ids: [...ids, `${src}-u1`, `${src}-u2`],
+        });
+      }
+    }
+    return graph;
+  }
+  const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+  /**
+   * A hub sits one short step to the right of its anchor (its root, or its
+   * document's nodes), give or take `slack` (a hub made after the layout
+   * starts at its members' centroid, a little off the spiral's centre).
+   */
+  function expectBeside(hub: { x: number; y: number }, anchor: { x: number; y: number }, slack = 1e-6) {
+    expect(Math.abs(hub.y - anchor.y)).toBeLessThan(slack);
+    expect(hub.x - anchor.x).toBeGreaterThan(48 - slack);
+    expect(hub.x - anchor.x).toBeLessThan(150);
+  }
+
+  it.each(['force', 'mindmap', 'grid'])(
+    '%s: sets each source\'s hub beside its own document root, its members around it',
+    async (layout) => {
+      const graph = buildTwoSourceGraph(true);
+      syncUnresolvedBuckets(graph);
+      const { applyLayout } = renderLayoutManager(graph);
+      await runLayout(applyLayout, layout);
+
+      for (const src of ['s1', 's2']) {
+        const hub = graph.getNodeAttributes(unresolvedBucketId(src));
+        const root = graph.getNodeAttributes(`${SOURCE_GROUP_PREFIX}${src}`);
+        // Just beside its own root (whatever the layout made of the rest).
+        expectBeside(hub, root);
+        for (const u of ['u1', 'u2']) {
+          expect(dist(graph.getNodeAttributes(`${src}-${u}`), hub)).toBeLessThan(100);
+        }
+      }
+    },
+  );
+
+  it('on a first load (no roots yet) places each source\'s unresolved nodes beside that source\'s nodes', async () => {
+    const graph = buildTwoSourceGraph(false);
+    const { applyLayout } = renderLayoutManager(graph);
+    await runLayout(applyLayout, 'mindmap');
+    syncUnresolvedBuckets(graph);
+
+    const centroid = (src: string) => {
+      const pts = [0, 1, 2, 3].map((i) => graph.getNodeAttributes(`${src}-n${i}`));
+      return { x: pts.reduce((s, p) => s + p.x, 0) / 4, y: pts.reduce((s, p) => s + p.y, 0) / 4 };
+    };
+    for (const src of ['s1', 's2']) {
+      expectBeside(graph.getNodeAttributes(unresolvedBucketId(src)), centroid(src), 24);
+    }
+  });
 
   it('returns an applyLayout function', () => {
     const graph = buildGraph();

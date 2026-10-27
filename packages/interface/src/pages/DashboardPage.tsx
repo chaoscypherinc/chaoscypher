@@ -77,22 +77,12 @@ export default function DashboardPage() {
     };
   }, [countsQuery.data, qualityQuery.data]);
 
+  // Only the stats wait for their numbers. The background, the pills and the
+  // notice render on the first frame: gating the whole page on /counts and
+  // /quality/summary (the latter recalculates stale sources inline, slow on a
+  // large database) kept the background unmounted, and its own graph reads
+  // unstarted, until the slower of the two answered.
   const loading = countsQuery.isPending || qualityQuery.isPending;
-
-  if (loading) {
-    return (
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: 'calc(100vh - 64px)',
-          bgcolor: ChaosCypherBackground.dark.default
-        }}>
-        <CircularProgress sx={{ color: ChaosCypherPalette.primary }} />
-      </Box>
-    );
-  }
 
   return (
     <Box
@@ -152,19 +142,27 @@ export default function DashboardPage() {
           </Alert>
         )}
 
-        {/* === TOP-RIGHT: System Health Cluster === */}
-        <SystemHealthCluster
-          isIdle={isIdle}
-          activeCount={activeCount}
-          totalCostUsd={totalCostUsd}
-          progress={progress}
-          activityEntries={activityEntries}
-          graphNodeCount={stats.entityCount}
-          totalNodes={stats.entityCount}
-        />
+        {loading ? (
+          <Box sx={{ display: 'flex', flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <CircularProgress sx={{ color: ChaosCypherPalette.primary }} />
+          </Box>
+        ) : (
+          <>
+            {/* === TOP-RIGHT: System Health Cluster === */}
+            <SystemHealthCluster
+              isIdle={isIdle}
+              activeCount={activeCount}
+              totalCostUsd={totalCostUsd}
+              progress={progress}
+              activityEntries={activityEntries}
+              graphNodeCount={stats.entityCount}
+              totalNodes={stats.entityCount}
+            />
 
-        {/* === LEFT HUD === */}
-        <StatsPanel stats={stats} />
+            {/* === LEFT HUD === */}
+            <StatsPanel stats={stats} />
+          </>
+        )}
 
       </Box>
     </Box>

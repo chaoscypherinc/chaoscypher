@@ -31,7 +31,7 @@ Usage:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -49,6 +49,7 @@ if TYPE_CHECKING:
         AnalysisDepth,
         BatchEmbedResult,
         ChunkingResult,
+        ChunksResult,
         DatabaseStats,
         Edge,
         EdgeCreate,
@@ -80,6 +81,9 @@ if TYPE_CHECKING:
     )
     from chaoscypher_core.services.sources.engine.extraction.service import (
         ExtractionService,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.utils.offered_types import (
+        OfferedType,
     )
     from chaoscypher_core.services.workflows.management import WorkflowService
     from chaoscypher_core.settings import EngineSettings
@@ -268,21 +272,23 @@ class Engine:
         # Ensure directories exist
         data_dir.mkdir(parents=True, exist_ok=True)
 
-        # Optionally initialize the database schema.
+        # Optionally initialize the database: the step every open for writing
+        # takes (``prepare_database``, which ``init_database`` takes too).
         #
         # Build it through the Alembic runner — never a bare create_all. The
         # tier-aware runner stamps alembic_version (HEAD on a fresh install),
         # so a CLI-first-created DB later opened by Cortex/Neuron is already
         # at HEAD instead of being mis-stamped at the baseline and replaying
         # 0002→HEAD against present schema (migration crash / cross-tool
-        # drift). This matches the Cortex/Neuron init_database path.
+        # drift). Then the shipped templates the database lacks are inserted:
+        # the default edge template is a foreign-key target, and a database the
+        # migrations alone built had none of them.
         if initialize_db:
-            from chaoscypher_core.database.migrations.startup import (
-                run_startup_migrations,
-            )
+            from chaoscypher_core.database.engine import prepare_database
 
-            run_startup_migrations(
+            prepare_database(
                 data_dir / "app.db",
+                self.database_name,
                 auto_apply_destructive=self.settings.migrations.auto_apply_destructive,
             )
 
@@ -296,19 +302,23 @@ class Engine:
 
         self._graph_session = get_session(db_path)
         self.graph_repository = get_graph_repository(self._graph_session, self.database_name)
+        # The embedding provider the settings call for: None with vector search
+        # off, and then nothing in this engine builds or calls an embedding model.
+        from chaoscypher_core.adapters.embedding import embedding_provider_for
         from chaoscypher_core.adapters.sqlite.engine import get_engine as get_db_engine
+
+        self.embedding_service: EmbeddingProviderProtocol | None = embedding_provider_for(
+            self.settings
+        )
 
         app_db_engine = get_db_engine(Path(data_dir) / "app.db")
         self.search_repository = SearchRepository(
             engine=app_db_engine,
             vector_dim=self.settings.search.vector_dimensions,
             embedding_model=self.settings.embedding.model,
+            # a keyword-only engine never touches another process's vectors
+            vectors=self.embedding_service is not None,
         )
-
-        # Create embedding provider via factory
-        from chaoscypher_core.adapters.embedding import create_embedding_provider
-
-        self.embedding_service: EmbeddingProviderProtocol = create_embedding_provider(self.settings)
 
         # Graph services
         self.node_service = NodeService(
@@ -340,7 +350,9 @@ class Engine:
             source_repository=self.storage_adapter,
             sources_repository=self.storage_adapter,
             settings=self.settings,
-            default_embedding_callback=self._default_embed_callback,
+            default_embedding_callback=(
+                self._default_embed_callback if self.embedding_service is not None else None
+            ),
         )
 
         logger.info(
@@ -349,6 +361,28 @@ class Engine:
             data_dir=str(data_dir),
             adapter_type=type(self.storage_adapter).__name__,
         )
+
+    def expire_cached_rows(self) -> None:
+        """Make the engine's long-lived sessions reload every row they cached, at its next read.
+
+        Another process may have written since a row was loaded, and SQLAlchemy hands
+        back a row already in a session's identity map without reloading it. The MCP
+        server calls this before every tool call, so each call sees every write that
+        finished before it began (spec 2026-10-24 § 3, G4). Covers the graph
+        repository's session and the storage adapter's (which the commit's
+        transaction repository shares); the search repository opens a connection per
+        call. A session with unflushed changes (a call still running in this process)
+        is left alone: expiring would drop them.
+        """
+        sessions: list[Any] = []
+        for session in (self._graph_session, self.storage_adapter.session):
+            if session is None or any(session is seen for seen in sessions):
+                continue
+            sessions.append(session)
+            if session.new or session.dirty or session.deleted:
+                logger.debug("engine_expire_skipped_pending_changes")
+                continue
+            session.expire_all()
 
     def close(self) -> None:
         """Disconnect adapters and cleanup resources.
@@ -451,12 +485,12 @@ class Engine:
         return self._retry_policy
 
     @property
-    def embedding_provider(self) -> EmbeddingProviderProtocol:
+    def embedding_provider(self) -> EmbeddingProviderProtocol | None:
         """Convenience alias for :attr:`embedding_service`.
 
         Named to match the ``EmbeddingProviderProtocol`` port terminology
         used by services that consume the port. Returns the same instance
-        as :attr:`embedding_service`.
+        as :attr:`embedding_service` (None with vector search off).
         """
         return self.embedding_service
 
@@ -531,25 +565,13 @@ class Engine:
             # doesn't trip this because each task builds a fresh Engine per
             # dispatch — but in-process consumers keep the Engine alive across
             # stages, and that's where the dual-session race lives.
-            from chaoscypher_core.repo_factories import get_transaction_graph_repository
+            #
+            # ``SourceCommitService.from_engine`` is that one wiring.
             from chaoscypher_core.services.sources.engine.commit.service import (
                 SourceCommitService,
             )
 
-            commit_graph_repository = get_transaction_graph_repository(
-                self.storage_adapter, self.database_name
-            )
-
-            self._commit_service = SourceCommitService(
-                graph_repository=commit_graph_repository,
-                source_repository=self.storage_adapter,
-                sources_repository=self.storage_adapter,
-                indexing_repository=self.storage_adapter,
-                search_repository=self.search_repository,
-                settings=self.settings,
-                retry_policy=self.retry_policy,
-                embedding_provider=self.embedding_service,
-            )
+            self._commit_service = SourceCommitService.from_engine(self)
         return self._commit_service
 
     # ========================================================================
@@ -559,9 +581,10 @@ class Engine:
     async def _default_embed_callback(self, text: str) -> list[float]:
         """Default embedding callback for SearchService.
 
-        Uses the configured embedding provider for search.
+        Uses the configured embedding provider for search; wired only when
+        the engine has one.
         """
-        result = await self.embedding_service.embed(text)
+        result = await self._require_embedding("Embedding").embed(text)
         embedding: list[float] = result.embedding
         return embedding
 
@@ -1100,8 +1123,11 @@ class Engine:
             result = await engine.embed("quantum entanglement")
             print(f"Dimensions: {len(result.embedding)}")
 
+        Raises:
+            VectorSearchOff: When vector search is off.
+
         """
-        return await self.embedding_service.embed(text, **kwargs)
+        return await self._require_embedding("Embedding").embed(text, **kwargs)
 
     async def batch_embed(self, texts: list[str], **kwargs: Any) -> BatchEmbedResult:
         """Generate vector embeddings for multiple texts.
@@ -1113,8 +1139,17 @@ class Engine:
         Returns:
             BatchEmbedResult with embeddings list, counts, and provider.
 
+        Raises:
+            VectorSearchOff: When vector search is off.
+
         """
-        return await self.embedding_service.batch_embed(texts, **kwargs)
+        return await self._require_embedding("Embedding").batch_embed(texts, **kwargs)
+
+    def _require_embedding(self, action: str) -> EmbeddingProviderProtocol:
+        """The engine's embedding provider, or :class:`VectorSearchOff` naming ``action``."""
+        from chaoscypher_core.adapters.embedding import require_embedding_provider
+
+        return require_embedding_provider(self.embedding_service, action)
 
     # ========================================================================
     # Document Processing
@@ -1214,7 +1249,7 @@ class Engine:
         results = await self.extraction_service.finalize_distributed_extraction(
             raw_entities=raw_result.entities,
             raw_relationships=raw_result.relationships,
-            generate_embeddings=True,
+            generate_embeddings=self.embedding_service is not None,
             detected_domain=raw_result.domain,
         )
 
@@ -1479,30 +1514,19 @@ class Engine:
             confirmation_required=confirmation_required,
         )
 
-        # Stage 1: Chunk and store (enables RAG search)
-        chunks_result = await self.chunking_service.create_chunks(
-            full_text=text, source_id=source_id
-        )
-        chunking_model = ChunkingResult(
-            source_id=source_id,
-            total_small_chunks=chunks_result.total_small_chunks,
-            total_groups=chunks_result.total_groups,
-            analysis_depth=analysis_depth,
-        )
+        # Stages 1-2: chunk, store and index (enables RAG search)
+        chunks_result, index_result = await self.chunk_and_index(source_id, text)
         if on_progress:
-            on_progress("chunking", chunking_model)
-
-        # Stage 2: Index chunks (generate embeddings)
-        index_result = await self.indexing_service.create_index(source_id=source_id)
-        indexing_model = self._to_model(IndexingResult, index_result)
-        if on_progress:
-            on_progress("indexing", indexing_model)
-        self.storage_adapter.complete_indexing(
-            source_id,
-            chunks_count=index_result.get("chunks_count", 0),
-            embedding_model=index_result.get("embedding_model", ""),
-            embedding_dimensions=index_result.get("embedding_dimensions", 0),
-        )
+            on_progress(
+                "chunking",
+                ChunkingResult(
+                    source_id=source_id,
+                    total_small_chunks=chunks_result.total_small_chunks,
+                    total_groups=chunks_result.total_groups,
+                    analysis_depth=analysis_depth,
+                ),
+            )
+            on_progress("indexing", self._to_model(IndexingResult, index_result))
         if not extract:
             from chaoscypher_core.models import ProcessingResult, SourceStatus
 
@@ -1523,34 +1547,123 @@ class Engine:
             return parked
         # ----------------------------------------------------------------- #
 
-        # Stage 3: Extract entities (chunk + LLM extraction)
-        # The groups stage 1 stored, so the citations name the stored chunks
-        # (until 2026-10-20 ``chunking_service.process`` re-chunked the text
-        # and stored the copy under the source id "standalone"). A sampled
-        # depth re-chunks without storing: the sample is extraction's alone.
-        # The forced domain reaches detection through ``file_info`` (only the
-        # gate read it before), and the embedder is the engine's own.
-        from chaoscypher_core.models import ExtractionResult as ExtResult
-        from chaoscypher_core.services.sources.engine.extraction.extractor import (
-            extract_entities_from_groups,
-        )
-
-        file_info: dict[str, Any] = {"filename": filename}
-        if forced_domain:
-            file_info["forced_domain"] = forced_domain
+        # Stages 3-5 on the groups stage 1 stored, so the citations name the
+        # stored chunks. A sampled depth re-chunks without storing: the sample
+        # is extraction's alone.
         chunked = chunks_result
         if analysis_depth != "full":
             chunked = await self.chunking_service.create_chunks(
                 full_text=text, source_id=source_id, analysis_depth=analysis_depth, store=False
             )
+        return await self.extract_and_commit(
+            source_id,
+            seed=seed,
+            forced_domain=forced_domain,
+            groups=chunked.hierarchical_groups,
+            small_chunks=chunks_result.small_chunks,
+            filename=filename,
+            on_progress=on_progress,
+        )
+
+    async def chunk_and_index(
+        self, source_id: str, text: str
+    ) -> tuple[ChunksResult, dict[str, Any]]:
+        """Chunk ``text`` into the source's stored chunks, index them and mark the source indexed.
+
+        The one store step: ``process_document``, the MCP index-only path and a
+        memory's link (re-chunking a memory whose store failed) all run it. The
+        source row must exist (the chunk rows carry a foreign key to it).
+
+        Returns:
+            The chunk result (the small chunks and the hierarchical groups) and
+            the indexing service's result dict.
+        """
+        chunks_result = await self.chunking_service.create_chunks(
+            full_text=text, source_id=source_id
+        )
+        index_result = await self.indexing_service.create_index(source_id=source_id)
+        self.storage_adapter.complete_indexing(
+            source_id,
+            chunks_count=index_result.get("chunks_count", 0),
+            embedding_model=index_result.get("embedding_model", ""),
+            embedding_dimensions=index_result.get("embedding_dimensions", 0),
+        )
+        return chunks_result, index_result
+
+    async def extract_and_commit(
+        self,
+        source_id: str,
+        *,
+        seed: Sequence[Mapping[str, Any]] = (),
+        offered_nodes: Collection[str] = (),
+        offered_types: Sequence[OfferedType] = (),
+        forced_domain: str | None = None,
+        groups: Sequence[Mapping[str, Any]] | None = None,
+        small_chunks: Sequence[Mapping[str, Any]] | None = None,
+        filename: str | None = None,
+        strict: bool = False,
+        on_progress: ProgressCallback | None = None,
+    ) -> ProcessingResult:
+        """Extract, finalize and commit a stored source: stages 3 to 5 of ``process_document``.
+
+        ``process_document`` passes the groups and small chunks it has just made;
+        a source stored earlier (a memory whose link had to wait) passes none,
+        and the stored ones are read (the stored groups carry the same
+        ``combined_content`` and ``small_chunk_ids``).
+
+        Args:
+            source_id: The stored, indexed source.
+            seed: Records the extraction's KNOWN ENTITIES list starts with.
+            offered_nodes: Ids of the seed's graph nodes with no type: the commit joins a
+                node written by one's exact name to it (a memory's link).
+            offered_types: Templates offered as known types (a scoped memory's, D26): in
+                the prompt, and the commit binds an entity written with one to it.
+            forced_domain: The extraction domain, skipping detection.
+            groups: The hierarchical groups to extract; None reads the stored ones.
+            small_chunks: The small chunks the groups are made of; None reads them.
+            filename: The filename domain detection reads; None reads the row's.
+            strict: Raise :class:`~chaoscypher_core.exceptions.ExtractionIncomplete`
+                when the model failed on any group (a memory's link).
+            on_progress: Called with ``("extraction", result)`` before the commit.
+
+        Returns:
+            The created node, edge and template ids, and ``followups_complete``.
+        """
+        from chaoscypher_core.models import ExtractionResult as ExtResult
+        from chaoscypher_core.models import ProcessingResult
+        from chaoscypher_core.services.graph.memory.offered_nodes import OFFERED_NODES_KEY
+        from chaoscypher_core.services.sources.engine.extraction.extractor import (
+            extract_entities_from_groups,
+        )
+        from chaoscypher_core.services.sources.engine.extraction.utils.offered_types import (
+            OFFERED_TEMPLATES_KEY,
+            offered_template_ids,
+        )
+
+        if filename is None:
+            row = self.storage_adapter.get_source(source_id, self.settings.current_database)
+            filename = str((row or {}).get("filename") or "document.txt")
+        if groups is None:
+            groups = self.storage_adapter.get_hierarchical_groups(source_id)
+        if small_chunks is None:
+            small_chunks = self.storage_adapter.get_small_chunks(source_id)
+
+        # Stage 3: Extract entities (chunk + LLM extraction). The forced domain
+        # reaches detection through ``file_info``, and the embedder is the
+        # engine's own.
+        file_info: dict[str, Any] = {"filename": filename}
+        if forced_domain:
+            file_info["forced_domain"] = forced_domain
         raw_result = ExtResult(
             **await extract_entities_from_groups(
-                hierarchical_groups=chunked.hierarchical_groups,
+                hierarchical_groups=list(groups),  # type: ignore[arg-type]  # dict-shaped groups
                 settings=self.settings,
                 embedding_service=self.embedding_service,
                 file_info=file_info,
                 seed=seed,
-                small_chunks=chunks_result.small_chunks,
+                offered_types=offered_types,
+                small_chunks=small_chunks,
+                strict=strict,
             )
         )
 
@@ -1558,7 +1671,7 @@ class Engine:
         results = await self.extraction_service.finalize_distributed_extraction(
             raw_entities=raw_result.entities,
             raw_relationships=raw_result.relationships,
-            generate_embeddings=True,
+            generate_embeddings=self.embedding_service is not None,
             detected_domain=raw_result.domain,
         )
         # Pick only model-defined fields: ``finalize_distributed_extraction``
@@ -1577,6 +1690,10 @@ class Engine:
             on_progress("extraction", extraction_model)
 
         # Stage 5: Commit to graph
+        if offered_nodes:
+            results[OFFERED_NODES_KEY] = list(offered_nodes)
+        if offered_types:
+            results[OFFERED_TEMPLATES_KEY] = offered_template_ids(offered_types)
         commit_result = await self.commit_service.commit(
             file_id=source_id,
             commit_data=results,
@@ -1590,13 +1707,12 @@ class Engine:
             edges=len(commit_result.get("created_edges", [])),
         )
 
-        from chaoscypher_core.models import ProcessingResult
-
         return ProcessingResult(
             source_id=source_id,
             nodes=commit_result.get("created_nodes", []),
             edges=commit_result.get("created_edges", []),
             templates=commit_result.get("created_templates", []),
+            followups_complete=commit_result.get("followups_complete", True),
         )
 
     async def add_document(
@@ -1710,9 +1826,13 @@ class Engine:
             query: Search query string.
             limit: Maximum number of results.
             mode: Search mode — 'hybrid' (default), 'semantic', or 'keyword'.
+                With vector search off 'hybrid' runs its keyword arm alone.
 
         Returns:
             List of EngineSearchResult models sorted by relevance score.
+
+        Raises:
+            VectorSearchOff: For 'semantic' with vector search off.
 
         Example:
             results = await engine.search("quantum entanglement")
@@ -1722,25 +1842,22 @@ class Engine:
         """
         from chaoscypher_core.models import EngineSearchResult
 
-        async def _embed_callback(text: str) -> list[float]:
-            """Embed a query and return the bare vector for search services."""
-            result = await self.embedding_service.embed(text)
-            embedding: list[float] = result.embedding
-            return embedding
-
         if mode == "keyword":
             raw = self.search_service.keyword_search(query, limit=limit)
         elif mode == "semantic":
+            self._require_embedding("Semantic search")
             raw = await self.search_service.semantic_search(
                 query,
                 limit=limit,
-                embedding_provider_callback=_embed_callback,
+                embedding_provider_callback=self._default_embed_callback,
             )
         else:
             raw = await self.search_service.hybrid_search(
                 query,
                 limit=limit,
-                embedding_provider_callback=_embed_callback,
+                embedding_provider_callback=(
+                    self._default_embed_callback if self.embedding_service is not None else None
+                ),
             )
 
         results: list[EngineSearchResult] = []
@@ -1796,9 +1913,13 @@ class Engine:
             query: Search query string.
             limit: Maximum number of results.
             mode: Search mode — 'hybrid' (default), 'semantic', or 'keyword'.
+                With vector search off 'hybrid' runs its keyword arm alone.
 
         Returns:
             List of EngineSearchResult models sorted by relevance score.
+
+        Raises:
+            VectorSearchOff: For 'semantic' with vector search off.
 
         Example:
             with Engine(database="demo") as engine:

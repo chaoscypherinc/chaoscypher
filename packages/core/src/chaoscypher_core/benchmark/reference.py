@@ -163,11 +163,15 @@ def _default_engine(data_dir: Path, settings: EngineSettings) -> Any:
 
 async def _default_reindex(engine: Any) -> None:
     """Re-embed the engine's nodes and chunks with its own embedding service."""
+    from chaoscypher_core.adapters.embedding import require_embedding_provider
     from chaoscypher_core.benchmark.reindex import reindex_graph
     from chaoscypher_core.cache.call_site import call_site
 
+    provider = require_embedding_provider(
+        engine.embedding_service, "The benchmark's vector retrieval"
+    )
     with call_site("embeddings.index"):
-        await reindex_graph(engine, engine.embedding_service, settings=engine.settings)
+        await reindex_graph(engine, provider, settings=engine.settings)
 
 
 @dataclass(frozen=True)

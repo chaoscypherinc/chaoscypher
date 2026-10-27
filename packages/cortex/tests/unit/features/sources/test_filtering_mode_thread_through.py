@@ -19,7 +19,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_single_upload_threads_filtering_mode_to_queue() -> None:
+async def test_single_upload_threads_filtering_mode_to_queue(tmp_path: Path) -> None:
     """Posting filtering_mode=strict to /sources/upload lands in the queued task payload."""
     from chaoscypher_cortex.features.sources.upload_service import UploadService
 
@@ -47,7 +47,7 @@ async def test_single_upload_threads_filtering_mode_to_queue() -> None:
     )
     service.preflight_disk_for_upload = MagicMock()
     service.validate_content_type = MagicMock()
-    service.stream_upload_to_temp = AsyncMock(return_value=(Path("/tmp/x"), "hash", 5))
+    service.stream_upload_to_temp = AsyncMock(return_value=(tmp_path / "staged", "hash", 5))
 
     upload_file = MagicMock()
     upload_file.filename = "doc.txt"
@@ -70,7 +70,7 @@ async def test_single_upload_threads_filtering_mode_to_queue() -> None:
 
 
 @pytest.mark.asyncio
-async def test_batch_upload_threads_filtering_mode_to_each_file() -> None:
+async def test_batch_upload_threads_filtering_mode_to_each_file(tmp_path: Path) -> None:
     """Posting filtering_mode=maximum to /sources/upload/batch reaches every queued task."""
     from chaoscypher_cortex.features.sources.upload_service import UploadService
 
@@ -99,7 +99,7 @@ async def test_batch_upload_threads_filtering_mode_to_each_file() -> None:
     )
     service.preflight_disk_for_upload = MagicMock()
     service.validate_content_type = MagicMock()
-    service.stream_upload_to_temp = AsyncMock(return_value=(Path("/tmp/x"), "hash", 5))
+    service.stream_upload_to_temp = AsyncMock(return_value=(tmp_path / "staged", "hash", 5))
 
     file_a = MagicMock()
     file_a.filename = "a.txt"
@@ -126,7 +126,7 @@ async def test_batch_upload_threads_filtering_mode_to_each_file() -> None:
 
 
 @pytest.mark.asyncio
-async def test_filtering_mode_none_is_forwarded_as_none() -> None:
+async def test_filtering_mode_none_is_forwarded_as_none(tmp_path: Path) -> None:
     """When filtering_mode is omitted (None), None reaches the core upload_file."""
     from chaoscypher_cortex.features.sources.upload_service import UploadService
 
@@ -154,7 +154,7 @@ async def test_filtering_mode_none_is_forwarded_as_none() -> None:
     )
     service.preflight_disk_for_upload = MagicMock()
     service.validate_content_type = MagicMock()
-    service.stream_upload_to_temp = AsyncMock(return_value=(Path("/tmp/x"), "hash", 5))
+    service.stream_upload_to_temp = AsyncMock(return_value=(tmp_path / "staged", "hash", 5))
 
     upload_file = MagicMock()
     upload_file.filename = "doc.txt"

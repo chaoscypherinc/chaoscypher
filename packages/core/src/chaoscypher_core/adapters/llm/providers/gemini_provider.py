@@ -281,19 +281,10 @@ class GeminiProvider(BaseLLMProvider):
         if hasattr(response, "tool_calls") and response.tool_calls:
             tool_calls = format_tool_calls_response(response.tool_calls)
 
-        # Extract usage info. LangChain normalizes the Google-native
-        # prompt_token_count/candidates_token_count fields into the
-        # standardized UsageMetadata keys before storing them on
-        # AIMessage.usage_metadata; the attribute is None when the
-        # provider omits usage.
-        usage = {}
-        usage_metadata = getattr(response, "usage_metadata", None)
-        if usage_metadata:
-            usage = {
-                "prompt_tokens": usage_metadata.get("input_tokens", 0),
-                "completion_tokens": usage_metadata.get("output_tokens", 0),
-                "total_tokens": usage_metadata.get("total_tokens", 0),
-            }
+        # Usage through the one reader both paths share: LangChain normalizes
+        # the Google-native counts into AIMessage.usage_metadata (None when
+        # the provider omits usage).
+        usage = extract_streaming_usage(response)
 
         # Extract finish_reason from response_metadata. langchain-google-genai
         # writes it at the top level (``response_metadata["finish_reason"]``,

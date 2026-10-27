@@ -119,3 +119,54 @@ def test_quality_metrics_reference_has_a_row_for_every_counter() -> None:
     text = _read(_DOCS / "reference" / "api" / "quality-metrics.md")
     missing = [c.value for c in QualityCounter if f"| `{c.value}` |" not in text]
     assert not missing, f"quality-metrics.md has no row for: {missing}"
+
+
+def _tool_table(text: str, heading: str) -> set[str]:
+    """The tool names in the table under ``### <heading> (N)`` of the MCP page."""
+    match = re.search(
+        rf"^### {re.escape(heading)} \(\d+\)\n(.*?)(?=^#{{2,3}} )", text, re.MULTILINE | re.DOTALL
+    )
+    assert match, f"the MCP page has no '### {heading} (N)' section"
+    return set(re.findall(r"^\| `([a-z_]+)` \|", match.group(1), re.MULTILINE))
+
+
+def test_the_mcp_page_tables_name_exactly_the_registered_tools() -> None:
+    """The Read/Write tables on the MCP page list the registry's tools, no more, no fewer.
+
+    The count guard above reads the numbers; this reads the names, so a tool
+    added to the registry without a table row (or renamed, or removed) fails
+    here instead of being found by a reader. Write-only tools are the ones
+    ``get_tools("write")`` serves beyond ``get_tools("read")``.
+    """
+    text = (_DOCS / "user-guide" / "mcp.md").read_text(encoding="utf-8")
+    read = {t.name for t in get_tools("read")}
+    write_only = {t.name for t in get_tools("write")} - read
+    assert _tool_table(text, "Read Tools") == read
+    assert _tool_table(text, "Write Tools") == write_only
+
+
+def test_the_memory_profile_docs_say_which_tools_each_mode_serves() -> None:
+    """Every surface describing the ``memory`` profile names its read-mode tools.
+
+    The profile is five tools in write mode and three in read mode (the
+    default): ``remember`` and ``forget`` are write-only. Three pages said
+    "the five memory tools" with no mode, so the documented Claude Desktop
+    setup, which passes no ``--mode``, promised two tools it never lists.
+    """
+    read_names = sorted(t.name for t in get_tools("read", "memory"))
+    write_names = sorted(t.name for t in get_tools("write", "memory"))
+    assert read_names != write_names, "the guard is moot if the profile has no write-only tool"
+    surfaces = (
+        _DOCS / "user-guide" / "mcp.md",
+        _DOCS / "user-guide" / "memory.md",
+        _DOCS / "reference" / "cli" / "mcp.md",
+        _DOCS / "getting-started" / "configuration.md",
+    )
+    for path in surfaces:
+        text = path.read_text(encoding="utf-8")
+        assert "memory" in text, path
+        for name in read_names:
+            assert f"`{name}`" in text, f"{path.name} never names the read-mode memory tool {name}"
+        assert "read mode" in text, (
+            f"{path.name} describes the memory profile without saying what read mode serves"
+        )

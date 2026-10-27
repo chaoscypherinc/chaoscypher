@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
     from chaoscypher_core.adapters.sqlite.safe_session import SafeSession
 
 
@@ -36,4 +38,8 @@ class GraphMixinBase:
 
     def _get_graph_name_for_template(self, template_id: str) -> str:
         """Determine which graph to use based on template ID (implemented by GraphRepository)."""
+        raise NotImplementedError
+
+    def write_locked(self) -> AbstractContextManager[None]:
+        """A unit of work holding SQLite's writer lock (implemented by GraphRepository)."""
         raise NotImplementedError

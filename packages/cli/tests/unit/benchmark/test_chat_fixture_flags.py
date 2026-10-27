@@ -22,10 +22,10 @@ PACK = REPO / "internal" / "benchmarks" / "reference" / "war_and_peace_book1-v2"
 # q008 added 2026-10-03: 'Horse Guards' reached none of the 22 models' contexts.
 # q008, q031 and q050 unflagged 2026-10-21 with the 2.1 campaign's archive: each is answered
 # by at least one rung's pinned context on pack v5f-literary (the fixture's notes say which).
+# q030 and q041 unflagged 2026-10-24: the corpus holds the whole answer to each, and
+# answerable_check reads both STALE on the v5f-literary graphrag and naive pins.
 UNANSWERABLE = {
-    "q030",
     "q040",
-    "q041",
 }
 
 
@@ -35,7 +35,7 @@ def test_unanswerable_flags_are_the_audited_set_and_in_scope() -> None:
     flagged = {q.id for q in queries if not q.answerable}
     assert flagged == UNANSWERABLE
     assert all(q.band != "out_of_scope" for q in queries if not q.answerable)
-    assert sum(q.answerable for q in queries if q.band in BOARD_BANDS) == 77
+    assert sum(q.answerable for q in queries if q.band in BOARD_BANDS) == 79
 
 
 def test_reference_pack_copy_matches_the_builtin_fixture() -> None:

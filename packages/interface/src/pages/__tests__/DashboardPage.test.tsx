@@ -89,4 +89,28 @@ describe('DashboardPage', () => {
     expect(queryByRole('status')).toBeNull();
     mockedApiClient.get.mockResolvedValue({ data: {} });
   });
+
+  it('mounts the background on first render, without waiting on the stats queries', async () => {
+    // /counts and /quality/summary never answer (a slow summary on a large
+    // database); every other read is empty.
+    const pending = new Promise<never>(() => {});
+    mockedApiClient.get.mockImplementation((url: string) =>
+      url === '/counts' || url === '/quality/summary' ? pending : Promise.resolve({ data: {} }),
+    );
+
+    const { getByTestId, getByRole, findByRole } = render(
+      <Routes>
+        <Route path="/" element={<DashboardPage />} />
+      </Routes>,
+      { wrapper: makeWrapper({ initialEntries: ['/'] }) },
+    );
+
+    // the background is there at once, and its graph reads start beside the stats
+    expect(getByTestId('dashboard-graph-canvas')).toBeInTheDocument();
+    await waitFor(() => expect(mockedApiClient.get).toHaveBeenCalledWith('/nodes', expect.anything()));
+    // the stats still wait for their numbers, while the page around them is usable
+    expect(getByRole('progressbar')).toBeInTheDocument();
+    expect(await findByRole('button', { name: /add source/i })).toBeInTheDocument();
+    mockedApiClient.get.mockResolvedValue({ data: {} });
+  });
 });

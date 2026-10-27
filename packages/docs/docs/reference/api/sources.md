@@ -241,6 +241,7 @@ curl "http://localhost/api/v1/sources?status=committed"
 | `enabled` | string | No | `null` | Filter by enabled state: `enabled` or `disabled` |
 | `search` | string | No | `null` | Search in title and origin URL |
 | `tag_id` | string | No | `null` | Filter by tag ID |
+| `in_site` | bool | No | `null` | Pages of imported sites only (`true`) or none of them (`false`); one site's pages: [`GET /sources/sites/{site_id}/pages`](#list-site-pages) |
 
 **Response** `200 OK` -- [PaginatedSourcesResponse](#paginatedsourcesresponse)
 
@@ -253,6 +254,9 @@ curl "http://localhost/api/v1/sources?status=committed"
       "file_type": "pdf",
       "file_size": 204800,
       "title": "A Research Paper",
+      "site_id": null,
+      "site_gone_at": null,
+      "site_left_out": false,
       "status": "committed",
       "chunk_count": 42,
       "extraction_entities_count": 85,
@@ -362,6 +366,301 @@ curl -X DELETE http://localhost/api/v1/sources/src_abc123
 | Status | Description |
 |--------|-------------|
 | `404` | Source not found |
+
+---
+
+## Docs Sites
+
+Import every page of a docs site, each page as its own source, and
+check the site for updates later. See the [Site import user guide](../../user-guide/site-import.md)
+for how pages are found and what a refresh changes.
+
+### Preview Site
+
+```
+POST /api/v1/sources/sites/previews
+```
+
+Discover the pages of the site at an address. Nothing is imported. The address
+passes the strict SSRF check first. Discovery runs on the preview's budget (the
+`web.site_preview_*` settings), so the answer comes in seconds; past it, the
+answer is what was found, with `capped` set.
+
+```bash
+curl -X POST http://localhost/api/v1/sources/sites/previews \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://docs.example.com"}'
+```
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `url` | string | **Yes** | -- | Site address (must start with `http://` or `https://`) |
+
+**Response** `200 OK` -- `SitePreviewResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | string | The site's address |
+| `title` | string | The site's title |
+| `method` | string | How the pages were found: `llms_txt`, `sitemap`, `crawl`, or `none` (no pages found) |
+| `page_count` | int | Number of pages found |
+| `pages` | object[] | The pages, each `{url, title}` (`title` is `""` when the method does not know it) |
+| `capped` | bool | The site has more pages than `web.site_max_pages` (or the preview's budget ran out) |
+
+```json
+{
+  "url": "https://docs.example.com/",
+  "title": "Example Docs",
+  "method": "llms_txt",
+  "page_count": 71,
+  "pages": [
+    { "url": "https://docs.example.com/getting-started", "title": "Getting Started" }
+  ],
+  "capped": false
+}
+```
+
+| Status | Description |
+|--------|-------------|
+| `400` | The address fails the SSRF check (loopback, private, link-local, or cloud metadata address) |
+
+---
+
+### Import Site
+
+```
+POST /api/v1/sources/sites
+```
+
+Create the site and enqueue its import. Every page the import's own discovery
+finds is imported, except the `exclude`d ones, so a capped preview never drops
+the rest of the site. Returns at once with the site (status `queued`); poll
+[Get Site](#get-site) for its progress.
+
+```bash
+curl -X POST http://localhost/api/v1/sources/sites \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://docs.example.com", "options": {"analysis_depth": "quick"}}'
+```
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `url` | string | **Yes** | -- | Site address (must start with `http://` or `https://`) |
+| `exclude` | string[] | No | `null` | Page addresses (from the preview) to leave out; at most `web.site_max_pages` entries. The site remembers them (`excluded_pages`): every refresh keeps them out |
+| `options` | object | No | `{}` | The [Import from URL](#import-from-url) options (every parameter but `url`), applied to every page. Two site rules override them: no page waits for domain confirmation (`auto_confirm` is always on) and `skip_duplicates` never applies. |
+
+**Response** `202 Accepted` -- [SiteResponse](#siteresponse)
+
+```json
+{
+  "id": "6f1c2a9e-4b7d-4e21-9c55-0a8d3e7b1f42",
+  "url": "https://docs.example.com",
+  "title": "https://docs.example.com",
+  "discovery_method": null,
+  "status": "queued",
+  "run_in_progress": true,
+  "page_count": 0,
+  "options": { "extraction_depth": "quick", "auto_confirm": true, "skip_duplicates": false },
+  "error_message": null,
+  "created_at": "2026-10-22T10:00:00",
+  "last_checked_at": null,
+  "progress": {
+    "total": 0, "done": 0, "failed": 0, "awaiting_confirmation": 0,
+    "in_progress": 0, "gone": 0, "by_status": {}
+  },
+  "excluded_pages": []
+}
+```
+
+The site's `title` is its address until the import's discovery names it.
+`options` holds the stored upload options of every page (abridged above).
+
+| Status | Description |
+|--------|-------------|
+| `400` | The address fails the SSRF check, or `exclude` has more than `web.site_max_pages` entries (`VALIDATION_ERROR`, field `exclude`) |
+| `409` | The site (the same address scope) is already imported in this database (`CONFLICT`); `details.site` is that site as a [SiteResponse](#siteresponse). Refresh it instead. |
+| `409` | LLM provider has not been verified (`LLM_NOT_VERIFIED`) |
+
+---
+
+### List Sites
+
+```
+GET /api/v1/sources/sites
+```
+
+The imported sites, newest first, each with its progress.
+
+```bash
+curl "http://localhost/api/v1/sources/sites?page=1&page_size=20"
+```
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `page` | int | No | `1` | Page number (1-indexed) |
+| `page_size` | int | No | Server default (50) | Items per page (capped at `max_page_size`) |
+
+**Response** `200 OK` -- `PaginatedSitesResponse`
+
+```json
+{
+  "data": [
+    {
+      "id": "6f1c2a9e-4b7d-4e21-9c55-0a8d3e7b1f42",
+      "url": "https://docs.example.com",
+      "title": "Example Docs",
+      "discovery_method": "llms_txt",
+      "status": "imported",
+      "run_in_progress": false,
+      "page_count": 71,
+      "options": { "extraction_depth": "quick", "auto_confirm": true, "skip_duplicates": false },
+      "error_message": null,
+      "created_at": "2026-10-22T10:00:00",
+      "last_checked_at": "2026-10-22T10:20:00",
+      "progress": {
+        "total": 71, "done": 69, "failed": 2, "awaiting_confirmation": 0,
+        "in_progress": 0, "gone": 0, "by_status": { "committed": 69, "error": 2 }
+      },
+      "excluded_pages": ["https://docs.example.com/changelog"]
+    }
+  ],
+  "pagination": {
+    "total": 1,
+    "page": 1,
+    "page_size": 20,
+    "total_pages": 1,
+    "has_next": false,
+    "has_prev": false
+  }
+}
+```
+
+Each item is a [SiteResponse](#siteresponse).
+
+---
+
+### Get Site
+
+```
+GET /api/v1/sources/sites/{site_id}
+```
+
+One site with its progress, computed from its pages counted by status.
+
+```bash
+curl http://localhost/api/v1/sources/sites/6f1c2a9e-4b7d-4e21-9c55-0a8d3e7b1f42
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `site_id` | string (path) | **Yes** | Site ID |
+
+**Response** `200 OK` -- [SiteResponse](#siteresponse)
+
+See the [List Sites](#list-sites) response for an example item.
+
+| Status | Description |
+|--------|-------------|
+| `404` | Site not found |
+
+---
+
+### List Site Pages
+
+```
+GET /api/v1/sources/sites/{site_id}/pages
+```
+
+The site's pages, newest first, as the sources list shows them, gone pages
+included. A page a refresh no longer found on the site has `site_gone_at` set;
+it is kept until you delete it.
+
+```bash
+curl "http://localhost/api/v1/sources/sites/6f1c2a9e-4b7d-4e21-9c55-0a8d3e7b1f42/pages?page=1&page_size=20"
+```
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `site_id` | string (path) | **Yes** | -- | Site ID |
+| `page` | int | No | `1` | Page number (1-indexed) |
+| `page_size` | int | No | Server default (50) | Items per page (capped at `max_page_size`) |
+
+**Response** `200 OK` -- [PaginatedSourcesResponse](#paginatedsourcesresponse)
+
+Each item is a [SourceSummaryResponse](#sourcesummaryresponse) with its
+`origin_url` and `site_id`; see the [List Sources](#list-sources) response
+for the shape.
+
+| Status | Description |
+|--------|-------------|
+| `404` | Site not found |
+
+---
+
+### Refresh Site
+
+```
+POST /api/v1/sources/sites/{site_id}/refreshes
+```
+
+Check a site for updates. Discovery runs again and every page is fetched: an
+unchanged page is left alone, a changed one is re-imported in place, a new one
+is added, and one the site no longer lists is marked gone (`progress.gone`,
+the page's `site_gone_at`), never deleted. The pages the site leaves out
+(`excluded_pages`) stay out and are not checked; a body with `exclude` replaces
+that list from now on, and `[]` brings every page back. A run whose worker was
+killed goes stale after the operations timeout and does not block a refresh;
+the refresh resumes it.
+
+```bash
+curl -X POST http://localhost/api/v1/sources/sites/6f1c2a9e-4b7d-4e21-9c55-0a8d3e7b1f42/refreshes
+# or, replacing the pages the site leaves out:
+curl -X POST http://localhost/api/v1/sources/sites/6f1c2a9e-4b7d-4e21-9c55-0a8d3e7b1f42/refreshes \
+  -H "Content-Type: application/json" \
+  -d '{"exclude": ["https://docs.example.com/changelog"]}'
+```
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `site_id` | string (path) | **Yes** | -- | Site ID |
+| `exclude` | string[] (body) | No | omitted | A new list of page addresses to leave out, replacing the site's; omitted (or no body) keeps the current list, `[]` brings every page back; at most `web.site_max_pages` entries |
+
+**Response** `202 Accepted` -- [SiteResponse](#siteresponse) (status `queued`)
+
+| Status | Description |
+|--------|-------------|
+| `400` | `exclude` has more than `web.site_max_pages` entries (`VALIDATION_ERROR`) |
+| `404` | Site not found |
+| `409` | A live run of the site is queued or under way (`CONFLICT`; `details` carries `site_id` and `status`) |
+| `409` | LLM provider has not been verified (`LLM_NOT_VERIFIED`) |
+
+---
+
+### Delete Site
+
+```
+DELETE /api/v1/sources/sites/{site_id}
+```
+
+Delete a site. Its pages stay as ordinary sources unless `delete_pages` is
+`true`, which deletes each page through the source delete
+([Delete Source](#delete-source)) first.
+
+```bash
+curl -X DELETE "http://localhost/api/v1/sources/sites/6f1c2a9e-4b7d-4e21-9c55-0a8d3e7b1f42?delete_pages=true"
+```
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `site_id` | string (path) | **Yes** | -- | Site ID |
+| `delete_pages` | bool (query) | No | `false` | Also delete the site's pages |
+
+**Response** `204 No Content`
+
+| Status | Description |
+|--------|-------------|
+| `404` | Site not found |
+| `409` | A live run of the site is queued or under way (`CONFLICT`; `details` carries `site_id` and `status`); wait for it, or for it to go stale |
 
 ---
 
@@ -2420,6 +2719,12 @@ Lightweight model used in list views. Excludes large payload fields like
 `user_metadata`, detailed timestamps, and full LLM metrics. Includes a `tags`
 array enriched at the API layer.
 
+| Field | Type | Description |
+|-------|------|-------------|
+| `site_id` | string \| null | The [imported site](#docs-sites) the page belongs to (`null` otherwise) |
+| `site_gone_at` | datetime \| null | When a [refresh](#refresh-site) first found the page no longer listed on its site (`null` otherwise) |
+| `site_left_out` | bool | The site leaves this page out (unticked at import, or excluded by a refresh), so a check for updates does not check it; `false` for a page the site lists and for every other source |
+
 Refer to the [List Sources](#list-sources) response example for the full shape.
 
 ---
@@ -2432,6 +2737,28 @@ Pagination wrapper for source list responses.
 |-------|------|-------------|
 | `data` | SourceSummaryResponse[] | Page of source summaries |
 | `pagination` | object | Pagination metadata (total, page, page_size, total_pages, has_next, has_prev) |
+
+---
+
+### SiteResponse
+
+One imported site with its progress, computed from its pages.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Site ID |
+| `url` | string | The site's address |
+| `title` | string | The site's title (its address until discovery names it) |
+| `discovery_method` | string \| null | How the pages were found: `llms_txt`, `sitemap`, `crawl`, `none`; `null` before the first discovery |
+| `status` | string | The import job's state: `queued`, `importing`, `refreshing`, `imported`, `failed` |
+| `run_in_progress` | bool | A run is really queued or under way; a run whose worker was killed goes stale after the operations timeout, and a refresh or delete is then allowed |
+| `page_count` | int | Pages the current discovery listed |
+| `options` | object | The upload options every page is imported with |
+| `error_message` | string \| null | Why a run failed |
+| `created_at` | datetime | When the site was created |
+| `last_checked_at` | datetime \| null | When the last run ended (imported or failed); `null` before then |
+| `progress` | object | The pages counted: `total` (pages the site lists), `done` (committed, or indexed when imported without extraction), `failed` (`error`), `awaiting_confirmation`, `in_progress` (every other listed page), `gone` (pages the site no longer lists; counted only here), `by_status` (listed pages per `SourceStatus` value) |
+| `excluded_pages` | string[] | The pages the site leaves out (unticked at import, the list the last refresh passed, and pages deleted from the site), as page addresses with any `.md` twin folded; every refresh keeps them out |
 
 ---
 

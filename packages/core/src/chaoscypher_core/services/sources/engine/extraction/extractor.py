@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
-from chaoscypher_core.exceptions import ValidationError
+from chaoscypher_core.exceptions import ExtractionIncomplete, ValidationError
 from chaoscypher_core.services.sources.engine.deduplication import EntityProcessor
 from chaoscypher_core.services.sources.engine.deduplication.service import (
     publish_descriptor_references,
@@ -43,6 +43,9 @@ if TYPE_CHECKING:
     )
     from chaoscypher_core.services.sources.engine.extraction.utils.filtering_log import (
         FilteringLog,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.utils.offered_types import (
+        OfferedType,
     )
     from chaoscypher_core.settings import EngineSettings
 
@@ -104,7 +107,9 @@ async def extract_entities_from_groups(
     embedding_service: Any,
     file_info: dict[str, Any] | None = None,
     seed: Sequence[Mapping[str, Any]] = (),
+    offered_types: Sequence[OfferedType] = (),
     small_chunks: Sequence[Mapping[str, Any]] = (),
+    strict: bool = False,
 ) -> dict[str, Any]:
     """Extract entities from hierarchical chunk groups using the AI pipeline.
 
@@ -126,10 +131,15 @@ async def extract_entities_from_groups(
             (e.g., a unit test that doesn't exercise the feature).
         file_info: Optional file metadata for domain detection.
         seed: Records the KNOWN ENTITIES list starts with (the memory path).
+        offered_types: Templates offered as known types (a scoped memory's, D26);
+            empty for documents, whose prompt and templates do not move.
         small_chunks: The stored small chunks the groups are made of (``id``,
             ``content``, ``chunk_metadata``): each extracted item is stamped with
             its evidence and cited chunk, as the queue path's aggregation stamps
             them, so the commit can store its citations. Empty: text-only evidence.
+        strict: Raise when the model failed on any group, instead of going on
+            with what the other groups gave (a memory's link: a failing model is
+            a failed link, not a memory with no facts).
 
     Returns:
         Dictionary with entities, relationships, cached_embeddings,
@@ -137,6 +147,7 @@ async def extract_entities_from_groups(
 
     Raises:
         ValidationError: If ``hierarchical_groups`` is empty or not provided.
+        ExtractionIncomplete: With ``strict``, when the model failed on a group.
 
     """
     if file_info is None:
@@ -154,7 +165,12 @@ async def extract_entities_from_groups(
 
     # Step 1: Extract entities and relationships (with domain detection)
     ai_extractor = AIEntityExtractor(settings)
-    extraction_result = await ai_extractor.extract_from_chunks(chunks, file_info, seed=seed)
+    extraction_result = await ai_extractor.extract_from_chunks(
+        chunks, file_info, seed=seed, offered_types=offered_types
+    )
+    failed_groups = int(extraction_result.get("chunk_failures") or 0)
+    if strict and failed_groups:
+        raise ExtractionIncomplete(failed_groups, len(chunks))
     _stamp_evidence(
         extraction_result["entities"],
         extraction_result["relationships"],

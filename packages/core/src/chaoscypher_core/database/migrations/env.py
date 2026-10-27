@@ -27,7 +27,11 @@ from chaoscypher_core.adapters.sqlite import models as _models  # noqa: F401
 
 config = context.config
 
-if config.config_file_name is not None:
+# Alembic's own CLI takes its logging from alembic.ini. The app's runs pass their connection
+# (runner._migration_connection) and the app owns logging: fileConfig would swap its root
+# handlers for a bare stderr one and, by its default disable_existing_loggers=True, silence
+# every logger the app had already created, until a restart.
+if config.config_file_name is not None and "connection" not in config.attributes:
     fileConfig(config.config_file_name)
 
 
@@ -39,9 +43,11 @@ def _configure_and_run(connection: object) -> None:
     # target table is FK-referenced by others (workflows ← triggers,
     # workflow_executions, ...), the DROP fails with IntegrityError even
     # though the final state is consistent. Disabling FK enforcement for
-    # the migration connection lets batch rebuilds run; we re-enable at
-    # the end so SQLite re-validates the whole schema before handing the
-    # connection back to the app.
+    # the migration connection lets batch rebuilds run. The ON below lands
+    # only when the run wrote nothing (the pragma is a no-op inside a
+    # transaction); the runner (``runner._migration_connection``) turns them
+    # on again once the transaction has ended, before the connection goes
+    # back to the app's pool.
     connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
     try:
         context.configure(
@@ -84,6 +90,7 @@ def run_migrations_online() -> None:
             config.get_section(config.config_ini_section, {}),
             prefix="sqlalchemy.",
             poolclass=pool.NullPool,
+            hide_parameters=True,  # a failed statement never quotes the values it was given
         )
         with connectable.connect() as connection:
             _configure_and_run(connection)

@@ -1624,15 +1624,31 @@ class MemorySettings(BaseModel):
         description="The most characters a memory tool answers with; recall cuts on a whole line.",
     )
     wait_seconds: int = Field(
-        default=120,
+        default=20,
         ge=1,
-        description="How long remember waits for the facts to be linked before answering "
-        "'Saved, still linking.' (the linking goes on).",
+        description="How long remember waits for the linking before answering that it "
+        "links later (the memory is kept, and the linking goes on).",
     )
     default_by: str = Field(
         default="user",
         min_length=1,
         description="Who a memory is by when the call does not say.",
+    )
+    relink_on_start: bool = Field(
+        default=True,
+        description="Link the memories not linked yet, oldest first, in the background when "
+        "a write-mode server starts.",
+    )
+    scope_nodes: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Node labels a scope's memories are always offered as known entities, by "
+        "scope name; a label that matches no node is skipped and logged.",
+    )
+    scope_templates: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Template names a scope's memories are always offered as known types, "
+        "beside the templates its nodes use, by scope name; a name that matches no template "
+        "is skipped and logged.",
     )
 
     model_config = ConfigDict(extra="forbid")

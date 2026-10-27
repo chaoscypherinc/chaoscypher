@@ -9,14 +9,16 @@
  * - mousemove: update node x/y via graph.setNodeAttribute()
  * - mouseup: release, re-enable camera
  *
- * For source group nodes, dragging moves all member entities as a unit.
+ * For a source group node, dragging moves all member entities as a unit;
+ * for an Unresolved hub, all its members; a document root also takes its
+ * Unresolved hub and that hub's members along.
  */
 
 import { useEffect, useRef } from 'react';
 import { useSigma } from '@react-sigma/core';
 import type { SigmaNodeEventPayload } from 'sigma/types';
 import type { NodeAttributes, EdgeAttributes } from '../types';
-import { isSourceGroupNode, SOURCE_GROUP_PREFIX } from '../types';
+import { isSourceGroupNode, isUnresolvedBucketNode, SOURCE_GROUP_PREFIX, unresolvedBucketId } from '../types';
 
 export function useNodeDrag() {
   const sigma = useSigma<NodeAttributes, EdgeAttributes>();
@@ -64,18 +66,37 @@ export function useNodeDrag() {
       graph.setNodeAttribute(state.draggedNode, 'x', pos.x);
       graph.setNodeAttribute(state.draggedNode, 'y', pos.y);
 
-      // Group drag: move all member entities by the same delta
+      const dx = pos.x - state.prevX;
+      const dy = pos.y - state.prevY;
+      const moveBy = (nodeId: string) => {
+        const attrs = graph.getNodeAttributes(nodeId);
+        graph.setNodeAttribute(nodeId, 'x', (attrs.x || 0) + dx);
+        graph.setNodeAttribute(nodeId, 'y', (attrs.y || 0) + dy);
+      };
+
+      // Hub drag: move its members by the same delta
+      if (isUnresolvedBucketNode(state.draggedNode)) {
+        graph.forEachOutNeighbor(state.draggedNode, moveBy);
+      }
       if (isSourceGroupNode(state.draggedNode)) {
-        const dx = pos.x - state.prevX;
-        const dy = pos.y - state.prevY;
         const sourceId = state.draggedNode.slice(SOURCE_GROUP_PREFIX.length);
+        const moved = new Set<string>();
 
         graph.forEachNode((nodeId, attrs) => {
           if (nodeId !== state.draggedNode && attrs.sourceGroupMembership === sourceId) {
-            graph.setNodeAttribute(nodeId, 'x', (attrs.x || 0) + dx);
-            graph.setNodeAttribute(nodeId, 'y', (attrs.y || 0) + dy);
+            moveBy(nodeId);
+            moved.add(nodeId);
           }
         });
+
+        // The document's Unresolved hub and its members come along (once each)
+        const hubId = unresolvedBucketId(sourceId);
+        if (graph.hasNode(hubId)) {
+          moveBy(hubId);
+          graph.forEachOutNeighbor(hubId, (memberId) => {
+            if (!moved.has(memberId)) moveBy(memberId);
+          });
+        }
       }
 
       state.prevX = pos.x;

@@ -7,14 +7,18 @@ Provides idempotent seeding of default data:
 - System tools (40+ tools from registry)
 - Default workflows (3 system workflows)
 - Default triggers (1 auto-embed trigger on node.create)
+- The shipped templates (``templates/default_templates.py``), which every open of a
+  database for writing gives it (:func:`ensure_system_templates`, called by
+  ``database.engine.prepare_database``)
 """
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from sqlmodel import Session, select
 
+from chaoscypher_core.adapters.sqlite import SqliteAdapter
 from chaoscypher_core.adapters.sqlite.models import (
     SystemTool,
     Trigger,
@@ -25,25 +29,37 @@ from chaoscypher_core.adapters.sqlite.models import (
 from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
 from chaoscypher_core.repo_factories import get_transaction_graph_repository
 from chaoscypher_core.services.workflows.tools.engine import ToolRegistry
-from chaoscypher_core.templates.default_templates import get_all_default_templates
+from chaoscypher_core.templates import default_templates
+from chaoscypher_core.utils.logging.privacy import log_failure
 
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = structlog.get_logger(__name__)
 
 
-def seed_default_data(database_name: str) -> None:
-    """Seed all default data for a database.
+def seed_default_data(db_path: Path, database_name: str) -> None:
+    """Seed the default tools, workflows and triggers into the database at ``db_path``.
 
     This function is idempotent - safe to call multiple times.
-    Uses upsert patterns to avoid duplicates.
+    Uses upsert patterns to avoid duplicates. The shipped templates are not seeded
+    here: every open gives them (:func:`ensure_system_templates`).
+
+    The file is the caller's, as :func:`ensure_system_templates` takes it: resolving it
+    again from the name went through the settings singleton's data directory, which
+    is not the one ``init_database`` built when it was given ``data_dir`` or when the
+    singleton was read under another one, and seeded a new empty file there.
 
     Args:
-        database_name: Name of the database to seed
+        db_path: The database file to seed (the one the caller built).
+        database_name: Name of the database the rows belong to.
 
     """
     logger.info("seed_data_started", database_name=database_name)
 
-    adapter = get_sqlite_adapter(database_name=database_name)
+    adapter = SqliteAdapter(db_path=str(db_path), database_name=database_name)
+    adapter.connect()
     try:
         with adapter.transaction():
             session = adapter.session
@@ -58,11 +74,6 @@ def seed_default_data(database_name: str) -> None:
             seed_default_triggers(session, database_name)
     finally:
         adapter.disconnect()
-
-    # Seed default templates (per-database)
-    logger.info("seed_templates_starting", database_name=database_name)
-    seed_default_templates(database_name)
-    logger.info("seed_templates_returned")
 
     logger.info("seed_data_completed", database_name=database_name)
 
@@ -386,44 +397,50 @@ def _get_generate_embeddings_workflow(
 
 
 def seed_default_templates(database_name: str) -> None:
-    """Seed default system templates in SQLite graph database.
+    """Give the database named ``database_name`` every shipped template it lacks.
 
-    Creates all default node and edge templates if they don't exist.
-    This is idempotent - safe to call multiple times.
-
-    Args:
-        database_name: Name of the database to seed
-
+    For a caller that holds a database name and no path (a reset that has just deleted
+    the templates). Raises, after logging at error level, when the seed fails.
     """
-    logger.info("seed_templates_starting_detailed", database_name=database_name)
-
+    adapter = get_sqlite_adapter(database_name=database_name)
     try:
-        logger.info("seed_templates_creating_graph_repository")
+        _insert_missing_templates(adapter, database_name)
+    finally:
+        adapter.disconnect()
 
-        # Use adapter-backed GraphRepository
-        adapter = get_sqlite_adapter(database_name=database_name)
-        try:
-            with adapter.transaction():
-                graph_repo = get_transaction_graph_repository(adapter, database_name)
 
-                # Ensure default templates exist (idempotent)
-                logger.info("seed_templates_ensuring_defaults")
-                count = graph_repo.ensure_default_templates_exist(
-                    default_templates_provider=get_all_default_templates
-                )
+def ensure_system_templates(db_path: Path, database_name: str) -> int:
+    """Give the database at ``db_path`` every shipped template it lacks; return how many.
 
-                if count > 0:
-                    logger.info("seed_templates_created", template_count=count)
-                else:
-                    logger.info("seed_templates_already_exist")
-        finally:
-            adapter.disconnect()
+    The step every open of a database for writing takes (``prepare_database``): the
+    default edge template (``GraphSettings.default_edge_template``), the default node
+    template and the app graphs' templates are foreign-key targets, and a database
+    built without them fails the first write that names one. Only the missing ones are
+    inserted; a database that has them all is only read.
 
-        logger.info("seed_templates_completed")
+    Raises:
+        Exception: whatever the insert raised, after it is logged at error level as
+            ``system_templates_seed_failed``: an open never goes on without them.
+    """
+    adapter = SqliteAdapter(db_path=str(db_path), database_name=database_name)
+    adapter.connect()
+    try:
+        return _insert_missing_templates(adapter, database_name)
+    finally:
+        adapter.disconnect()
+
+
+def _insert_missing_templates(adapter: SqliteAdapter, database_name: str) -> int:
+    """Insert the shipped templates the adapter's database lacks, in one transaction."""
+    try:
+        with adapter.transaction():
+            graph_repo = get_transaction_graph_repository(adapter, database_name)
+            count = graph_repo.ensure_default_templates_exist(
+                default_templates_provider=default_templates.get_all_default_templates
+            )
     except Exception as e:
-        logger.exception(
-            "seed_templates_failed",
-            error_type=type(e).__name__,
-            error_message=str(e),
-        )
+        log_failure(logger, "system_templates_seed_failed", e, database_name=database_name)
         raise
+    if count:
+        logger.info("system_templates_seeded", database_name=database_name, template_count=count)
+    return count

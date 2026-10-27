@@ -2,7 +2,7 @@
   "name": "vram_96gb",
   "display_name": "96GB VRAM",
   "version": "1.0.0",
-  "description": "Professional workstation configuration for 70B+ models with large context windows. Excellent for complex reasoning and enterprise knowledge work.",
+  "description": "Professional workstation configuration: a 120B chat model and a 31B extraction model with large context windows. Excellent for complex reasoning and enterprise knowledge work.",
   "author": "ChaosCypher Team",
   "builtin": true,
 

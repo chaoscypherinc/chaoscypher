@@ -71,6 +71,11 @@ interface UseGraphDataLoaderProps {
   applyLayout: (type: LayoutType) => Promise<void>;
   layoutType: LayoutType;
   sourceIds?: string[];
+  /**
+   * Runs after every load, the first and each reload: a reload clears the
+   * graph, so whatever hangs off it (the document roots) is rebuilt here.
+   */
+  onLoaded?: (graph: Graph<NodeAttributes, EdgeAttributes>) => void;
 }
 
 export function useGraphDataLoader({
@@ -78,6 +83,7 @@ export function useGraphDataLoader({
   applyLayout,
   layoutType,
   sourceIds,
+  onLoaded,
 }: UseGraphDataLoaderProps) {
   const [loading, setLoading] = useState(true);
   const [reloading, setReloading] = useState(false);
@@ -117,6 +123,8 @@ export function useGraphDataLoader({
         await applyLayout(layoutType);
       }
 
+      onLoaded?.(graph);
+
       hasLoadedOnce.current = true;
       setLoading(false);
       setReloading(false);
@@ -129,7 +137,7 @@ export function useGraphDataLoader({
       setLoading(false);
       setReloading(false);
     }
-  }, [graph, applyLayout, layoutType, sourceIds]);
+  }, [graph, applyLayout, layoutType, sourceIds, onLoaded]);
 
   return {
     loading,

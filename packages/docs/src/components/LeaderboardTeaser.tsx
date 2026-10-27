@@ -76,7 +76,7 @@ function graphAdvantageLine(
   );
   if (lift == null) return null;
   const n = cmp.questions.length;
-  return `On ${label}, on ${n} questions written to need a graph, graph + vector answers a median ${lift} more right than plain vector RAG across ${cmp.models.length} models.`;
+  return `On ${label}, on ${n} questions written to need a graph, graph + vector passes a median ${lift} points more than plain vector RAG across ${cmp.models.length} models.`;
 }
 
 // One line per corpus whose comparison has something to say.

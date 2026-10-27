@@ -32,11 +32,24 @@ from chaoscypher_core.services.workflows.tools.engine.schema_registry import (
 
 if TYPE_CHECKING:
     from chaoscypher_core.app_config import Settings
+    from chaoscypher_core.ports.embedding import EmbeddingProviderProtocol
     from chaoscypher_core.services.workflows.tools.engine.handlers.question_shape import (
         ChatCallback,
     )
 
 logger = structlog.get_logger(__name__)
+
+
+class SharedEmbedder:
+    """Marks a chat whose embedder is the process's shared one (``get_embedding_service``).
+
+    The Docker stack's chat worker (D2 of the 2026-10-24 memory design) uses it;
+    an Engine-based process (the CLI) passes its own provider, or None with
+    vector search off.
+    """
+
+
+SHARED_EMBEDDER = SharedEmbedder()
 
 
 def extract_thinking_from_tags(content: str) -> str | None:
@@ -126,6 +139,7 @@ def setup_chat_providers(
     source_ids: list[str] | None = None,
     source_storage: Any | None = None,
     llm_chat_callback_override: ChatCallback | None = None,
+    embedding_provider: EmbeddingProviderProtocol | SharedEmbedder | None = SHARED_EMBEDDER,
 ) -> tuple[Any, ToolExecutorService, list[dict[str, Any]]]:
     """Initialize LLM provider and tool executor.
 
@@ -140,6 +154,11 @@ def setup_chat_providers(
         llm_chat_callback_override: Optional direct LLM callback that bypasses
             the queue. Required when running inside the Neuron worker (LLM queue
             concurrency=1 means queue-based callbacks deadlock).
+        embedding_provider: The provider the search tools embed queries with:
+            :data:`SHARED_EMBEDDER` (the default, the Docker stack's chat
+            worker) builds the process's shared one; an Engine-based caller
+            passes its own, or None with vector search off, and the tools then
+            search by keyword and embed nothing.
 
     Returns:
         Tuple of (chat_provider, tool_executor, available_tools)
@@ -177,13 +196,17 @@ def setup_chat_providers(
     llm_queue = get_llm_queue_service()
     interactive_priority = settings.priorities.interactive
 
-    from chaoscypher_core.repo_factories import get_embedding_service
+    if isinstance(embedding_provider, SharedEmbedder):
+        from chaoscypher_core.repo_factories import get_embedding_service
 
-    _embedding_service = get_embedding_service()
+        embedding_provider = get_embedding_service()
+    embedding_callback = None
+    if embedding_provider is not None:
+        _embedding_service = embedding_provider
 
-    async def embedding_callback(text: str) -> Any:
-        """Local embedding via EmbeddingService."""
-        return await _embedding_service.embed(text)
+        async def embedding_callback(text: str) -> Any:
+            """Local embedding via EmbeddingService."""
+            return await _embedding_service.embed(text)
 
     _llm_chat_callback = llm_chat_callback_override or queued_chat_callback(
         llm_queue, priority=interactive_priority

@@ -5,8 +5,10 @@
 
 Import the concrete fakes from their submodules:
 
-    from tests.fakes.embedding import FakeEmbeddingProvider
     from tests.fakes.llm import FakeLLMProvider, LLMResponseStrategy
+
+The embedding fake is shared with the CLI tests, so it lives in
+``chaoscypher_core.testing.embedding`` (``FakeEmbeddingProvider``).
 
 See the mocked pipeline test fixtures
 for the why-and-what.

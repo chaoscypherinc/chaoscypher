@@ -315,7 +315,7 @@ class SqliteAdapter(
         Inside this context, repository methods call ``_maybe_commit()``
         which flushes to the database buffer but does not commit. The
         outer transaction commits at context exit, or rolls back on any
-        exception. Supports nesting — only the outermost context
+        exception, cancellation included. Supports nesting — only the outermost context
         actually commits / rolls back.
 
         Example:
@@ -335,7 +335,10 @@ class SqliteAdapter(
             yield
             if is_outermost:
                 self.session.commit()  # noqa: CC011 — outer transaction boundary owns final commit
-        except Exception:
+        except BaseException:
+            # BaseException, not Exception: a task cancelled during one of the
+            # block's awaits (CancelledError) must end the write transaction too,
+            # or the open write lock stalls every other writer for the busy timeout.
             if is_outermost:
                 self.session.rollback()
             raise

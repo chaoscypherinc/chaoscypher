@@ -18,6 +18,7 @@ import NodePropertiesForm from '../NodePropertiesForm';
 import type { GraphNodeData, NodeAttributes, EdgeAttributes } from '../../types';
 import type { SourceGroupState } from '../../hooks/useSourceGroups';
 import type { Template, PropertyDefinition } from '../../../../types';
+import { syncUnresolvedBuckets } from '../../utils/unresolvedBucket';
 
 const theme = createTheme({ palette: { mode: 'dark' } });
 
@@ -359,6 +360,43 @@ describe('NodePropertiesForm', () => {
     expect(screen.getByText('Globex')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Go/ }));
     expect(cb.onSelectNode).toHaveBeenCalledWith('node-2');
+  });
+
+  it('says in plain words why a node is unresolved, without listing its flags as facts', () => {
+    const flags = { orphan: true, low_plausibility: true };
+    renderForm(
+      <NodePropertiesForm
+        {...buildProps(cb, {
+          selectedNodeData: makeNodeData({ content: flags }),
+          nodeProperties: { ...flags, founded: '1999' },
+        })}
+      />,
+    );
+    expect(screen.getByText("Why it's unresolved")).toBeInTheDocument();
+    expect(screen.getByText('No connections to other nodes')).toBeInTheDocument();
+    expect(screen.getByText('Its name may not be a real entity')).toBeInTheDocument();
+    // The raw flag keys are not shown as facts beside the plain reasons.
+    expect(screen.queryByText('Orphan')).not.toBeInTheDocument();
+    expect(screen.queryByText('Low Plausibility')).not.toBeInTheDocument();
+    expect(screen.getByText('1999')).toBeInTheDocument();
+  });
+
+  it('shows no unresolved section for an ordinary node', () => {
+    renderForm(<NodePropertiesForm {...buildProps(cb, { nodeProperties: { orphan: 'yes' } })} />);
+    expect(screen.queryByText("Why it's unresolved")).not.toBeInTheDocument();
+    // An extracted "orphan" property that is not the pipeline flag is still a fact.
+    expect(screen.getByText('Orphan')).toBeInTheDocument();
+  });
+
+  it('leaves the Unresolved hub out of the connections', () => {
+    const graph = new Graph<NodeAttributes, EdgeAttributes>({ type: 'directed' });
+    const base = {
+      templateId: 't', tags: [], createdAt: '', updatedAt: '', x: 0, y: 0, size: 1, color: '#fff',
+    };
+    graph.addNode('node-1', { ...base, nodeId: 'node-1', title: 'Acme Corp', label: 'Acme Corp', content: { orphan: true } });
+    syncUnresolvedBuckets(graph);
+    renderForm(<NodePropertiesForm {...buildProps(cb, { graph })} />);
+    expect(screen.queryByText(/^Unresolved/)).not.toBeInTheDocument();
   });
 
   it('renders the provenance section and selects the source group node', () => {

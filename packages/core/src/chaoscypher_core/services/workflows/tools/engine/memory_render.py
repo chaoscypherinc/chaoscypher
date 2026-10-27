@@ -38,9 +38,6 @@ if TYPE_CHECKING:
     from datetime import date
 
 
-MEMORY_SOURCE_TYPE = "memory"
-"""``sources.source_type`` of a memory (spec decision 2): ``remember`` writes it, the memory tools read it."""
-
 SENTENCE_CHARS = 160
 """The longest quoted sentence (a fact's evidence, a note's text), cut on a word (:func:`cut_on_word`)."""
 
@@ -538,7 +535,6 @@ def render_recall(
 __all__ = [
     "ELLIPSIS",
     "EMPTY_RECALL",
-    "MEMORY_SOURCE_TYPE",
     "PASSAGE_CHARS",
     "PASSAGE_LIMIT",
     "SENTENCE_CHARS",

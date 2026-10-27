@@ -74,7 +74,7 @@ function share(part: number, whole: number): string {
   return part === whole ? `all ${whole}` : `${part} of ${whole}`;
 }
 
-function failuresOrdinary(v: Record<string, unknown>): HeroStat | null {
+function failuresOrdinary(v: Record<string, unknown>, _models: number | null): HeroStat | null {
   const median = num(v.median_pct);
   const fewer = num(v.models_fewer);
   const models = num(v.models);
@@ -91,7 +91,7 @@ function failuresOrdinary(v: Record<string, unknown>): HeroStat | null {
   };
 }
 
-function sizeSubstitution(v: Record<string, unknown>): HeroStat | null {
+function sizeSubstitution(v: Record<string, unknown>, models: number | null): HeroStat | null {
   const ratio = num(v.ratio);
   const small = str(v.small_label);
   const big = str(v.big_label);
@@ -106,11 +106,11 @@ function sizeSubstitution(v: Record<string, unknown>): HeroStat | null {
     key: "size_substitution",
     figure: `${ratio}×`,
     label: "less GPU memory for the same answers",
-    detail: `${small} with the graph ${verb} ${big} on plain vector RAG (${pct(smallPct)} vs ${pct(bigPct)})`,
+    detail: `${small} with the graph ${verb} ${big} on plain vector RAG (${pct(smallPct)} vs ${pct(bigPct)}) · ${models == null ? matching : share(matching, models)} local models match it with the graph`,
   };
 }
 
-function errorsRemoved(v: Record<string, unknown>): HeroStat | null {
+function errorsRemoved(v: Record<string, unknown>, _models: number | null): HeroStat | null {
   const median = num(v.median_pct);
   const models = num(v.models);
   if (median == null || models == null) return null;
@@ -122,7 +122,13 @@ function errorsRemoved(v: Record<string, unknown>): HeroStat | null {
   };
 }
 
-const BUILDERS: Record<(typeof HERO_KEYS)[number], (v: Record<string, unknown>) => HeroStat | null> = {
+// Every builder gets the comparison's model count beside its headline's values: a hero
+// detail names how many models a figure holds on (the house rule), and the size headline's
+// values carry only `models_matching`.
+const BUILDERS: Record<
+  (typeof HERO_KEYS)[number],
+  (v: Record<string, unknown>, models: number | null) => HeroStat | null
+> = {
   failures_ordinary: failuresOrdinary,
   size_substitution: sizeSubstitution,
   errors_removed: errorsRemoved,
@@ -137,11 +143,12 @@ type Comparison = {
 /** The hero's figures for one corpus's comparison: the holding headlines of HERO_KEYS, in order. */
 function statsOf(cmp: Comparison, provenance: ReturnType<typeof readProvenance>): HeroStat[] {
   const headlines = cmp.value?.headlines ?? [];
+  const models = num(cmp.value?.models);
   const out: HeroStat[] = [];
   for (const key of HERO_KEYS) {
     const h = headlines.find((x) => x.key === key);
     if (!h || !headlineHolds(h, provenance)) continue;
-    const stat = BUILDERS[key](h.values ?? {});
+    const stat = BUILDERS[key](h.values ?? {}, models);
     if (stat) out.push(stat);
   }
   return out;

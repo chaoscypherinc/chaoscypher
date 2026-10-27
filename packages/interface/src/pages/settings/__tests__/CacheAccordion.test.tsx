@@ -83,6 +83,14 @@ describe('CacheAccordion', () => {
     await waitFor(() => expect(api.update).toHaveBeenCalledWith({ completions: { enabled: false } }));
   });
 
+  it('shows the error alert when a toggle fails', async () => {
+    api.update.mockRejectedValue(new Error('the cache store is read-only'));
+    const user = await renderExpanded();
+    await user.click(await screen.findByRole('switch', { name: /completions cache enabled/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('the cache store is read-only');
+  });
+
   it('Clear asks first: cancel calls nothing', async () => {
     const user = await renderExpanded();
     const card = await screen.findByTestId('cache-card-embeddings');

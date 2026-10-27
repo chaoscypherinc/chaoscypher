@@ -350,10 +350,7 @@ def _citation_to_jsonld(citation: dict) -> dict:
     Emits the cited-entity reference as ``ccx:citation: {"@id": <node IRI>}``
     so the link to the knowledge node round-trips, alongside the optional
     ``ccx:confidence`` / ``ccx:extractionMethod`` provenance. The cited node's
-    IRI is resolved from the citation's own node ``ccx_iri`` when present (a
-    cross-package import set it), else minted from the node's local id (the
-    citation repo dict carries it as ``entity_uri``; ``entity_id`` is accepted
-    as an alias for robustness against shape drift).
+    IRI is the one :func:`_citation_entity_iri` resolves.
     """
     mapped: dict[str, Any] = {}
 
@@ -371,15 +368,17 @@ def _citation_to_jsonld(citation: dict) -> dict:
 def _citation_entity_iri(citation: dict) -> str | None:
     """Resolve the cited entity's node IRI from a citation repo dict.
 
-    A persisted node ``ccx_iri`` on the citation wins (keeps the entity
-    anchored to its original cross-package identity). Otherwise the IRI is
-    minted from the cited node's local id — ``entity_uri`` is the real
-    ``SourceCitation`` column (it stores the node id), with ``entity_id`` kept
-    as a defensive alias. Returns ``None`` when no entity reference is present.
+    ``entity_iri`` — the cited node's own ``@id``, which the exporter sets for
+    every exported node — wins, so a node anchored to a foreign ``ccx_iri`` and
+    its citations name the same IRI. Otherwise (the node is outside the export)
+    the IRI is minted from the cited node's local id — ``entity_uri`` is the
+    real ``SourceCitation`` column (it stores the node id), with ``entity_id``
+    kept as a defensive alias. Returns ``None`` when no entity reference is
+    present.
     """
-    node_ccx_iri = citation.get("node_ccx_iri") or citation.get("entity_ccx_iri")
-    if node_ccx_iri:
-        return str(node_ccx_iri)
+    entity_iri = citation.get("entity_iri")
+    if entity_iri:
+        return str(entity_iri)
     entity_id = citation.get("entity_uri") or citation.get("entity_id")
     if entity_id:
         return ccx_identity.mint_iri("node", str(entity_id))

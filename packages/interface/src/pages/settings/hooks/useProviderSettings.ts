@@ -1,7 +1,7 @@
 // Copyright (C) 2024-2026 Chaos Cypher, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Settings, OllamaInstance, VRAMPreset, OllamaVerifyResponse, CloudModelsResponse } from '../../../types';
 import { settingsApi } from '../../../services/api/settings';
@@ -170,17 +170,27 @@ export function useProviderSettings(
   // backend always seeds a default instance, so instances[0] is guaranteed
   // to exist in practice.
   const primaryOllamaUrl = settings.llm.ollama_instances[0]?.base_url ?? '';
+  const latestOllamaUrl = useRef(primaryOllamaUrl);
+  useEffect(() => {
+    latestOllamaUrl.current = primaryOllamaUrl;
+  }, [primaryOllamaUrl]);
 
   // Handle Ollama URL verification
   const handleVerifyOllamaUrl = async () => {
     if (!primaryOllamaUrl) return;
 
+    const askedFor = primaryOllamaUrl;
     setVerifyingUrl(true);
     setUrlVerification(null);
     try {
-      const result = await settingsApi.verifyOllamaUrl(primaryOllamaUrl);
+      const result = await settingsApi.verifyOllamaUrl(askedFor);
+      // The field stays editable while the probe runs: a result for a URL
+      // the user has since changed would badge the new URL with the old
+      // verdict.
+      if (latestOllamaUrl.current !== askedFor) return;
       setUrlVerification(result);
     } catch (_error) {
+      if (latestOllamaUrl.current !== askedFor) return;
       setUrlVerification({
         success: false,
         message: 'Failed to verify URL',

@@ -107,7 +107,7 @@ Every pack whose evidence (its score above its own base score) reaches 0.30 is p
 Detection is a hint: by default extraction waits until you confirm the packs (see [Confirm the Extraction Packs](sources.md#confirm-the-extraction-packs)).
 
 - **Confirm dialog** — *Confirm extraction packs* shows "Detection proposes X + Y" and the proposed packs as chips, pre-selected. Add or remove packs; no chip is the floor alone. A low-confidence proposal starts with the floor alone selected.
-- **Upload dialog** — the *Packs* chooser offers every pack with its description and prompt size. With *Detect packs automatically* on, detection decides (and you confirm later); off, the chips you pick are used and nothing waits for confirmation. With no chip the helper reads *Floor only*.
+- **Upload dialog** — *Detect packs automatically* starts on: detection decides and you confirm later, so no pack chooser is shown. The info icon beside the switch explains what packs are, naming some of the built-in packs. Turn the switch off to show the *Packs* chooser, which offers every pack with its description and prompt size; the chips you pick are used and nothing waits for confirmation. It starts with no chip, and the helper reads *Floor only*. A whole-site import does not wait either: each page extracts with the packs detected for it.
 - **API and CLI** — send `packs` (a list; repeat the form field on uploads) or pass `--pack` once per pack. `domain` is still accepted as a one-element list: `generic` is the floor alone, `__auto__` detects.
 
 ### Changing a source's packs
@@ -140,9 +140,9 @@ The model writes a type for every entity. Junk records and property-like types a
 
 An entity no core type answers to is **kept**, not dropped: it is stored as a `Concept` flagged `unplaced_type`, with the type as written under `written_type`, and counted on the source (`unplaced_type_entities_flagged`).
 
-## The Unresolved Region
+## The Unresolved Node
 
-The pipeline keeps the records it is unsure about instead of deleting them, and marks each with a flag on the node: unconnected (`orphan`), labelled by a reference (`descriptor_reference`), low plausibility, unplaced type, unevidenced, or an excluded name. The graph canvas lays out every flagged node together in one labelled corral, **Unresolved**, beside the main graph, with a badge per flag on each node. The canvas's Unresolved button collapses the region into one summary node, *Unresolved (N)*, and expands it again; the choice is remembered per browser. Collapsing is presentation only: no node or edge is removed. See [Pipeline Flags](../architecture/extraction-pipeline/commit.md#pipeline-flags-on-nodes-and-edges) for what each flag means.
+The pipeline keeps the records it is unsure about instead of deleting them, and marks each with a flag on the node: unconnected (`orphan`), labelled by a reference (`descriptor_reference`), low plausibility, unplaced type, unevidenced, or an excluded name. The graph canvas gives each source document with flagged nodes its own grey node with a question mark, **Unresolved (N)**, counting that document's flagged nodes. It hangs off the document's source node and sits beside it, among the document's nodes, with its flagged nodes around it. A node that several documents cite goes under the document it was committed from; one with no known source goes under a single Unresolved node with no document link. Each Unresolved node starts closed: only it and its count show. Double-click it to show its flagged nodes, and again to hide them (with their links); collapsing a document hides its Unresolved node too. Selecting a hidden flagged node, by pressing Enter in the canvas search or through a link in the properties panel, opens its Unresolved node first. Hover over a flagged node, or open it, to read why it is unresolved. The Unresolved node exists only on the canvas: it is not a graph node, and showing or hiding it changes nothing in the graph. See [Pipeline Flags](../architecture/extraction-pipeline/commit.md#pipeline-flags-on-nodes-and-edges) for what each flag means.
 
 ## Subtypes and Relationships in Chat
 

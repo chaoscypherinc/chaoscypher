@@ -11,12 +11,14 @@ graph tools to MCP-compatible hosts (Claude Desktop, Cursor, etc.).
 import asyncio
 import os
 import sys
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import click
 import structlog
 
 from chaoscypher_cli.context import get_context, get_database_name
+from chaoscypher_cli.mcp.stdin_lines import StdinLines
+from chaoscypher_cli.utils.signals import Termination, cancelled_by_signal
 
 
 logger = structlog.get_logger(__name__)
@@ -148,6 +150,7 @@ def serve_stdio(
     import langchain_text_splitters  # noqa: F401
     from mcp.server.stdio import stdio_server
 
+    linker = None
     if state.ready:
         ctx = get_context(database_name=db_name, explicit_database=explicit_database)
 
@@ -161,6 +164,7 @@ def serve_stdio(
             ctx.settings.mcp.auto_extract = True
 
         from chaoscypher_cli.benchmark.naive_retrieval import naive_retriever_factory
+        from chaoscypher_core.mcp.memory_link import MemoryLinker
         from chaoscypher_core.mcp.server import create_mcp_server
 
         engine = ctx._engine  # noqa: SLF001
@@ -169,7 +173,10 @@ def serve_stdio(
             raise RuntimeError(msg)
         # The benchmark's naive retrieval rung (llama-index) is the CLI's
         # optional extra; Core takes it as a factory and never imports it.
-        server = create_mcp_server(engine, naive_retriever=naive_retriever_factory)
+        # The links remember leaves running when its wait runs out: closed when the
+        # client disconnects, so each memory's claim is given back (back to pending).
+        linker = MemoryLinker(engine)
+        server = create_mcp_server(engine, naive_retriever=naive_retriever_factory, linker=linker)
         logger.info(
             "mcp_server_starting",
             database=ctx.database_name,
@@ -219,13 +226,27 @@ def serve_stdio(
             message=state.message,
         )
 
-    async def run() -> None:
-        """Serve the MCP protocol over stdio until the client disconnects."""
-        async with stdio_server() as (read_stream, write_stream):
-            await server.run(
-                read_stream,
-                write_stream,
-                server.create_initialization_options(),
-            )
+    stopped = Termination()
+    asyncio.run(_serve(server, linker, stdio_server, stopped))
+    if stopped.exit_code is not None:
+        sys.exit(stopped.exit_code)
 
-    asyncio.run(run())
+
+async def _serve(server: Any, linker: Any, stdio_server: Any, stopped: Termination) -> None:
+    """Serve over stdio until the client disconnects, SIGTERM or Ctrl-C, then release the links.
+
+    ``stopped.signal`` says which signal ended it, if one did. Stdin is read by
+    :class:`StdinLines`, so the cancellation does not wait for the client's next line.
+    """
+    async with cancelled_by_signal() as stop:
+        try:
+            async with stdio_server(stdin=cast("Any", StdinLines())) as (read_stream, write_stream):
+                await server.run(
+                    read_stream,
+                    write_stream,
+                    server.create_initialization_options(),
+                )
+        finally:
+            if linker is not None:
+                await linker.close()
+    stopped.signal = stop.signal

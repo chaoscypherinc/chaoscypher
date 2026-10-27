@@ -84,6 +84,7 @@ def test_structlog_for_caplog_clears_lazy_proxy_cache_on_teardown() -> None:
     """
     # Set up production-style caching, then capture a proxy and force
     # it to cache itself (so its instance dict gets a ``bind`` entry).
+    session_config = structlog.get_config()  # before the change, to put the session's back
     structlog.configure(
         wrapper_class=structlog.stdlib.BoundLogger,
         logger_factory=structlog.stdlib.LoggerFactory(),
@@ -100,7 +101,6 @@ def test_structlog_for_caplog_clears_lazy_proxy_cache_on_teardown() -> None:
     # walker can find it the same way it would find a module-level
     # ``logger = structlog.get_logger(__name__)``.
     fake_module_name = "test_structlog_fixtures_path_b_probe"
-    session_config = structlog.get_config()
     fake_module = types.ModuleType(fake_module_name)
     fake_module.logger = proxy  # type: ignore[attr-defined]
     sys.modules[fake_module_name] = fake_module

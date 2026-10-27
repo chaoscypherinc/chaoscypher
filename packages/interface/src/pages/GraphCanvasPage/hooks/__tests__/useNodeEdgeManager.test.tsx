@@ -7,6 +7,10 @@ import Graph from 'graphology';
 import type { NodeAttributes, EdgeAttributes } from '../../types';
 import type { Node as ApiNode, Edge as ApiEdge, Template } from '../../../../types';
 import { useNodeEdgeManager } from '../useNodeEdgeManager';
+import { SOURCE_GROUP_PREFIX, unresolvedBucketId, UNRESOLVED_EDGE_PREFIX } from '../../types';
+
+/** The hub for unresolved nodes with no known source. */
+const UNRESOLVED_BUCKET_ID = unresolvedBucketId(null);
 
 // ---------------------------------------------------------------------------
 // Mock: services/api
@@ -883,6 +887,57 @@ describe('useNodeEdgeManager', () => {
       });
 
       expect(setError).toHaveBeenCalledWith('Unknown error');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Synthetic hubs never reach the API
+  // -------------------------------------------------------------------------
+
+  describe('synthetic nodes and edges', () => {
+    const SYNTHETIC_NODES = [UNRESOLVED_BUCKET_ID, `${SOURCE_GROUP_PREFIX}src-1`];
+
+    function graphWithHubs() {
+      const graph = makeGraph();
+      graph.addNode('n1', makeNodeAttrs());
+      for (const id of SYNTHETIC_NODES) graph.addNode(id, makeNodeAttrs({ nodeId: id }));
+      graph.addEdgeWithKey(`${UNRESOLVED_EDGE_PREFIX}n1`, UNRESOLVED_BUCKET_ID, 'n1', {
+        edgeId: `${UNRESOLVED_EDGE_PREFIX}n1`, label: '', templateId: '', sourceId: UNRESOLVED_BUCKET_ID,
+        targetId: 'n1', properties: {}, createdAt: '', updatedAt: '',
+      });
+      return graph;
+    }
+
+    it.each(SYNTHETIC_NODES)('never updates, deletes or duplicates %s through the API', async (id) => {
+      const graph = graphWithHubs();
+      const { result } = renderManager(graph);
+
+      await act(async () => {
+        await result.current.handleNodeUpdate(id, { label: 'Renamed' });
+        await result.current.handleNodeDelete(id);
+        await result.current.handleNodeDuplicate(id, { ...makeNodeAttrs({ nodeId: id }) });
+      });
+
+      expect(mockNodeApiUpdate).not.toHaveBeenCalled();
+      expect(mockNodeApiDelete).not.toHaveBeenCalled();
+      expect(mockNodeApiCreate).not.toHaveBeenCalled();
+      expect(mockTemplateApiGet).not.toHaveBeenCalled();
+      expect(graph.hasNode(id)).toBe(true);
+    });
+
+    it('never links a synthetic node, or deletes a synthetic edge, through the API', async () => {
+      const graph = graphWithHubs();
+      const { result } = renderManager(graph);
+
+      await act(async () => {
+        await result.current.handleEdgeCreate(UNRESOLVED_BUCKET_ID, 'n1', 'etpl1');
+        await result.current.handleEdgeCreate('n1', `${SOURCE_GROUP_PREFIX}src-1`, 'etpl1');
+        await result.current.handleEdgeDelete(`${UNRESOLVED_EDGE_PREFIX}n1`);
+      });
+
+      expect(mockEdgeApiCreate).not.toHaveBeenCalled();
+      expect(mockEdgeApiDelete).not.toHaveBeenCalled();
+      expect(graph.hasEdge(`${UNRESOLVED_EDGE_PREFIX}n1`)).toBe(true);
     });
   });
 

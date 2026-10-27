@@ -21,6 +21,8 @@ from typing import IO, TYPE_CHECKING, cast
 
 import structlog
 
+from chaoscypher_core.utils.logging.privacy import withhold_private_text
+
 
 if TYPE_CHECKING:
     from structlog.stdlib import BoundLogger
@@ -79,6 +81,9 @@ def configure_logging(
         structlog.contextvars.merge_contextvars,
         # Add timestamp in ISO 8601 format
         structlog.processors.TimeStamper(fmt="iso", utc=True),
+        # Inside private_text() (a memory), no traceback or error text above DEBUG (D16);
+        # before the renderer, so a traceback is dropped before it becomes text
+        withhold_private_text,
         # Add exception info if present
         structlog.processors.ExceptionRenderer(),
         # Add source location for warnings/errors
@@ -88,6 +93,8 @@ def configure_logging(
                 structlog.processors.CallsiteParameter.FUNC_NAME,
                 structlog.processors.CallsiteParameter.LINENO,
             ],
+            # log_failure logs for its caller: the call site is the caller's
+            additional_ignores=["chaoscypher_core.utils.logging.privacy"],
         ),
     ]
 

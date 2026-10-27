@@ -72,12 +72,12 @@ class TestMatch:
 
 
 class TestFallbackSelfHeal:
-    """The fallback path lazily upserts system_template_item if it's missing."""
+    """The fallback path restores system_template_item if it's missing."""
 
-    def test_fallback_skips_create_when_template_exists(self) -> None:
-        """If get_template returns a row, no create_template call is made."""
+    def test_fallback_restores_the_shipped_template(self) -> None:
+        """The fallback asks the repository for the shipped definition of its template."""
         repo = MagicMock()
-        repo.get_template.return_value = MagicMock(id="system_template_item")
+        repo.ensure_default_templates_exist.return_value = 1
         matcher = EntityTemplateMatcher(graph_repository=repo)
 
         result = matcher.match(
@@ -87,34 +87,15 @@ class TestFallbackSelfHeal:
         )
 
         assert result == "system_template_item"
-        repo.get_template.assert_called_once_with("system_template_item")
-        repo.create_template.assert_not_called()
-
-    def test_fallback_recreates_template_when_missing(self) -> None:
-        """If get_template returns None, the matcher upserts the default."""
-        repo = MagicMock()
-        repo.get_template.return_value = None
-        recreated = MagicMock(id="system_template_item")
-        repo.create_template.return_value = recreated
-        matcher = EntityTemplateMatcher(graph_repository=repo)
-
-        result = matcher.match(
-            entity_data={"type": "object", "name": "X"},
-            all_templates=[],
-            template_name_to_id={"person": "tmpl_person"},
-        )
-
-        assert result == "system_template_item"
-        repo.create_template.assert_called_once()
-        # Verify create_template was given the canonical id and is_system=True.
-        kwargs = repo.create_template.call_args.kwargs
-        assert kwargs["custom_id"] == "system_template_item"
-        assert kwargs["is_system"] is True
+        provider = repo.ensure_default_templates_exist.call_args.kwargs[
+            "default_templates_provider"
+        ]
+        assert [t["id"] for t in provider()] == ["system_template_item"]
 
     def test_fallback_check_runs_at_most_once_per_matcher(self) -> None:
         """Repeated fallback hits don't re-issue get_template SELECTs."""
         repo = MagicMock()
-        repo.get_template.return_value = MagicMock(id="system_template_item")
+        repo.ensure_default_templates_exist.return_value = 0
         matcher = EntityTemplateMatcher(graph_repository=repo)
 
         for entity_type in ("object", "thing", "blob", "widget"):
@@ -124,7 +105,7 @@ class TestFallbackSelfHeal:
                 template_name_to_id={"person": "tmpl_person"},
             )
 
-        assert repo.get_template.call_count == 1
+        assert repo.ensure_default_templates_exist.call_count == 1
 
     def test_fallback_check_skipped_when_match_succeeds(self) -> None:
         """Hot path with a matching per-source template never touches get_template."""
@@ -138,8 +119,7 @@ class TestFallbackSelfHeal:
         )
 
         assert result == "tmpl_person"
-        repo.get_template.assert_not_called()
-        repo.create_template.assert_not_called()
+        repo.ensure_default_templates_exist.assert_not_called()
 
 
 class TestCaching:

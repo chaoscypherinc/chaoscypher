@@ -12,11 +12,14 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
-from chaoscypher_core.mcp.memory import memory_handle
+from chaoscypher_core.mcp.memory import memory_handle, remove_source
+from chaoscypher_core.mcp.memory_link import link_repository
 from chaoscypher_core.mcp.memory_pack import export_memory_pack
+from chaoscypher_core.models import MemoryLinkState
 from chaoscypher_core.operations.importing.imported_source_handler import index_imported_package
 from chaoscypher_core.services.export import CcxExporter
 from chaoscypher_core.services.package.importer import CcxImporter, ImportOptions
@@ -194,3 +197,128 @@ async def test_an_imported_document_stays_an_imported_source(
     answer = await call(target.server, "recall", {"query": "Where was Pierre born?"})
     assert "born_in Moscow [pack " in answer
     assert answer.endswith('] "Pierre Bezukhov was born in Moscow."')
+
+
+async def test_an_imported_memory_reads_as_linked(
+    origin: SimpleNamespace, target: SimpleNamespace
+) -> None:
+    grey = "The weather was grey."
+    await call(origin.server, "remember", {"text": grey, "scope": "work"})
+    await import_pack(target, export_memory_pack(origin.engine, scope="work"))
+    repo = link_repository(target.engine)
+    states = {}
+    for row in memory_sources(target.storage):
+        link = repo.read_link_row(row["id"])
+        assert link is not None
+        states[link.full_text] = link.state
+    assert states == {
+        PARIS["text"]: MemoryLinkState.LINKED,
+        LYON["text"]: MemoryLinkState.LINKED,
+        grey: MemoryLinkState.LINKED_EMPTY,  # attests no node, as at its origin
+    }
+    listed = await call(target.server, "list_memories", {})
+    assert [line for line in listed.splitlines() if not line.endswith('"')] == [
+        next(line for line in listed.splitlines() if grey in line)
+    ]
+
+
+async def test_imported_edges_have_a_home_and_their_memorys_date_without_a_rebuild(
+    origin: SimpleNamespace, target: SimpleNamespace
+) -> None:
+    """The importer homes each edge it writes and dates it itself: no release keys on a home
+    the rebuild may or may not write (an edge with no home is no person's).
+    """
+    from chaoscypher_core.services.graph.management import release
+
+    def no_rebuild(*_args: object, **_kwargs: object) -> release.Rebuilt:
+        return release.Rebuilt(changed_node_ids=frozenset(), endpoint_ids=frozenset())
+
+    with patch.object(release, "rebuild_from_members", no_rebuild):
+        await import_pack(target, export_memory_pack(origin.engine, scope="work"))
+
+    edges = target.graph.list_edges()
+    members = {e.id: set(target.graph.edge_members(e.id)) for e in edges}
+    assert edges and all(e.source_id in members[e.id] for e in edges)
+    assert {str(e.valid_from) for e in edges if e.label == "located_in"} == {
+        PARIS["valid_from"],
+        LYON["valid_from"],
+    }
+    assert not any(e.person_made for e in edges)
+
+
+async def test_forgetting_an_imported_memory_removes_its_edges(
+    origin: SimpleNamespace, target: SimpleNamespace
+) -> None:
+    await import_pack(target, export_memory_pack(origin.engine, scope="work"))
+    lyon = [e for e in target.graph.list_edges() if e.label == "located_in"]
+    assert len(lyon) == 2
+
+    await call(
+        target.server, "forget", {"handle": handle_of(target, LYON["text"]), "confirm": True}
+    )
+
+    labels = {
+        target.graph.get_node(e.target_node_id, include_embedding=False).label
+        for e in target.graph.list_edges()
+    }
+    assert "Lyon" not in labels and "Paris" in labels
+
+
+async def test_deleting_an_imported_document_removes_its_edges_when_their_ends_survive(
+    origin: SimpleNamespace, target: SimpleNamespace
+) -> None:
+    born = "Pierre Bezukhov was born in Moscow."
+    await origin.engine.process_document(born, filename="book.txt")
+    (book,) = [
+        r for r in origin.storage.list_sources(page_size=10)[0] if r["source_type"] != "memory"
+    ]
+    exporter = CcxExporter(
+        graph_repository=origin.graph,
+        sources_repository=origin.storage,
+        settings=origin.engine.settings,
+    )
+    await import_pack(target, exporter.export(source_ids=[book["id"]], include_embeddings=False))
+    (imported,) = target.storage.list_sources(page_size=10)[0]
+    visit = "Pierre Bezukhov visited Moscow."
+    target.llm.script[visit] = (
+        "E|Pierre Bezukhov|Person|Pierre|0.9|S1|A count\nE|Moscow|Location||0.9|S1|A city\n",
+        "R|0|1|travelled_to|0.9|S1|Pierre Bezukhov visited Moscow\n",
+    )
+    await call(target.server, "remember", {"text": visit, "by": "alice"})
+
+    await remove_source(target.engine, imported["id"])
+
+    labels = {e.label for e in target.graph.list_edges()}
+    assert "born_in" not in labels and "travelled_to" in labels
+    nodes = {n.label for n in target.graph.list_nodes(limit=100, include_embedding=False)}
+    assert {"Pierre Bezukhov", "Moscow"} <= nodes
+
+
+async def test_a_second_package_citing_an_edge_keeps_its_first_home(
+    origin: SimpleNamespace, target: SimpleNamespace
+) -> None:
+    """The importer homes an edge only when it has none: a second package whose source
+    cites the same edge attests it, and its first home stays (as nodes are homed).
+    """
+    born = "Pierre Bezukhov was born in Moscow."
+    for name in ("first.txt", "second.txt"):  # two documents, one merged fact
+        await origin.engine.process_document(born, filename=name)
+    books = [
+        r for r in origin.storage.list_sources(page_size=10)[0] if r["source_type"] != "memory"
+    ]
+    exporter = CcxExporter(
+        graph_repository=origin.graph,
+        sources_repository=origin.storage,
+        settings=origin.engine.settings,
+    )
+    first, second = (exporter.export(source_ids=[b["id"]], include_embeddings=False) for b in books)
+    await import_pack(target, first)
+    (born_in,) = [e for e in target.graph.list_edges() if e.label == "born_in"]
+    home = born_in.source_id
+    assert home is not None
+
+    await import_pack(target, second)
+
+    (after,) = [e for e in target.graph.list_edges() if e.label == "born_in"]
+    assert after.id == born_in.id and after.source_id == home
+    assert len(target.graph.edge_members(after.id)) == 2

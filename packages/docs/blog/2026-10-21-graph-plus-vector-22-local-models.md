@@ -78,7 +78,7 @@ We would rather you know the limits before you quote the numbers.
 - **One corpus, and it is a novel.** Fiction is full of people, families and look-alike names, which may be where a graph helps most. A second corpus, technical documentation, is next, and these figures say nothing about it until it is measured.
 - **Local models only.** All 22 are open-weight models pulled from Ollama. The board says nothing about hosted models on this comparison.
 - **Measured on the board's day.** The figures are for the board dated 2026-10-21 and the build it measured. The graph + vector search measured there is on our main branch; the image you can pull today carries an earlier version of the same search.
-- **One headline is against plain RAG only.** The small-model match is against plain vector RAG. We do not claim it against hybrid search.
+- **Two headlines are against plain RAG only.** The ordinary-question figure and the small-model match are against plain vector RAG. On Book One, against hybrid search the ordinary-question gain is smaller (median 24%, and 11 of 22 models remove at least 25% of their failed answers, one short of a majority), so we claim neither against hybrid search.
 - **The graph is not free.** The extra context also makes some models answer out-of-scope questions they should decline. That one is on our list.
 
 In plain English: this is one book, local models, one day's build, and a clear list of what it does not show.

@@ -3,8 +3,8 @@
 # End-to-end pipeline benchmark: builds graphs with each extractor, indexes
 # with each embedder, evaluates each chat candidate end-to-end.
 #
-# Use --local-only to drop commercial models and switch judge to a local
-# Ollama model (signal weaker but free).
+# Use --local-only to drop commercial models; a cloud judge is dropped with
+# them (the chat stage is then probe-scored), a local Ollama judge is kept.
 name: "ChaosCypher Full Pipeline Benchmark"
 description: "Three-stage benchmark: extraction + embedding retrieval + GraphRAG chat answer quality."
 

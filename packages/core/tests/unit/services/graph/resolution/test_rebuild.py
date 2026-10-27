@@ -908,3 +908,29 @@ def test_a_merge_racing_a_release_never_writes_the_released_names_back(
     assert "Bezúkhov" not in _text(pierre), "the merge wrote the released source's names back"
     assert DESC["b"] not in _text(pierre)
     assert DESC["c"] in _text(pierre), "c's reading survives in the node"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lazy", [False, True], ids=["no-embedder", "lazy-builds-none"])
+async def test_with_vector_search_off_the_refresh_reindexes_for_keywords_only(
+    adapter: SqliteAdapter, repo: GraphRepository, lazy: bool
+) -> None:
+    from structlog.testing import capture_logs
+
+    from chaoscypher_core.services.graph.management.release import LazyEmbedder
+
+    _two_source_pierre(repo)
+    released = release_source_graph(repo, "b", sources=adapter, database_name="test")
+    repo.session.commit()
+    search = MagicMock()
+    embedder = LazyEmbedder(build=lambda: None, owned=False) if lazy else None
+
+    with capture_logs() as logs:
+        await refresh_released_graph(repo, released, embedder=embedder, search=search)
+
+    ((indexed,), _) = search.index_nodes_batch.call_args
+    assert {n.id for n in indexed} == set(released.stale_node_ids)
+    events = [e["event"] for e in logs]
+    assert "nodes_reindexed_for_keywords_only" in events
+    assert "released_graph_not_reembedded" not in events
+    assert not [e for e in events if e.endswith("_non_fatal")]

@@ -143,6 +143,9 @@ def get_engine(
             # - pool_size/max_overflow: High limits to avoid QueuePool exhaustion
             #   under concurrent requests (dashboard fires 4+ API calls at once,
             #   each creating multiple adapters)
+            # - hide_parameters: a statement error names the statement, never its values
+            #   (a node's label and properties can be a memory's words), in its text and so
+            #   in every log of it
             engine = create_engine(
                 f"sqlite:///{db_path}",
                 connect_args={
@@ -153,6 +156,7 @@ def get_engine(
                 max_overflow=defaults.max_overflow,
                 pool_timeout=defaults.pool_timeout,
                 echo=echo,
+                hide_parameters=True,
             )
 
             # Enable WAL mode and other optimizations on every connection

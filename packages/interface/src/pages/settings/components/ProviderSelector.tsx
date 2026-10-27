@@ -45,16 +45,25 @@ const isMaskedSecret = (value: string | null | undefined): boolean =>
  * the verify endpoint needs the raw value.
  */
 function CloudKeyTester({ provider, apiKey }: { provider: LLMProvider; apiKey: string }) {
-  const [state, setState] = useState<'idle' | 'testing' | LLMVerifyResponse>('idle');
+  // A verdict is stored with the key it describes, so typing a new key shows
+  // no verdict and a late result for an earlier key is never shown for it.
+  type Verdict = { key: string; result: LLMVerifyResponse };
+  const [state, setState] = useState<'idle' | 'testing' | Verdict>('idle');
   const canTest = apiKey.length > 0 && !isMaskedSecret(apiKey);
+  const testing = state === 'testing';
+  const verdict = typeof state === 'object' && state.key === apiKey ? state.result : null;
 
   const handleTest = async () => {
+    const askedFor = apiKey;
     setState('testing');
     try {
-      const result = await settingsApi.verifyLLM(provider, apiKey);
-      setState(result);
+      const result = await settingsApi.verifyLLM(provider, askedFor);
+      setState({ key: askedFor, result });
     } catch {
-      setState({ success: false, message: 'Test request failed', provider });
+      setState({
+        key: askedFor,
+        result: { success: false, message: 'Test request failed', provider },
+      });
     }
   };
 
@@ -63,25 +72,25 @@ function CloudKeyTester({ provider, apiKey }: { provider: LLMProvider; apiKey: s
       <Button
         size="small"
         variant="outlined"
-        disabled={!canTest || state === 'testing'}
+        disabled={!canTest || testing}
         onClick={handleTest}
-        startIcon={state === 'testing' ? <CircularProgress size={14} /> : undefined}
+        startIcon={testing ? <CircularProgress size={14} /> : undefined}
       >
-        {state === 'testing' ? 'Testing…' : 'Test connection'}
+        {testing ? 'Testing…' : 'Test connection'}
       </Button>
-      {typeof state === 'object' && state.success && (
+      {verdict?.success && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'success.main' }}>
           <CheckCircleIcon fontSize="small" />
-          <Typography variant="caption">{state.message}</Typography>
+          <Typography variant="caption">{verdict.message}</Typography>
         </Box>
       )}
-      {typeof state === 'object' && !state.success && (
+      {verdict && !verdict.success && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'error.main' }}>
           <ErrorOutlineIcon fontSize="small" />
-          <Typography variant="caption">{state.message}</Typography>
+          <Typography variant="caption">{verdict.message}</Typography>
         </Box>
       )}
-      {!canTest && state === 'idle' && (
+      {!canTest && !testing && !verdict && (
         <Typography variant="caption" sx={{ color: 'text.secondary' }}>
           {isMaskedSecret(apiKey)
             ? 'Re-enter the key to test'

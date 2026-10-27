@@ -22,7 +22,7 @@ import structlog
 from chaoscypher_core.cache.build import BuildResolver, LazyModelBuild, pinned_build
 from chaoscypher_core.cache.call_site import current_call_site
 from chaoscypher_core.cache.guard import store_call
-from chaoscypher_core.cache.keys import embedding_key
+from chaoscypher_core.cache.keys import embedding_key, model_build_id
 from chaoscypher_core.cache.store import CacheEntry, CacheStore, encode_value, stored_value
 from chaoscypher_core.exceptions import LLMError, ValidationError
 from chaoscypher_core.models import BatchEmbedResult, EmbedResult
@@ -75,7 +75,13 @@ class CachedEmbeddingProvider:
         """
         self._inner = inner
         self._store = store
-        self._build = LazyModelBuild(model_build, resolve_build)
+        # One lazy build per model name, as the chat wrapper keys (2026-10-19 audit): the
+        # given ``model_build`` is the wrapped model's; a model switched through the
+        # setter resolves its own, so its vectors are never stored under the old key.
+        self._wrapped_model = inner.model_name
+        self._static_build = model_build
+        self._resolve_build = resolve_build
+        self._builds: dict[str, LazyModelBuild] = {}
         self._enabled = enabled
         self._require_hit = require_hit
         self._namespace = namespace
@@ -184,10 +190,26 @@ class CachedEmbeddingProvider:
             op="record",
         )
 
+    def _lazy_build(self, model: str) -> LazyModelBuild:
+        """The build of ``model``: the given one for the wrapped model, else resolved or static."""
+        lazy = self._builds.get(model)
+        if lazy is None:
+            if model == self._wrapped_model and self._static_build is not None:
+                lazy = LazyModelBuild(self._static_build)
+            elif self._resolve_build is not None:
+                lazy = LazyModelBuild(resolve=self._resolve_build)
+            else:
+                lazy = LazyModelBuild(
+                    model_build_id(self.provider_type, model, digest=None, server_version=None)
+                )
+            self._builds[model] = lazy
+        return lazy
+
     async def _model_build(self) -> str | None:
-        """The build to key on: a pinned one (a replay's) first, else the given or resolved one."""
-        pinned = pinned_build(self.provider_type, self.model_name)
-        return pinned if pinned is not None else await self._build.get()
+        """The build to key on: a pinned one (a replay's) first, else the current model's."""
+        model = self.model_name
+        pinned = pinned_build(self.provider_type, model)
+        return pinned if pinned is not None else await self._lazy_build(model).get()
 
     async def _vectors(
         self, texts: list[str], *, single: bool, batch_size: int

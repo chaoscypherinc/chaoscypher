@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from chaoscypher_core.mcp.memory import NO_MODEL_LINE
 from chaoscypher_core.mcp.server import create_mcp_server
 from tests.unit.mcp.memory_world import (
     build_world,
@@ -179,7 +180,7 @@ async def test_no_extraction_model_stores_an_unlinked_note(
     server_without_llm: SimpleNamespace,
 ) -> None:
     text = await call(server_without_llm.server, "remember", {"text": "Lise sings."})
-    assert text.endswith("(not linked: no extraction model)")
+    assert text.splitlines()[1:] == [NO_MODEL_LINE]
     assert server_without_llm.search.keyword_search("Lise", item_type="chunk")
     [source] = memory_sources(server_without_llm.storage)
     assert source["memory_by"] == "user"

@@ -67,6 +67,28 @@ class TestRecoverStuckSources:
         assert result["reset"] == 1
 
     @pytest.mark.asyncio
+    async def test_a_stuck_memory_is_not_reset(self, mock_adapter) -> None:
+        """A memory is linked by the link step alone; recovery never resets it (D17)."""
+        mock_adapter.get_stuck_extracting_sources.return_value = [
+            {"id": "m1", "source_type": "memory", "extraction_job_status": "running"},
+            {"id": "m2", "source_type": "memory", "extraction_job_status": "failed"},
+        ]
+        result = await recover_stuck_sources(mock_adapter, "test_db")
+        assert result == {"reset": 0, "marked_failed": 0}
+        mock_adapter.update_file.assert_not_called()
+        mock_adapter.fail_extraction.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_stuck_source_with_no_type_is_still_reset(self, mock_adapter) -> None:
+        """Most rows predate source_type: a NULL type is a document, recovered as before."""
+        mock_adapter.get_stuck_extracting_sources.return_value = [
+            {"id": "src1", "source_type": None, "extraction_job_status": "running"},
+        ]
+        result = await recover_stuck_sources(mock_adapter, "test_db")
+        assert result["reset"] == 1
+        assert mock_adapter.update_file.call_args.args[0] == "src1"
+
+    @pytest.mark.asyncio
     async def test_handles_mixed_statuses(self, mock_adapter) -> None:
         mock_adapter.get_stuck_extracting_sources.return_value = [
             {"id": "src1", "extraction_job_status": "failed"},

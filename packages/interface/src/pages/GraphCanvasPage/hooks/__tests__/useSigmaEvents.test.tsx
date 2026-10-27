@@ -11,6 +11,10 @@ import type {
 } from 'sigma/types';
 import type { NodeAttributes, EdgeAttributes } from '../../types';
 import { useSigmaEvents } from '../useSigmaEvents';
+import { unresolvedBucketId, UNRESOLVED_EDGE_PREFIX } from '../../types';
+
+/** The hub for unresolved nodes with no known source. */
+const UNRESOLVED_BUCKET_ID = unresolvedBucketId(null);
 
 // ---------------------------------------------------------------------------
 // Fake sigma: capture the handlers registered via sigma.on(event, handler),
@@ -333,6 +337,22 @@ describe('useSigmaEvents', () => {
       const [nodeId, data] = callbacks.onNodeDoubleClick.mock.calls[0];
       expect(nodeId).toBe('n2');
       expect(data).toMatchObject({ nodeId: 'n2', title: 'Node Two' });
+    });
+  });
+
+  describe('synthetic edges', () => {
+    it('ignores a click or right-click on an edge the canvas made up (provenance, Unresolved hub)', () => {
+      const graph = buildGraph();
+      graph.addNode(UNRESOLVED_BUCKET_ID, nodeAttrs({ nodeId: UNRESOLVED_BUCKET_ID }));
+      const synthetic = `${UNRESOLVED_EDGE_PREFIX}n1`;
+      graph.addEdgeWithKey(synthetic, UNRESOLVED_BUCKET_ID, 'n1', edgeAttrs({ edgeId: synthetic }));
+      const { sigma, callbacks } = renderEvents(graph);
+
+      sigma.handlers.get('clickEdge')?.(edgePayload(synthetic));
+      sigma.handlers.get('rightClickEdge')?.(edgePayload(synthetic));
+
+      expect(callbacks.onEdgeClick).not.toHaveBeenCalled();
+      expect(callbacks.onEdgeRightClick).not.toHaveBeenCalled();
     });
   });
 

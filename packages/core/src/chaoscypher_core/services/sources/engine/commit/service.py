@@ -12,7 +12,7 @@ Extracted from commit_service.py for SRP compliance.
 import base64
 import dataclasses
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -79,6 +79,7 @@ def _stable_relationship_citation_id(
 
 
 from chaoscypher_core.models import ReleasedRows, TemplateUpdate
+from chaoscypher_core.services.graph.memory.offered_nodes import OFFERED_NODES_KEY
 from chaoscypher_core.services.sources.engine.commit.entity import (
     EntityCommitHandler,
 )
@@ -91,6 +92,8 @@ from chaoscypher_core.services.sources.engine.commit.relation import (
 )
 from chaoscypher_core.services.sources.engine.commit.template import (
     TemplateCommitHandler,
+    drop_bound_suggestions,
+    live_offered_templates,
 )
 from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
     INVERSE_OF_KEY,
@@ -102,6 +105,9 @@ from chaoscypher_core.services.sources.engine.extraction.utils.entity_cleaner im
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.filtering_config import (
     resolve_filtering_config,
+)
+from chaoscypher_core.services.sources.engine.extraction.utils.offered_types import (
+    OFFERED_TEMPLATES_KEY,
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.sentence_splitter import (
     evidence_snippet,
@@ -405,8 +411,10 @@ class SourceCommitService:
             retry_policy: Retry policy for SQLite-lock-sensitive commit path;
                 defaults to :class:`DbLockRetryPolicy` when omitted.
             embedding_provider: Embedding provider for pre-commit reindex
-                flush and template embedding; constructed lazily from
-                ``settings`` on first use when omitted.
+                flush and template embedding; resolved lazily from
+                ``settings`` on first use when omitted
+                (:func:`~chaoscypher_core.adapters.embedding.embedding_provider_for`,
+                so None with vector search off).
 
         """
         from chaoscypher_core.utils.retry import DbLockRetryPolicy
@@ -421,6 +429,7 @@ class SourceCommitService:
         self.reload_callback = reload_callback
         self._retry_policy: RetryPolicyPort = retry_policy or DbLockRetryPolicy()
         self._embedding_provider: EmbeddingProviderProtocol | None = embedding_provider
+        self._embedding_provider_resolved: bool = embedding_provider is not None
         # Adapter reference for transaction() context manager.
         # At all production call sites, source_repository IS the SqliteAdapter
         # which implements both SourceStorageProtocol and the local
@@ -449,9 +458,15 @@ class SourceCommitService:
     def from_engine(cls, engine: Any) -> SourceCommitService:
         """Create a SourceCommitService wired from an Engine instance.
 
+        The one wiring of a commit service on an Engine (``Engine.commit_service``
+        builds its own here). It takes the Engine's embedding provider: left to
+        resolve its own from the settings, a second service built a second
+        provider, and with the local provider a second copy of the model.
+
         Args:
-            engine: Engine instance with storage_adapter, graph_repository,
-                search_repository, and settings.
+            engine: Engine instance with storage_adapter, search_repository,
+                settings, retry_policy and embedding_service (None when vector
+                search is off).
 
         Returns:
             SourceCommitService with all dependencies injected.
@@ -470,19 +485,23 @@ class SourceCommitService:
             indexing_repository=engine.storage_adapter,
             search_repository=engine.search_repository,
             settings=engine.settings,
+            retry_policy=engine.retry_policy,
+            embedding_provider=engine.embedding_service,
         )
 
-    def _get_embedding_provider(self) -> EmbeddingProviderProtocol:
-        """Return the injected embedding provider, constructing one on first use.
+    def _get_embedding_provider(self) -> EmbeddingProviderProtocol | None:
+        """Return the injected embedding provider, or the one the settings call for.
 
-        Lazily builds a default embedding provider from ``self.settings`` when
-        the constructor did not receive an explicit one. Caches the result so
-        subsequent calls reuse the same instance within this service.
+        When the constructor received none, resolves once with
+        ``embedding_provider_for(self.settings)`` (None when vector search is
+        off: the commit then runs keyword-only) and caches the answer, so
+        subsequent calls reuse it within this service.
         """
-        if self._embedding_provider is None:
-            from chaoscypher_core.adapters.embedding import create_embedding_provider
+        if not self._embedding_provider_resolved:
+            from chaoscypher_core.adapters.embedding import embedding_provider_for
 
-            self._embedding_provider = create_embedding_provider(self.settings)
+            self._embedding_provider = embedding_provider_for(self.settings)
+            self._embedding_provider_resolved = True
         return self._embedding_provider
 
     def _cleanup_previous_commit(self, file_id: str, source_id: str) -> dict[str, Any]:
@@ -694,6 +713,7 @@ class SourceCommitService:
                 "created_nodes": [],
                 "created_edges": [],
                 "created_templates": [],
+                "followups_complete": True,
             }
 
         # Caller B: already committed. Stale re-dispatch -- skip without touching anything.
@@ -708,6 +728,7 @@ class SourceCommitService:
                 "created_nodes": [],
                 "created_edges": [],
                 "created_templates": [],
+                "followups_complete": True,
             }
 
         # Caller A: legitimate empty extraction. Do a zero-graph commit.
@@ -791,7 +812,13 @@ class SourceCommitService:
                     source_id=source_id,
                 )
 
-            # Step 1: Create suggested templates (with source_id for per-source templates)
+            # Step 1: Create suggested templates (with source_id for per-source templates).
+            # A memory's offered templates that still exist bind its stamped entities in
+            # step 4; the suggestions only those entities needed are not created (D26).
+            offered_templates = live_offered_templates(
+                self.graph_repository, commit_data.get(OFFERED_TEMPLATES_KEY) or {}
+            )
+            suggested_templates = drop_bound_suggestions(commit_data, offered_templates)
             self._update_progress(file_id, 1, 8, "Creating templates")
             (
                 created_templates,
@@ -799,7 +826,7 @@ class SourceCommitService:
                 _all_used_templates,
                 node_templates_inserted,
             ) = await self.template_handler.create_suggested_templates(
-                commit_data, source_id=source_id
+                {**commit_data, "suggested_templates": suggested_templates}, source_id=source_id
             )
 
             # Step 2: Reload all templates (including newly-created ones)
@@ -916,11 +943,12 @@ class SourceCommitService:
                 self.entity_handler.prepare_entity_nodes(
                     _entities_for_commit,
                     all_templates,
-                    commit_data.get("suggested_templates"),
+                    suggested_templates,
                     template_name_to_id,
                     file_info,
                     file_id,
                     source_id,
+                    offered_templates=offered_templates,
                 )
             )
 
@@ -1222,9 +1250,14 @@ class SourceCommitService:
                 released = dataclasses.replace(released, resolve_node_ids=frozenset())
             await self._refresh_released(released)
 
+        # Best-effort follow-ups: the commit stands when either fails, and the result
+        # says so, so a memory's link step can finish them (``finish_memory``).
+        followups_complete = True
         if self.settings.graph.resolve_identities:
-            await self._resolve_identities(file_id, scope=scope)
-        self._supersede_memory(file_id)
+            followups_complete = await self._resolve_identities(
+                file_id, scope=scope, join=commit_data.get(OFFERED_NODES_KEY) or ()
+            )
+        followups_complete = self._supersede_memory(file_id) and followups_complete
 
         # Clear progress after completion
         self._update_progress(file_id, 0, 0, "")
@@ -1242,6 +1275,7 @@ class SourceCommitService:
             "created_nodes": created_nodes,
             "created_edges": created_edges,
             "created_templates": all_created_templates,
+            "followups_complete": followups_complete,
         }
 
     def _graph_packs(self, file_id: str) -> tuple[str, ...]:
@@ -1322,24 +1356,39 @@ class SourceCommitService:
             search=self.search_repository,
         )
 
-    def _supersede_memory(self, file_id: str) -> None:
+    async def finish_memory(self, source_id: str, *, join: Collection[str] = ()) -> bool:
+        """Run a committed memory's follow-ups again: the identity pass over its nodes, then supersession.
+
+        For a memory whose commit stood but whose follow-ups failed or never ran (the
+        process ended after the commit). Both steps are idempotent. The identity pass
+        is scoped to the nodes the memory attests and runs only when
+        ``settings.graph.resolve_identities`` is on, as after a commit; ``join`` are
+        the offered nodes with no type it joins by name (:meth:`_resolve_identities`).
+        True when both ran without failing.
+        """
+        resolved = True
+        if self.settings.graph.resolve_identities:
+            scope = set(self.graph_repository.member_node_ids(source_id))
+            resolved = await self._resolve_identities(source_id, scope=scope, join=join)
+        return self._supersede_memory(source_id) and resolved
+
+    def _supersede_memory(self, file_id: str) -> bool:
         """The supersession step of a memory source (spec 2026-10-20 decision 6), after the identity pass.
 
         Read from the source row's ``source_type``: a document runs nothing. The
         single-valued relations are the memory path's set plus the graph's
-        vocabulary flags. Non-fatal: the commit stands if the step fails.
+        vocabulary flags. Non-fatal: the commit stands if the step fails. False
+        when the step raised; True when it ran, and for a document.
         """
+        from chaoscypher_core.models import is_memory_source
         from chaoscypher_core.services.graph.memory.supersession import (
             single_valued_labels,
             supersede_memory_edges,
         )
-        from chaoscypher_core.services.workflows.tools.engine.memory_render import (
-            MEMORY_SOURCE_TYPE,
-        )
 
         source = self.source_repository.get_source(file_id, self.database_name)
-        if not source or source.get("source_type") != MEMORY_SOURCE_TYPE:
-            return
+        if not source or not is_memory_source(source):
+            return True
         try:
             closures = supersede_memory_edges(
                 self.graph_repository,
@@ -1348,9 +1397,10 @@ class SourceCommitService:
             )
         except Exception:
             logger.exception("memory_supersession_failed", source_id=file_id)
-            return
+            return False
         if closures:
             logger.info("memory_supersession_done", source_id=file_id, closures=len(closures))
+        return True
 
     def _relation_vocabulary(self) -> Any:
         """The graph's relation vocabulary (its sources' packs), for the single-valued flags."""
@@ -1360,8 +1410,15 @@ class SourceCommitService:
 
         return EMPTY_RELATION_VOCABULARY
 
-    async def _resolve_identities(self, file_id: str, scope: set[str] | None = None) -> None:
+    async def _resolve_identities(
+        self, file_id: str, scope: set[str] | None = None, *, join: Collection[str] = ()
+    ) -> bool:
         """The post-commit identity pass (``settings.graph.resolve_identities``).
+
+        ``join`` are the nodes with no type a memory's extraction was offered: after
+        the resolver, a node the source attests whose label names one of them exactly
+        is folded into it (``offered_nodes.join_offered_nodes``; the resolver's type
+        gate never compares a node with no type). Empty for a document.
 
         Runs the resolver under the naming conventions of the graph's
         sources (the floor's tables and those of :meth:`_graph_packs`, the
@@ -1370,9 +1427,9 @@ class SourceCommitService:
         every node sharing a naming word, a label or an alias with them
         (``plan_resolution(..., scope=)``; the plan reads the whole graph so
         every guard counts every holder; None resolves the whole graph), then
-        re-embeds the nodes whose text changed (``release.reembed_nodes``, the
-        re-embed the rebuild after a source release shares) so the vector
-        index follows.
+        re-embeds the nodes whose text changed (``release.refresh_node_search``,
+        the step the rebuild after a source release shares) so the vector
+        index follows; with vector search off it re-indexes them for keywords.
 
         A graph whose sources chose different packs is resolved under the
         union of their packs (spec 2026-10-07 § 6): a pack only adds titles,
@@ -1380,9 +1437,11 @@ class SourceCommitService:
         is one coherent set of tables. Until
         2026-10-07 such a graph was skipped
         (``identity_resolution_skipped_mixed_domains``). Non-fatal: the commit
-        stands if the pass fails, and the next commit retries it.
+        stands if the pass fails, and the next commit retries it. False when
+        the pass or its re-embedding raised.
         """
-        from chaoscypher_core.services.graph.management.release import reembed_nodes
+        from chaoscypher_core.services.graph.management.release import refresh_node_search
+        from chaoscypher_core.services.graph.memory.offered_nodes import join_offered_nodes
         from chaoscypher_core.services.graph.resolution import resolve_graph
         from chaoscypher_core.services.graph.resolution.apply import ResolutionReport
         from chaoscypher_core.services.sources.engine.extraction.domain_resolver import (
@@ -1402,6 +1461,13 @@ class SourceCommitService:
                 scope=scope,
                 report=report,
             )
+            join_offered_nodes(
+                self.graph_repository,
+                file_id,
+                join,
+                search=self.search_repository,
+                report=report,
+            )
         except Exception:
             # the merge groups that committed before the failure are in the graph (and
             # out of the index): their kept nodes are still re-embedded below
@@ -1409,7 +1475,7 @@ class SourceCommitService:
             failed = True
         try:
             if report.changed_node_ids:
-                reembedded = await reembed_nodes(
+                reembedded = await refresh_node_search(
                     self.graph_repository,
                     sorted(report.changed_node_ids),
                     self._get_embedding_provider(),
@@ -1417,9 +1483,9 @@ class SourceCommitService:
                 )
         except Exception:
             logger.exception("identity_resolution_reembed_failed_non_fatal", file_id=file_id)
-            return
+            return False
         if failed:
-            return
+            return False
         logger.info(
             "identity_resolution_applied",
             file_id=file_id,
@@ -1433,6 +1499,7 @@ class SourceCommitService:
             flagged=report.flagged,
             reembedded=reembedded,
         )
+        return True
 
     async def _commit_empty(
         self,
@@ -1586,6 +1653,7 @@ class SourceCommitService:
             "created_edges": [],
             "created_templates": [],
             "empty_extraction": True,
+            "followups_complete": True,
         }
 
     async def _create_source_and_promote_chunks(
@@ -2086,6 +2154,9 @@ class SourceCommitService:
             return
 
         embedding_provider = self._get_embedding_provider()
+        if embedding_provider is None:
+            logger.info("reindex_flush_skipped_keyword_only")
+            return
         try:
             reindexed = await self.search_repository.flush_reindex_with_service(embedding_provider)
             if reindexed:
@@ -2136,6 +2207,13 @@ class SourceCommitService:
         )
 
         try:
+            embedding_provider = self._get_embedding_provider()
+            if embedding_provider is None:
+                logger.info(
+                    "commit_template_embedding_skipped_keyword_only", templates=len(template_ids)
+                )
+                return
+
             # Phase 1: load all templates first and commit so the implicit
             # read transaction is closed before any LLM await opens a
             # window of writer-lock contention.
@@ -2152,7 +2230,6 @@ class SourceCommitService:
             if session is not None:
                 session.commit()
 
-            embedding_provider = self._get_embedding_provider()
             template_service = TemplateEmbeddingService(embedding_provider)
 
             # Phase 2: per template — await the LLM with NO transaction

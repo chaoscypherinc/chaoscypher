@@ -80,15 +80,17 @@ async def search(
 
     **Query Parameters:**
     - `q`: Search query string (required)
-    - `search_type`: Search type - keyword (full-text), semantic (vector), or hybrid (both merged)
+    - `search_type`: Search type - keyword (full-text), semantic (vector), or hybrid (rankings fused)
     - `limit`: Maximum results
 
     **Search Types:**
     - **keyword**: Full-text keyword search
     - **semantic**: Vector similarity search using embeddings
-    - **hybrid**: Runs keyword and semantic search together and keeps each
-      result's higher score; queries under 3 characters, and any search error,
-      fall back to keyword-only
+    - **hybrid**: Runs a keyword arm over nodes and over chunks and a semantic
+      arm, and fuses their rankings by reciprocal rank (a result ranked first in
+      every arm scores 1.0, so the score is a fused rank score, not a BM25 or cosine
+      value); queries under 3 characters, and any search error, fall back to
+      keyword-only
 
     **Returns:**
     - List of search results with nodes and relevance scores

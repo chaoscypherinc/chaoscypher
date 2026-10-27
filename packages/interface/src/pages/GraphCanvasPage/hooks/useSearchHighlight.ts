@@ -5,16 +5,48 @@
  * useSearchHighlight: Search and template filtering for sigma.
  *
  * Produces highlightedNodeIds and hiddenNodeIds sets consumed by
- * sigma nodeReducer/edgeReducer (in GraphCanvasContent).
+ * sigma nodeReducer/edgeReducer (in GraphCanvasContent). Only real nodes
+ * are searched and filtered; synthetic hubs are not data.
  */
 
 import { useState, useCallback, useMemo } from 'react';
 import type Graph from 'graphology';
 import type { NodeAttributes, EdgeAttributes } from '../types';
+import { isSyntheticNode } from '../types';
 
 interface UseSearchHighlightProps {
   graph: Graph<NodeAttributes, EdgeAttributes>;
   templateFilters: string[];
+}
+
+/**
+ * Ids of the real nodes a search matches (title, then any property value),
+ * in graph order. Empty for a blank query.
+ */
+export function searchMatches(
+  graph: Graph<NodeAttributes, EdgeAttributes>,
+  query: string,
+): string[] {
+  const searchTerm = query.toLowerCase().trim();
+  if (!searchTerm) return [];
+  const matches: string[] = [];
+  graph.forEachNode((id, attrs) => {
+    if (isSyntheticNode(id)) return;
+    if (attrs.title?.toLowerCase().includes(searchTerm)) {
+      matches.push(id);
+      return;
+    }
+    if (attrs.content && typeof attrs.content === 'object') {
+      for (const value of Object.values(attrs.content)) {
+        if (value == null) continue;
+        if (String(value).toLowerCase().includes(searchTerm)) {
+          matches.push(id);
+          return;
+        }
+      }
+    }
+  });
+  return matches;
 }
 
 export function useSearchHighlight({ graph, templateFilters }: UseSearchHighlightProps) {
@@ -24,35 +56,7 @@ export function useSearchHighlight({ graph, templateFilters }: UseSearchHighligh
   const handleSearch = useCallback(
     (query: string) => {
       setSearchQuery(query);
-
-      if (!query.trim()) {
-        setHighlightedNodeIds(new Set());
-        return;
-      }
-
-      const searchTerm = query.toLowerCase().trim();
-      const matchingIds = new Set<string>();
-
-      graph.forEachNode((id, attrs) => {
-        // Search in title
-        if (attrs.title?.toLowerCase().includes(searchTerm)) {
-          matchingIds.add(id);
-          return;
-        }
-
-        // Search in property values
-        if (attrs.content && typeof attrs.content === 'object') {
-          for (const value of Object.values(attrs.content)) {
-            if (value == null) continue;
-            if (String(value).toLowerCase().includes(searchTerm)) {
-              matchingIds.add(id);
-              return;
-            }
-          }
-        }
-      });
-
-      setHighlightedNodeIds(matchingIds);
+      setHighlightedNodeIds(new Set(searchMatches(graph, query)));
     },
     [graph],
   );
@@ -63,6 +67,7 @@ export function useSearchHighlight({ graph, templateFilters }: UseSearchHighligh
 
     const hidden = new Set<string>();
     graph.forEachNode((id, attrs) => {
+      if (isSyntheticNode(id)) return;
       if (!templateFilters.includes(attrs.templateId)) {
         hidden.add(id);
       }

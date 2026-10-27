@@ -14,6 +14,7 @@ Components:
 - TopicResearcher: Research and analysis capabilities
 
 Example:
+    from chaoscypher_core.adapters.embedding import embedding_provider_for
     from chaoscypher_core.services.search import SearchService, IndexingService
 
     # Search operations
@@ -23,7 +24,9 @@ Example:
     results = search_service.keyword_search("query")
 
     # Indexing operations
-    indexing_service = IndexingService(indexing_repo, settings)
+    indexing_service = IndexingService(
+        indexing_repo, settings, embedding_service=embedding_provider_for(settings)
+    )
     await indexing_service.create_index(source_id)
 
 """

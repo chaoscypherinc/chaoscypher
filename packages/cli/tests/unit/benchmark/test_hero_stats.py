@@ -71,6 +71,11 @@ def test_the_hero_shows_each_corpuss_holding_headlines_in_order(tmp_path: Path) 
             assert stats["size_substitution"]["figure"] == f"{v['ratio']}\u00d7"
             assert v["small_label"] in stats["size_substitution"]["detail"]
             assert v["big_label"] in stats["size_substitution"]["detail"]
+            # The house rule: a hero detail says how many models the figure holds on.
+            assert (
+                f"{v['models_matching']} of {cmp['value']['models']}"
+                in stats["size_substitution"]["detail"]
+            )
         # every label names its baseline
         assert all("plain vector RAG" in s["label"] + s["detail"] for s in section["stats"])
         # a corpus is hand-graded exactly when its entry records a full review

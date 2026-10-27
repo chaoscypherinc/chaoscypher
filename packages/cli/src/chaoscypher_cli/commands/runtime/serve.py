@@ -83,7 +83,9 @@ def serve(
 
         # Set environment for server
         env = os.environ.copy()
-        env["CHAOSCYPHER_DATABASE"] = database
+        # ``current_database`` is the top-level setting; ``CHAOSCYPHER_DATABASE`` read as
+        # the ``database:`` section and emptied it in the child (2026-10-19 audit).
+        env["CHAOSCYPHER_CURRENT_DATABASE"] = database
         env["CHAOSCYPHER_DATA_DIR"] = str(ctx.data_dir)
 
         # Check if Cortex is installed

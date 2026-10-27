@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * SearchBar: Search items with highlight
+ * SearchBar: Search items with highlight. Enter selects the first match
+ * (`onSubmit`), opening the Unresolved hub when the match is inside it.
  */
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -14,9 +15,11 @@ import { ChaosCypherNeutrals } from '../../../theme/palette';
 
 interface SearchBarProps {
   onSearch: (query: string) => void;
+  /** Enter: select and focus the first match. */
+  onSubmit?: (query: string) => void;
 }
 
-export const SearchBar: React.FC<SearchBarProps> = ({ onSearch }) => {
+export const SearchBar: React.FC<SearchBarProps> = ({ onSearch, onSubmit }) => {
   const [query, setQuery] = useState('');
   const { search_debounce_ms: searchDebounceMs } = useAppConfig();
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -39,6 +42,14 @@ export const SearchBar: React.FC<SearchBarProps> = ({ onSearch }) => {
     onSearch('');
   };
 
+  // Enter runs the pending rescan now, then selects the first match.
+  const handleSubmit = () => {
+    if (!query.trim()) return;
+    clearTimeout(debounceRef.current);
+    onSearch(query);
+    onSubmit?.(query);
+  };
+
   // Drop a pending rescan if the bar unmounts mid-type.
   useEffect(() => () => clearTimeout(debounceRef.current), []);
 
@@ -48,6 +59,12 @@ export const SearchBar: React.FC<SearchBarProps> = ({ onSearch }) => {
       placeholder="Search graph..."
       value={query}
       onChange={(e) => handleSearch(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleSubmit();
+        }
+      }}
       sx={{
         width: { xs: '100%', sm: 300 },
         maxWidth: { xs: '100%', sm: 300 },

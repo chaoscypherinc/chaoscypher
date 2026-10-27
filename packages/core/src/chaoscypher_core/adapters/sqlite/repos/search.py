@@ -490,6 +490,40 @@ def _table_exists(conn: Any, name: str) -> bool:
     return row is not None
 
 
+def install_chunk_source_triggers(conn: Any) -> bool:
+    """Install the triggers feeding the chunk index from ``document_chunks``; idempotent.
+
+    Only when both tables exist: the index is the search repository's, and
+    ``document_chunks`` is the migrations'. A rebuild that drops
+    ``document_chunks`` (an unfinished first build, built again) drops them with it,
+    so the rebuild puts them back through here.
+
+    Returns:
+        Whether the triggers are in place.
+    """
+    from sqlalchemy import text
+
+    if not (_table_exists(conn, _CHUNK_FTS_ROWS) and _table_exists(conn, "document_chunks")):
+        return False
+    for trigger in _CHUNK_SOURCE_TRIGGERS:
+        conn.execute(text(trigger))
+    return True
+
+
+def _existing_vec_dim(conn: Any) -> int | None:
+    """The dimension the first existing vec0 table declares, or None when there is none."""
+    from sqlalchemy import text
+
+    for table in _VEC_TABLES:
+        row = conn.execute(
+            text("SELECT sql FROM sqlite_master WHERE type='table' AND name=:name"), {"name": table}
+        ).fetchone()
+        match = _VEC_DIM_PATTERN.search(row[0]) if row is not None and row[0] else None
+        if match:
+            return int(match.group(1))
+    return None
+
+
 def _fts_rebuild(index: str) -> str:
     """The statement that rebuilds the FTS5 ``index`` from its content table, whatever state it is in.
 
@@ -669,6 +703,8 @@ class SearchRepository:
         engine: Engine,
         vector_dim: int = 1024,
         embedding_model: str = "",
+        *,
+        vectors: bool = True,
     ) -> None:
         """Initialize search repository with app.db engine.
 
@@ -677,6 +713,12 @@ class SearchRepository:
             vector_dim: Dimensionality of embedding vectors (default: 1024)
             embedding_model: Name of the embedding model (e.g. HuggingFace model ID).
                 Used to detect model changes and trigger reindexing.
+            vectors: False for a keyword-only process (vector search off).
+                Such a process never drops, recreates, upgrades or flags
+                another process's vectors: the open-time vector checks
+                (cosine upgrade, model change, dimension consistency) are
+                skipped, and the configured model and dimension are recorded
+                only when this open created the vector tables.
 
         """
         self._engine = engine
@@ -685,12 +727,14 @@ class SearchRepository:
             raise ValueError(msg)
         self.vector_dim = vector_dim
         self.embedding_model = embedding_model
+        self.vectors = vectors
         self._reindex_queue: list[dict[str, Any]] = []
         self._reindex_queue_max_size = 10_000
         self._visibility_tables_seen = False
         self._init_schema()
-        self._check_model_change()
-        self._assert_vec_table_dim_consistency()
+        if self.vectors:
+            self._check_model_change()
+            self._assert_vec_table_dim_consistency()
         self._repair_fulltext_indexes()
         with self._engine.connect() as conn:
             self._hides_sources(conn)  # looks for the visibility tables once, up front
@@ -703,12 +747,25 @@ class SearchRepository:
         """Create per-type vec0 tables, the node and chunk FTS5 tables and their triggers.
 
         Then checks both full-text indexes against what they index
-        (:meth:`_sync_chunk_fulltext`, :meth:`_sync_node_fulltext`).
+        (:meth:`_sync_chunk_fulltext`, :meth:`_sync_node_fulltext`). A
+        keyword-only repository (``self.vectors`` false) takes the dimension
+        the existing vec0 tables have as its ``vector_dim`` (so the vectors it
+        reads back from nodes and chunks match, and nothing is queued for a
+        re-embed), creates a missing table at that dimension so every node and
+        chunk delete keeps working, and never upgrades existing ones; it
+        records its model and dimension (:meth:`_store_vector_config`) only
+        when it created all of them, so a later vector-on open sees the
+        dimension the tables really have.
         """
         from sqlalchemy import text
 
         chunk_triggers_were_present = self._chunk_source_triggers_present()
         with self._engine.begin() as conn:
+            created_vec_tables = not any(_table_exists(conn, t) for t in _VEC_TABLES)
+            if not self.vectors:
+                existing_dim = _existing_vec_dim(conn)
+                if existing_dim is not None:
+                    self.vector_dim = existing_dim
             # Per-type sqlite-vec virtual tables — one each for chunks,
             # nodes, and templates. Splitting by type lets every search
             # take the native KNN ``embedding MATCH … AND k = ?`` path
@@ -773,9 +830,7 @@ class SearchRepository:
                 _CHUNK_FTS_ROWS, _CHUNK_FTS, _CHUNK_FTS_COLUMNS, rowid="id"
             ):
                 conn.execute(text(trigger))
-            if _table_exists(conn, "document_chunks"):
-                for trigger in _CHUNK_SOURCE_TRIGGERS:
-                    conn.execute(text(trigger))
+            install_chunk_source_triggers(conn)
 
             # Search metadata (tracks active model config)
             conn.execute(
@@ -786,8 +841,11 @@ class SearchRepository:
                     ")"
                 )
             )
+            if not self.vectors and created_vec_tables:
+                self._store_vector_config(conn)
 
-        self._upgrade_vec_tables_to_cosine()
+        if self.vectors:
+            self._upgrade_vec_tables_to_cosine()
         self._sync_chunk_fulltext(triggers_were_present=chunk_triggers_were_present)
         self._sync_node_fulltext()
 
@@ -1240,20 +1298,7 @@ class SearchRepository:
 
             # First time — just store and return (engine.begin() commits on exit)
             if stored_model is None:
-                conn.execute(
-                    text(
-                        "INSERT OR REPLACE INTO search_metadata (key, value) "
-                        "VALUES ('embedding_model', :model)"
-                    ),
-                    {"model": self.embedding_model},
-                )
-                conn.execute(
-                    text(
-                        "INSERT OR REPLACE INTO search_metadata (key, value) "
-                        "VALUES ('vector_dim', :dim)"
-                    ),
-                    {"dim": str(self.vector_dim)},
-                )
+                self._store_vector_config(conn)
                 return
 
             # Check for changes
@@ -1328,24 +1373,31 @@ class SearchRepository:
 
         # Update stored metadata in its own short transaction.
         with self._engine.begin() as meta_conn:
-            meta_conn.execute(
-                text(
-                    "INSERT OR REPLACE INTO search_metadata (key, value) "
-                    "VALUES ('embedding_model', :model)"
-                ),
-                {"model": self.embedding_model},
-            )
-            meta_conn.execute(
-                text(
-                    "INSERT OR REPLACE INTO search_metadata (key, value) "
-                    "VALUES ('vector_dim', :dim)"
-                ),
-                {"dim": str(self.vector_dim)},
-            )
+            self._store_vector_config(meta_conn)
 
         # Set reindex flag via dedicated method (outside the connection)
         if needs_reindex:
             self._set_reindex_flag(True)
+
+    def _store_vector_config(self, conn: Any) -> None:
+        """Record the configured embedding model and dimension in ``search_metadata`` on ``conn``.
+
+        The one write of the vector config: the first open, a model change and
+        a keyword-only open that created the vector tables all record it here.
+        """
+        from sqlalchemy import text
+
+        conn.execute(
+            text(
+                "INSERT OR REPLACE INTO search_metadata (key, value) "
+                "VALUES ('embedding_model', :model)"
+            ),
+            {"model": self.embedding_model},
+        )
+        conn.execute(
+            text("INSERT OR REPLACE INTO search_metadata (key, value) VALUES ('vector_dim', :dim)"),
+            {"dim": str(self.vector_dim)},
+        )
 
     def _assert_vec_table_dim_consistency(self) -> None:
         """Refuse to serve when a per-type vec0 table's DDL dim disagrees with config.
@@ -2527,7 +2579,9 @@ class SearchRepository:
         """Reindex all nodes (useful after bulk import or index corruption).
 
         Delegates to :meth:`clear_all_indices` and :meth:`index_nodes_batch`;
-        the ``session`` kwarg flows through unchanged.
+        the ``session`` kwarg flows through unchanged. A keyword-only
+        repository rebuilds the node full-text index alone
+        (:meth:`rebuild_node_fulltext`) and leaves the vector tables as they are.
 
         Args:
             nodes: List of all nodes to reindex
@@ -2535,6 +2589,12 @@ class SearchRepository:
 
         """
         logger.info("reindexing_nodes_started", node_count=len(nodes))
+
+        if not self.vectors:
+            # keyword-only: the full-text half; another process's vectors stay
+            self.rebuild_node_fulltext(nodes, session=session)
+            logger.info("reindexing_complete_keyword_only", node_count=len(nodes))
+            return
 
         self.clear_all_indices(session=session)
 
@@ -2922,6 +2982,9 @@ class SearchRepository:
             item_type: Type of item ("node", "chunk", "template")
 
         """
+        if not self.vectors:
+            # keyword-only: nothing here would ever flush the queue
+            return
         if len(self._reindex_queue) >= self._reindex_queue_max_size:
             logger.warning(
                 "reindex_queue_full",

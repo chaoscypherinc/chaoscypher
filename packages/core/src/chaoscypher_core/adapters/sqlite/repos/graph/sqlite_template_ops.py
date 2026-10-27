@@ -607,47 +607,55 @@ class TemplateOperationsMixin(GraphMixinBase):
     def ensure_default_templates_exist(
         self, default_templates_provider: Callable[[], list[dict[str, Any]]] | None = None
     ) -> int:
-        """Ensure default templates exist, creating them if missing."""
+        """Insert each template the provider gives that the database lacks; return how many.
+
+        A template is present when a row has its id (the primary key, whatever database name
+        the row carries), so a present one is never rewritten and an insert never collides.
+        A database that has them all is only read. Otherwise the check is repeated holding
+        the writer lock (``write_locked``), so two processes opening the database together
+        do not both insert the same row.
+        """
         if default_templates_provider is None:
             logger.debug("ensure_default_templates_exist called with no provider, skipping")
             return 0
 
-        existing_templates = self.list_templates()
-        existing_ids = {t.id for t in existing_templates}
+        wanted = default_templates_provider()
+        if not self._missing_template_specs(wanted):
+            return 0
 
-        all_templates = default_templates_provider()
-        missing_count = 0
-
-        for template_data in all_templates:
-            if template_data["id"] not in existing_ids:
-                properties = []
-                for prop in template_data["properties"]:
-                    if isinstance(prop, PropertyDefinition):
-                        properties.append(prop)
-                    elif isinstance(prop, dict):
-                        properties.append(PropertyDefinition(**prop))
-                    else:
-                        properties.append(PropertyDefinition(**dict(prop)))
-
-                template_create = TemplateCreate(
-                    name=template_data["name"],
-                    description=template_data.get("description"),
-                    template_type=template_data["template_type"],
-                    properties=properties,
-                    icon=template_data.get("icon"),
-                    color=template_data.get("color"),
-                )
+        with self.write_locked():
+            missing = self._missing_template_specs(wanted)
+            for template_data in missing:
+                properties = [
+                    prop
+                    if isinstance(prop, PropertyDefinition)
+                    else PropertyDefinition(**dict(prop))
+                    for prop in template_data["properties"]
+                ]
                 self.create_template(
-                    template_create,
+                    TemplateCreate(
+                        name=template_data["name"],
+                        description=template_data.get("description"),
+                        template_type=template_data["template_type"],
+                        properties=properties,
+                        icon=template_data.get("icon"),
+                        color=template_data.get("color"),
+                    ),
                     custom_id=template_data["id"],
                     is_system=template_data.get("is_system", True),
                 )
-                missing_count += 1
 
-        if missing_count > 0:
-            logger.info("default_templates_created", template_count=missing_count)
+        if missing:
+            logger.info("default_templates_created", template_count=len(missing))
+        return len(missing)
 
-        return missing_count
+    def _missing_template_specs(self, wanted: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The specs in ``wanted`` whose id no template row has."""
+        ids = [str(t["id"]) for t in wanted]
+        present = set(
+            self.session.exec(select(GraphTemplate.id).where(col(GraphTemplate.id).in_(ids))).all()
+        )
+        return [t for t in wanted if str(t["id"]) not in present]
 
     def _db_template_to_model(self, db_template: GraphTemplate) -> Template:
         """Convert database template to Pydantic model."""

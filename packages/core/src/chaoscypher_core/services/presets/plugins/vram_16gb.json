@@ -2,7 +2,7 @@
   "name": "vram_16gb",
   "display_name": "16GB VRAM",
   "version": "1.0.0",
-  "description": "High-end consumer configuration for 8B parameter models with larger context. Great for complex documents and multi-turn conversations.",
+  "description": "High-end consumer configuration: a 9B chat model and a 14B extraction model with larger context. Great for complex documents and multi-turn conversations.",
   "author": "ChaosCypher Team",
   "builtin": true,
 

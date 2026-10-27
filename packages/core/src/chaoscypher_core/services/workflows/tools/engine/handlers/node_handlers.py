@@ -23,6 +23,9 @@ from chaoscypher_core.services.workflows.tools.engine.chunk_hydration import (
     format_chunk_content,
 )
 from chaoscypher_core.services.workflows.tools.engine.handlers.decorators import tool_handler
+from chaoscypher_core.services.workflows.tools.engine.handlers.template_lookup import (
+    resolve_template,
+)
 
 
 if TYPE_CHECKING:
@@ -532,15 +535,6 @@ class NodeToolHandlers:
             "search_query": query if query else None,
         }
 
-    def _resolve_template_id(self, template_id: str) -> str | None:
-        """The template's id, given its id or its exact name; None when there is neither."""
-        if self.graph.get_template(template_id) is not None:
-            return template_id
-        for template in self.graph.list_templates():
-            if template.name == template_id:
-                return template.id
-        return None
-
     async def _index_written(self, node: Node) -> None:
         """Index a node the tools wrote, the way the commit path indexes an extracted one.
 
@@ -562,13 +556,10 @@ class NodeToolHandlers:
         """Page the graph's nodes, every template's or one template's (by id or name)."""
         resolved: str | None = None
         if template_id is not None:
-            resolved = self._resolve_template_id(template_id)
-            if resolved is None:
-                return {
-                    "success": False,
-                    "error": f"Unknown template: {template_id}",
-                    "code": "UNKNOWN_TEMPLATE",
-                }
+            found = resolve_template(self.graph, template_id, "node")
+            if isinstance(found, dict):
+                return found
+            resolved = found
         nodes = self.graph.list_nodes(
             template_id=resolved,
             source_ids=source_ids,
@@ -601,15 +592,12 @@ class NodeToolHandlers:
         source_ids: list[str] | None = None,
     ) -> dict:
         """Create a new node; ``template_id`` may be the template's name."""
-        resolved = self._resolve_template_id(template_id)
-        if resolved is None:
-            return {
-                "success": False,
-                "error": f"Unknown template: {template_id}",
-                "code": "UNKNOWN_TEMPLATE",
-            }
+        resolved = resolve_template(self.graph, template_id, "node", restore_shipped=True)
+        if isinstance(resolved, dict):
+            return resolved
         node = self.graph.create_node(
-            NodeCreate(template_id=resolved, label=label, properties=properties)
+            NodeCreate(template_id=resolved, label=label, properties=properties),
+            person_made=True,  # made by a person (or an agent for one), no source
         )
         await self._index_written(node)
 

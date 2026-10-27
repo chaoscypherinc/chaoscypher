@@ -636,6 +636,7 @@ chaoscypher source rebuild-search
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--database DATABASE` | `-d` | Database name (default: the current database) |
+| `--embed-missing` | | Embed only the chunks and nodes that have no vector yet (written while vector search was off), and nothing else. Templates created then stay without a vector. Refused while vector search is off, and after an embedding model change (run the command without it first). |
 
 ### Sample Output
 
@@ -660,6 +661,18 @@ Search indexes rebuilt successfully.
   Nodes indexed: 1500
   Nodes with embeddings: 1500
   Chunks indexed: 3400
+```
+
+After a period with vector search off, `--embed-missing` gives the chunks and nodes written then their vectors:
+
+```bash
+chaoscypher source rebuild-search --embed-missing
+```
+
+``` { .text .no-copy }
+Embedding what has no vector yet...
+  Chunks embedded: 2
+  Nodes embedded: 1
 ```
 
 On failure, the command prints `Rebuild failed: <message>` and exits non-zero.

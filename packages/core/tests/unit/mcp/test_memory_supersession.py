@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from chaoscypher_core.models import NodeCreate
 from tests.unit.mcp.memory_world import WORLD_SCRIPT, build_world, call
 
 
@@ -181,3 +182,44 @@ async def test_the_receipt_fits_the_budget(
     world.engine.settings.mcp.memory.result_chars = 300
     text = await call(world.server, "remember", PARIS)
     assert len(text) <= 300
+
+
+async def test_a_persons_edge_a_memory_attests_stays_timeless_and_closes_nothing(
+    world: SimpleNamespace,
+) -> None:
+    """A person's ``located_in Paris``, attested by a later memory (an attach), is outside
+    the single-valued chain: never dated or closed, and it never closes the memory's Lyon.
+    """
+    from chaoscypher_core.mcp.memory_link import link_repository
+    from chaoscypher_core.models import EdgeCreate
+    from chaoscypher_core.services.graph.memory.supersession import recompute_single_valued
+
+    await call(world.server, "remember", LYON)
+    graph = world.graph
+    nodes = {n.label: n for n in graph.list_nodes(limit=100, include_embedding=False)}
+    (lyon_edge,) = graph.edges_from(nodes["Pierre Bezukhov"].id, "located_in")
+    paris = graph.create_node(
+        NodeCreate(template_id=nodes["Lyon"].template_id, label="Paris"), person_made=True
+    )
+    persons = graph.create_edge(
+        EdgeCreate(
+            template_id=lyon_edge.template_id,
+            source_node_id=nodes["Pierre Bezukhov"].id,
+            target_node_id=paris.id,
+            label="located_in",
+        ),
+        person_made=True,
+    )
+    later = {"text": "The weather was grey.", "by": "alice", "valid_from": "2026-12-01"}
+    await call(world.server, "remember", later)
+    rows = link_repository(world.engine).link_rows(world.engine.database_name)
+    graph.record_edge_sources([(persons.id, rows[-1].id, {"label": "located_in"})])
+    graph.session.commit()
+
+    recompute_single_valued(graph, nodes["Pierre Bezukhov"].id, "located_in")
+
+    edge = graph.get_edge(persons.id)
+    assert edge is not None
+    assert (edge.valid_from, edge.valid_to, edge.closed_by_source_id) == (None, None, None)
+    lyon = graph.get_edge(lyon_edge.id)
+    assert lyon is not None and lyon.valid_to is None and lyon.closed_by_source_id is None

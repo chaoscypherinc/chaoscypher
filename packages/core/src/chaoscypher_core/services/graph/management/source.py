@@ -16,10 +16,12 @@ from chaoscypher_core.utils.id import generate_id
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from typing import Protocol
 
     from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
     from chaoscypher_core.adapters.sqlite.repos import SearchRepository
+    from chaoscypher_core.ports.graph import GraphRepositoryProtocol
     from chaoscypher_core.ports.retry import RetryPolicyPort
     from chaoscypher_core.ports.storage_chunks import ChunkStorageProtocol
     from chaoscypher_core.ports.storage_citations import CitationStorageProtocol
@@ -274,6 +276,7 @@ class SourceService:
         search_repo: SearchRepository | None = None,
         *,
         leave_out_of_site: bool = True,
+        commit_with: Callable[[GraphRepositoryProtocol], None] | None = None,
     ) -> SourceDeletion:
         """Public delete_source entry point with retry-on-db-lock.
 
@@ -306,6 +309,10 @@ class SourceService:
             leave_out_of_site: A page of a docs site joins the pages the site
                 leaves out, so a refresh does not import it again; False when
                 the site itself is being deleted with its pages.
+            commit_with: Work that commits with the delete or not at all:
+                called inside its transaction, after the source row is gone,
+                with the transaction's graph repository (a forget's audit row
+                and the facts it reopened). Run again on a retry.
 
         Returns:
             The deletion: truthy when the source was deleted, falsy when not
@@ -317,6 +324,7 @@ class SourceService:
             source_id=source_id,
             search_repo=search_repo,
             leave_out_of_site=leave_out_of_site,
+            commit_with=commit_with,
             operation_name="source_delete",
         )
 
@@ -326,6 +334,7 @@ class SourceService:
         search_repo: SearchRepository | None = None,
         *,
         leave_out_of_site: bool = True,
+        commit_with: Callable[[GraphRepositoryProtocol], None] | None = None,
     ) -> SourceDeletion:
         """Inner delete body. Must be idempotent — may be retried on lock.
 
@@ -333,6 +342,7 @@ class SourceService:
             source_id: ID of the source to delete
             search_repo: Optional SearchRepository for chunk index cleanup
             leave_out_of_site: See :meth:`delete_source`.
+            commit_with: See :meth:`delete_source`.
 
         Returns:
             The deletion (see :meth:`delete_source`).
@@ -365,8 +375,9 @@ class SourceService:
                 # Release before the source row goes: graph_*.source_id is
                 # ON DELETE SET NULL, so the row delete takes no graph rows.
                 # The survivors are rebuilt from the sources they still have.
+                graph = get_transaction_graph_repository(adapter, self.database_name)
                 released = release_source_graph(
-                    get_transaction_graph_repository(adapter, self.database_name),
+                    graph,
                     source_id,
                     sources=self.repository,
                     database_name=self.database_name,
@@ -383,6 +394,8 @@ class SourceService:
                 # A deleted page of a site stays out of the site's refreshes.
                 if leave_out_of_site:
                     leave_out_deleted_page(adapter, source_info, self.database_name)
+                if commit_with is not None:
+                    commit_with(graph)
             # Transaction committed atomically
         except Exception:
             logger.exception(

@@ -107,11 +107,12 @@ async def run_full_benchmark(
 ) -> list[BenchmarkResult]:
     """Run all three stages over all bundles, returning a single result list.
 
-    Stages are run in order: extraction → embedding → chat. ``model_timeout`` caps
-    each (model, dataset) run and ``on_row`` receives every row as it lands,
-    exactly as :func:`run_benchmark` takes them. Stages 2 and 3
-    are skipped when their corresponding role lists (``embedders``, ``chats``)
-    are absent from the config, so an extractors-only config still works.
+    Each bundle runs its stages in order: extraction → embedding → chat.
+    ``model_timeout`` caps each (model, dataset) run and ``on_row`` receives
+    every row as it lands, exactly as :func:`run_benchmark` takes them. Stages
+    2 and 3 are skipped when their corresponding role lists (``embedders``,
+    ``chats``) are absent from the config, so an extractors-only config still
+    works; stage 2 is also skipped under pinned retrieval (``retrieval_pins``).
 
     Args:
         config: The benchmark configuration describing which models to run for
@@ -137,7 +138,7 @@ async def run_full_benchmark(
 
     Returns:
         Flat list of ``BenchmarkResult`` rows across all stages and bundles,
-        in stage-then-bundle iteration order.
+        in bundle-then-stage iteration order.
     """
     results: list[BenchmarkResult] = []
     for bundle in bundles:
@@ -1012,7 +1013,11 @@ def default_wiring(
 
     async def _embed_query(text: str, ctx: Any) -> list[float]:
         """Embed a query string with the context's embedding service."""
-        provider = ctx.embedding_service
+        from chaoscypher_core.adapters.embedding import require_embedding_provider
+
+        provider = require_embedding_provider(
+            ctx.embedding_service, "The benchmark's vector retrieval"
+        )
         with call_site("embeddings.query"):
             result = await provider.embed(text)
         return list(result.embedding)

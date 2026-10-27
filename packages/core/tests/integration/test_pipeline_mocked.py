@@ -42,7 +42,7 @@ from chaoscypher_core.operations.extraction.extraction_finalizer import (
 from chaoscypher_core.operations.importing.import_service import (
     ImportOperationsService,
 )
-from tests.fakes.embedding import FakeEmbeddingProvider
+from chaoscypher_core.testing.embedding import FakeEmbeddingProvider
 
 
 # ---------------------------------------------------------------------------

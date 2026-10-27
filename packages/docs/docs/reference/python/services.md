@@ -266,6 +266,10 @@ Workflow:
 2. Delegate embedding generation + persistence to embed_chunks
 3. Ready for commit to vector search index
 
+With no embedding provider (vector search off) step 2 is skipped:
+the chunks stay without vectors (keyword-indexed by the chunk
+triggers) and the result names no model and 0 dimensions.
+
 Args:
     source_id: Source ID
     progress_callback: Optional callback(processed, total) called after each batch.
@@ -287,7 +291,7 @@ Raises:
 | `progress_callback` | `Callable[[int, int], None] \| None` |  |
 | `cancellation_check` | `Callable[[], Any] \| None` |  |
 
-#### `embed_chunks(*, chunks: list[dict[str, Any]], source_id: str, database_name: str, progress_callback: Callable[[int, int], None] | None = None, cancellation_check: Callable[[], Any] | None = None, expected_dimensions: int | None = None) -> int`
+#### `embed_chunks(*, chunks: list[dict[str, Any]], source_id: str, database_name: str, progress_callback: Callable[[int, int], None] | None = None, cancellation_check: Callable[[], Any] | None = None, expected_dimensions: int | None = None, chunk_status: str | None = 'indexed') -> int`
 
 Embed a pre-fetched list of chunks and persist the vectors.
 
@@ -325,6 +329,9 @@ Args:
         check because it reflects what the existing rows actually
         contain. Pass `None` for a first-pass embedding (no
         prior dimension on record).
+    chunk_status: Status every embedded chunk takes (`"indexed"`),
+        or None to leave each chunk's status as it is (embedding
+        chunks of a source that is already committed).
 
 Returns:
     Number of chunks successfully embedded (total minus any
@@ -345,15 +352,16 @@ Raises:
 | `progress_callback` | `Callable[[int, int], None] \| None` |  |
 | `cancellation_check` | `Callable[[], Any] \| None` |  |
 | `expected_dimensions` | `int \| None` |  |
+| `chunk_status` | `str \| None` |  |
 
-#### `from_adapter(adapter: SqliteAdapter, settings: EngineSettings, *, embedding_service: EmbeddingProviderProtocol | None = None) -> IndexingService`
+#### `from_adapter(adapter: SqliteAdapter, settings: EngineSettings, *, embedding_service: EmbeddingProviderProtocol | None) -> IndexingService`
 
 Create IndexingService from a storage adapter.
 
 Args:
     adapter: SqliteAdapter (or compatible) implementing IndexingProtocol.
     settings: Engine settings.
-    embedding_service: Optional embedding provider override.
+    embedding_service: Embedding provider, or None for keyword-only.
 
 Returns:
     Configured IndexingService.
@@ -362,9 +370,13 @@ Example:
 
 ```
 from chaoscypher_core import IndexingService, SqliteAdapter, EngineSettings
+from chaoscypher_core.adapters.embedding import embedding_provider_for
 
 adapter = SqliteAdapter("app.db", "default")
-service = IndexingService.from_adapter(adapter, EngineSettings())
+settings = EngineSettings()
+service = IndexingService.from_adapter(
+    adapter, settings, embedding_service=embedding_provider_for(settings)
+)
 ```
 
 | Parameter | Type | Description |
@@ -378,7 +390,8 @@ service = IndexingService.from_adapter(adapter, EngineSettings())
 Create IndexingService from an Engine instance.
 
 Args:
-    engine: An Engine instance with storage_adapter and settings.
+    engine: An Engine instance with storage_adapter, settings and
+        embedding_service (None when vector search is off).
 
 Returns:
     Configured IndexingService.
@@ -411,6 +424,31 @@ text; the benchmark's index recipe hashes its output.
 | Parameter | Type | Description |
 |---|---|---|
 | `chunk` | `dict[str, Any]` |  |
+
+### `index_source_chunk_vectors(adapter: SqliteAdapter, search_repository: SearchRepositoryProtocol, source_id: str, *, page_size: int) -> int`
+
+Push a source's stored chunk vectors into the chunk vector index; the number pushed.
+
+Streams `(id, embedding)` only, no chunk content (`iter_chunk_embeddings`),
+base64-decodes each float32 vector, prefixes the id with `chunk:` and
+bulk-upserts. The vectors are already persisted on the chunk rows, so a
+failure here leaves an index a rebuild can restore.
+
+Args:
+    adapter: The storage adapter holding the chunks.
+    search_repository: The search repository whose chunk index takes the vectors.
+    source_id: The source whose chunks are pushed.
+    page_size: Rows per read (`batching.chunk_fetch_limit`).
+
+Returns:
+    How many vectors were pushed.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `adapter` | `SqliteAdapter` |  |
+| `search_repository` | `SearchRepositoryProtocol` |  |
+| `source_id` | `str` |  |
+| `page_size` | `int` |  |
 
 ## `chaoscypher_core.services.search.engine.search`
 
@@ -499,11 +537,13 @@ Returns:
 
 #### `hybrid_search(query: str, limit: int = 10, embedding_provider_callback: Any = None, min_similarity: float = 0.55, include_disabled_sources: bool = False) -> dict[str, Any]`
 
-Perform hybrid search: keyword and semantic merged, higher score wins.
+Perform hybrid search: keyword and semantic rankings fused by reciprocal rank.
 
-Both arms run and their results are merged by result id, keeping each
-result's higher score. Queries under 3 characters, and any search
-error, fall back to keyword-only.
+A keyword arm runs over nodes and over chunks, and a semantic arm keeps
+hits of at least `min_similarity`; the repository fuses the rankings
+by reciprocal rank, scaled so a result ranked first in every arm scores
+1.0 (rank, not score, is merged). Queries under 3 characters, and any search error,
+fall back to keyword-only.
 
 Args:
     query: Search query
@@ -1122,13 +1162,35 @@ Returns:
 | `file_info` | `dict[str, Any]` |  |
 | `auto_enable` | `bool` |  |
 
+#### `finish_memory(source_id: str, *, join: Collection[str] = ()) -> bool`
+
+Run a committed memory's follow-ups again: the identity pass over its nodes, then supersession.
+
+For a memory whose commit stood but whose follow-ups failed or never ran (the
+process ended after the commit). Both steps are idempotent. The identity pass
+is scoped to the nodes the memory attests and runs only when
+`settings.graph.resolve_identities` is on, as after a commit; `join` are
+the offered nodes with no type it joins by name (`_resolve_identities`).
+True when both ran without failing.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_id` | `str` |  |
+| `join` | `Collection[str]` |  |
+
 #### `from_engine(engine: Any) -> SourceCommitService`
 
 Create a SourceCommitService wired from an Engine instance.
 
+The one wiring of a commit service on an Engine (`Engine.commit_service`
+builds its own here). It takes the Engine's embedding provider: left to
+resolve its own from the settings, a second service built a second
+provider, and with the local provider a second copy of the model.
+
 Args:
-    engine: Engine instance with storage_adapter, graph_repository,
-        search_repository, and settings.
+    engine: Engine instance with storage_adapter, search_repository,
+        settings, retry_policy and embedding_service (None when vector
+        search is off).
 
 Returns:
     SourceCommitService with all dependencies injected.
@@ -1810,6 +1872,9 @@ Args:
 Returns:
     BatchEmbedResult with embeddings list, counts, and provider.
 
+Raises:
+    VectorSearchOff: When vector search is off.
+
 | Parameter | Type | Description |
 |---|---|---|
 | `texts` | `list[str]` |  |
@@ -1904,6 +1969,23 @@ health = await engine.check_health()
 if health.chat.status == "healthy":
     print(f"Chat OK ({health.chat.response_time_ms}ms)")
 ```
+
+#### `chunk_and_index(source_id: str, text: str) -> tuple[ChunksResult, dict[str, Any]]`
+
+Chunk `text` into the source's stored chunks, index them and mark the source indexed.
+
+The one store step: `process_document`, the MCP index-only path and a
+memory's link (re-chunking a memory whose store failed) all run it. The
+source row must exist (the chunk rows carry a foreign key to it).
+
+Returns:
+    The chunk result (the small chunks and the hierarchical groups) and
+    the indexing service's result dict.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_id` | `str` |  |
+| `text` | `str` |  |
 
 #### `chunk_document(text: str, *, source_id: str | None = None, analysis_depth: AnalysisDepth = 'full') -> ChunkingResult`
 
@@ -2073,6 +2155,9 @@ result = await engine.embed("quantum entanglement")
 print(f"Dimensions: {len(result.embedding)}")
 ```
 
+Raises:
+    VectorSearchOff: When vector search is off.
+
 | Parameter | Type | Description |
 |---|---|---|
 | `text` | `str` |  |
@@ -2093,6 +2178,59 @@ Returns:
 |---|---|---|
 | `text` | `str` |  |
 | `**kwargs` | `Any` |  |
+
+#### `expire_cached_rows() -> None`
+
+Make the engine's long-lived sessions reload every row they cached, at its next read.
+
+Another process may have written since a row was loaded, and SQLAlchemy hands
+back a row already in a session's identity map without reloading it. The MCP
+server calls this before every tool call, so each call sees every write that
+finished before it began (spec 2026-10-24 § 3, G4). Covers the graph
+repository's session and the storage adapter's (which the commit's
+transaction repository shares); the search repository opens a connection per
+call. A session with unflushed changes (a call still running in this process)
+is left alone: expiring would drop them.
+
+#### `extract_and_commit(source_id: str, *, seed: Sequence[Mapping[str, Any]] = (), offered_nodes: Collection[str] = (), offered_types: Sequence[OfferedType] = (), forced_domain: str | None = None, groups: Sequence[Mapping[str, Any]] | None = None, small_chunks: Sequence[Mapping[str, Any]] | None = None, filename: str | None = None, strict: bool = False, on_progress: ProgressCallback | None = None) -> ProcessingResult`
+
+Extract, finalize and commit a stored source: stages 3 to 5 of `process_document`.
+
+`process_document` passes the groups and small chunks it has just made;
+a source stored earlier (a memory whose link had to wait) passes none,
+and the stored ones are read (the stored groups carry the same
+`combined_content` and `small_chunk_ids`).
+
+Args:
+    source_id: The stored, indexed source.
+    seed: Records the extraction's KNOWN ENTITIES list starts with.
+    offered_nodes: Ids of the seed's graph nodes with no type: the commit joins a
+        node written by one's exact name to it (a memory's link).
+    offered_types: Templates offered as known types (a scoped memory's, D26): in
+        the prompt, and the commit binds an entity written with one to it.
+    forced_domain: The extraction domain, skipping detection.
+    groups: The hierarchical groups to extract; None reads the stored ones.
+    small_chunks: The small chunks the groups are made of; None reads them.
+    filename: The filename domain detection reads; None reads the row's.
+    strict: Raise `chaoscypher_core.exceptions.ExtractionIncomplete`
+        when the model failed on any group (a memory's link).
+    on_progress: Called with `("extraction", result)` before the commit.
+
+Returns:
+    The created node, edge and template ids, and `followups_complete`.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_id` | `str` |  |
+| `seed` | `Sequence[Mapping[str, Any]]` |  |
+| `offered_nodes` | `Collection[str]` |  |
+| `offered_types` | `Sequence[OfferedType]` |  |
+| `forced_domain` | `str \| None` |  |
+| `groups` | `Sequence[Mapping[str, Any]] \| None` |  |
+| `small_chunks` | `Sequence[Mapping[str, Any]] \| None` |  |
+| `filename` | `str \| None` |  |
+| `strict` | `bool` |  |
+| `on_progress` | `ProgressCallback \| None` |  |
 
 #### `get_edge(edge_id: str) -> Edge`
 
@@ -2354,9 +2492,13 @@ Args:
     query: Search query string.
     limit: Maximum number of results.
     mode: Search mode — 'hybrid' (default), 'semantic', or 'keyword'.
+        With vector search off 'hybrid' runs its keyword arm alone.
 
 Returns:
     List of EngineSearchResult models sorted by relevance score.
+
+Raises:
+    VectorSearchOff: For 'semantic' with vector search off.
 
 Example:
 
@@ -2383,9 +2525,13 @@ Args:
     query: Search query string.
     limit: Maximum number of results.
     mode: Search mode — 'hybrid' (default), 'semantic', or 'keyword'.
+        With vector search off 'hybrid' runs its keyword arm alone.
 
 Returns:
     List of EngineSearchResult models sorted by relevance score.
+
+Raises:
+    VectorSearchOff: For 'semantic' with vector search off.
 
 Example:
 
@@ -2463,12 +2609,12 @@ Returns:
 - `data_dir`: `Path`
 - `database_name`: `str`
 - `edge_service`: `EdgeService`
-- `embedding_provider`: `EmbeddingProviderProtocol` — Convenience alias for `embedding_service`.
+- `embedding_provider`: `EmbeddingProviderProtocol | None` — Convenience alias for `embedding_service`.
 
 Named to match the `EmbeddingProviderProtocol` port terminology
 used by services that consume the port. Returns the same instance
-as `embedding_service`.
-- `embedding_service`: `EmbeddingProviderProtocol`
+as `embedding_service` (None with vector search off).
+- `embedding_service`: `EmbeddingProviderProtocol | None`
 - `extraction_service`: `ExtractionService` — Entity extraction service for deduplication and template matching.
 
 Lazily initialized on first access. Requires LLM provider for

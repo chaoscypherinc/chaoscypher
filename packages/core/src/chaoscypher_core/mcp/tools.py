@@ -21,6 +21,11 @@ from chaoscypher_core.models import AnalysisDepth
 from chaoscypher_core.services.workflows.tools.engine.schema_registry import (
     TEMPLATE_PROPERTY_ITEM_SCHEMA,
 )
+from chaoscypher_core.settings import GraphSettings
+
+
+_GRAPH = GraphSettings()
+"""The graph defaults the tool schemas name (``create_edge``'s template and label)."""
 
 
 @dataclass(frozen=True)
@@ -467,13 +472,13 @@ _create_edge = ToolDefinition(
             },
             "template_id": {
                 "type": "string",
-                "description": "Edge template ID.",
-                "default": "system_template_link",
+                "description": "Edge template ID or name.",
+                "default": _GRAPH.default_edge_template,
             },
             "label": {
                 "type": "string",
                 "description": "Relationship label.",
-                "default": "related_to",
+                "default": _GRAPH.default_relationship_type,
             },
             "properties": {
                 "type": "object",

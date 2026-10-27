@@ -21,6 +21,7 @@ from chaoscypher_core.services.workflows.tools.engine.handlers.node_handlers imp
     NodeToolHandlers,
 )
 from chaoscypher_core.settings import SearchSettings
+from chaoscypher_core.utils.tool_failure import TOOL_FAILURES
 
 
 # ---------------------------------------------------------------------------
@@ -1095,7 +1096,7 @@ class TestCreateNode:
         result = await handler.create_node(template_id="person", label="Fail", properties={})
 
         assert result["success"] is False
-        assert "Operation failed" in result["error"]
+        assert TOOL_FAILURES["OPERATION_FAILED"] in result["error"]
 
 
 # ===========================================================================
@@ -1904,7 +1905,7 @@ class TestToolHandlerDecorator:
         result = await handler.get_node(node_id="n1")
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
     @pytest.mark.asyncio
     async def test_update_node_exception_caught(
@@ -1919,7 +1920,7 @@ class TestToolHandlerDecorator:
         result = await handler.update_node(node_id="n1", label="Boom")
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
     @pytest.mark.asyncio
     async def test_delete_node_exception_caught(
@@ -1934,7 +1935,7 @@ class TestToolHandlerDecorator:
         result = await handler.delete_node(node_id="n1")
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
     @pytest.mark.asyncio
     async def test_get_node_context_exception_caught(
@@ -1949,7 +1950,7 @@ class TestToolHandlerDecorator:
         result = await handler.get_node_context(node_id="n1")
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
     @pytest.mark.asyncio
     async def test_resolve_node_exception_caught(
@@ -1964,7 +1965,7 @@ class TestToolHandlerDecorator:
         result = await handler.resolve_node("test")
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
     @pytest.mark.asyncio
     async def test_search_chunks_exception_caught(
@@ -1986,4 +1987,4 @@ class TestToolHandlerDecorator:
         result = await handler.search_chunks("test")
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]

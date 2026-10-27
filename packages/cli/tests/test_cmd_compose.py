@@ -1213,7 +1213,8 @@ class TestComposeInit:
 
         result = CliRunner().invoke(init, ["-c", str(target)])
         assert result.exit_code == 1
-        assert "already exists" in result.output
+        # the console wraps a long path, and the words after it, at its width
+        assert "already exists" in " ".join(result.output.split())
         assert target.read_text(encoding="utf-8") == "name: keep\n"
 
         result = CliRunner().invoke(init, ["-c", str(target), "--force", "./x.ccx"])

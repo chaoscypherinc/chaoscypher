@@ -21,7 +21,7 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBackOutlined';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMoreOutlined';
 import type Graph from 'graphology';
 import type { NodeAttributes, EdgeAttributes } from '../types';
-import { isProvenanceEdge } from '../types';
+import { isSyntheticEdge } from '../types';
 import { ChaosCypherPalette } from '../../../theme/palette';
 import { hexToRgba } from '../../../theme/cardStyles';
 import { Overlays } from '../../../theme/overlays';
@@ -61,7 +61,7 @@ const ConnectedNodesList: React.FC<ConnectedNodesListProps> = ({
     const result: ConnectedNode[] = [];
 
     graph.forEachEdge(nodeId, (edge, attrs, source, target) => {
-      if (isProvenanceEdge(edge)) return;
+      if (isSyntheticEdge(edge)) return;
 
       const isOutgoing = source === nodeId;
       const connectedId = isOutgoing ? target : source;

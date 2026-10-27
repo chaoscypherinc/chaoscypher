@@ -27,7 +27,19 @@
 #   The first successful publish creates the project and converts the pending
 #   publisher into its trusted publisher.
 #
-# Local equivalent (manual fallback, needs an API token):
+# Provenance: the upload step is pypa/gh-action-pypi-publish with PEP 740
+# attestations on, so every file carries a Sigstore-signed statement that this
+# workflow on chaoscypherinc/chaoscypher built it (pypi.org shows it under
+# "Provenance"; `pypi_stats.py --wait-version` fails a release without it).
+# `uv publish` uploads no attestations: v0.3.0 shipped without them and an
+# automated scanner listed chaoscypher-cli/-neuron 0.3.0 as malicious (#825)
+# with nothing on PyPI to show where the files came from. The action stays at
+# v1.14.3 or later: up to v1.14.2 it trusted a revoked CA for Trusted
+# Publishing and Sigstore (GHSA-5xjx-3w67-w9x9). Pinned by
+# packages/core/tests/unit/scripts/test_ci_config_guards.py.
+#
+# Local equivalent (manual fallback, needs an API token; uploads no
+# attestations, so use it only when the workflow cannot run):
 #   uv build --package <name> -o dist && uv publish --token <token> dist/*
 name: Publish to PyPI
 
@@ -120,25 +132,26 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Stage ${{ matrix.package }}
+        run: |
+          # The publish action uploads a whole directory; give it only this
+          # package's sdist and wheel (filenames use the underscored name).
+          mkdir upload
+          mv "dist/$(echo '${{ matrix.package }}' | tr '-' '_')-"* upload/
+          ls -l upload
 
       - name: Publish ${{ matrix.package }}
-        run: |
-          # sdist/wheel filenames use the underscored project name.
-          files="dist/$(echo '${{ matrix.package }}' | tr '-' '_')-"*
-          if [ "${{ inputs.target || 'pypi' }}" = "testpypi" ]; then
-            uv publish --trusted-publishing always \
-              --publish-url https://test.pypi.org/legacy/ \
-              --check-url https://test.pypi.org/simple/ \
-              $files
-          else
-            uv publish --trusted-publishing always \
-              --check-url https://pypi.org/simple/ \
-              $files
-          fi
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: upload/
+          repository-url: ${{ (inputs.target || 'pypi') == 'testpypi' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
+          # A re-run after a partial upload skips the files already there.
+          skip-existing: true
+          # PEP 740 provenance (#825). The action's default, stated so a
+          # default change upstream cannot drop it silently.
+          attestations: true
 
       - name: Publish status
         run: |
-          echo "Published ${{ matrix.package }} to ${{ inputs.target || 'pypi' }}:" >> "$GITHUB_STEP_SUMMARY"
-          ls dist/$(echo '${{ matrix.package }}' | tr '-' '_')-* >> "$GITHUB_STEP_SUMMARY"
+          echo "Published ${{ matrix.package }} to ${{ inputs.target || 'pypi' }} with PEP 740 attestations:" >> "$GITHUB_STEP_SUMMARY"
+          ls upload/ >> "$GITHUB_STEP_SUMMARY"

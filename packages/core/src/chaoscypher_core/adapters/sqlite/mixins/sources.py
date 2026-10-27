@@ -19,18 +19,21 @@ from pathlib import Path
 from typing import Any
 
 import structlog
+from sqlalchemy import case, update
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import InstrumentedAttribute, aliased, load_only
-from sqlmodel import delete, func, select
+from sqlmodel import col, delete, func, select
 
 from chaoscypher_core.adapters.sqlite.mixin_base import SqliteMixinBase
 from chaoscypher_core.adapters.sqlite.models import (
+    GraphNodeSource,
     SourceEntity,
     SourceRelationship,
     SourceRow,
     SourceTagAssignment,
 )
 from chaoscypher_core.exceptions import NotFoundError
+from chaoscypher_core.models import MEMORY_SOURCE_TYPE, MemoryLinkState
 from chaoscypher_core.ports.storage_sources import SourceStorageProtocol
 from chaoscypher_core.services.sources.engine.extraction.domains.packs import pack_columns
 
@@ -558,6 +561,42 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
         if row is None:
             return None
         return self._entity_to_dict(row)
+
+    def settle_imported_memory_links(self, source_ids: list[str], database_name: str) -> int:
+        """Mark imported memories ``linked`` or ``linked_empty`` by their memberships.
+
+        A memory a package brought carries its facts as its origin linked them:
+        ``linked`` when it attests a node, ``linked_empty`` when it attests none, the
+        same rule migration 0024 applies to the memories it found. Runs on the
+        adapter's session, inside the import's transaction.
+        """
+        self._ensure_connected()
+        if not source_ids:
+            return 0
+        attests = (
+            select(GraphNodeSource.source_id)
+            .where(GraphNodeSource.source_id == SourceRow.id)
+            .exists()
+        )
+        statement = (
+            update(SourceRow)
+            .where(
+                col(SourceRow.id).in_(source_ids),
+                SourceRow.database_name == database_name,
+                SourceRow.source_type == MEMORY_SOURCE_TYPE,
+            )
+            .values(
+                memory_link_state=case(
+                    (attests, MemoryLinkState.LINKED.value),
+                    else_=MemoryLinkState.LINKED_EMPTY.value,
+                ),
+                memory_linked_at=datetime.now(UTC),
+                memory_link_claim=None,
+            )
+        )
+        result = self.session.execute(statement)
+        self._maybe_commit()
+        return int(result.rowcount or 0)
 
     def upsert_source_by_ccx_iri(
         self,

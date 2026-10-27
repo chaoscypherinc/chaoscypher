@@ -444,6 +444,12 @@ class OllamaProvider(BaseLLMProvider):
             )
             return False
 
+    async def close(self) -> None:
+        """Close the health-check client; providers are rebuilt on every reload."""
+        client, self._health_client = self._health_client, None
+        if client is not None:
+            await client.aclose()
+
     def _init_llm(
         self,
         temperature: float | None = None,
@@ -942,12 +948,9 @@ class OllamaProvider(BaseLLMProvider):
         raw_finish_reason: str | None = None
         if hasattr(response, "response_metadata"):
             metadata = response.response_metadata
-            usage = {
-                "prompt_tokens": metadata.get("prompt_eval_count", 0),
-                "completion_tokens": metadata.get("eval_count", 0),
-                "total_tokens": metadata.get("prompt_eval_count", 0)
-                + metadata.get("eval_count", 0),
-            }
+            # One reader for every provider and both paths: Ollama omits a
+            # count as None, which the hand-written sum crashed on (2026-10-19).
+            usage = extract_streaming_usage(response)
             provider_timings = extract_provider_timings(response)
             # Ollama exposes the stop reason on ainvoke() via done_reason in response_metadata
             raw_finish_reason = metadata.get("done_reason")
@@ -1180,18 +1183,38 @@ class OllamaProvider(BaseLLMProvider):
             }
 
         except ResponseError as e:
-            if "does not support thinking" in str(e):
-                async for chunk in self._stream_with_fallback(
-                    lc_messages,
-                    tools,
-                    temperature,
-                    max_tokens,
-                    accumulated_content,
-                    tool_calls,
-                    usage,
-                    decoding=decoding,
-                ):
-                    yield chunk
+            if self._is_tool_calling_error(e, bool(tools)):
+                # The same verdict the non-streamed path raises (2026-10-19):
+                # a ModelCapabilityError the chat loop stops on, not a plain
+                # LLM_ERROR.
+                yield stream_error_chunk(
+                    ToolCallingNotSupportedError(model=self.chat_model, provider="ollama"),
+                    self.chat_model,
+                )
+            elif "does not support thinking" in str(e):
+                try:
+                    async for chunk in self._stream_with_fallback(
+                        lc_messages,
+                        tools,
+                        temperature,
+                        max_tokens,
+                        accumulated_content,
+                        tool_calls,
+                        usage,
+                        decoding=decoding,
+                    ):
+                        yield chunk
+                except Exception as fallback_error:
+                    # An exception inside an except handler escapes the
+                    # generator unclassified; classify it like the first try.
+                    logger.exception(
+                        "ollama_streaming_failed",
+                        provider="ollama",
+                        model=self.chat_model,
+                        error_type=type(fallback_error).__name__,
+                        error_message=str(fallback_error),
+                    )
+                    yield stream_error_chunk(fallback_error, self.chat_model)
             else:
                 logger.exception(
                     "ollama_streaming_failed",

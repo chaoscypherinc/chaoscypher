@@ -39,7 +39,7 @@ Out of scope (known properties, not bugs):
 - Sessions are HMAC-signed cookies.
 - Rate limiting is enabled by default (`RATE_LIMIT.enabled` in `settings.yaml`, default `true`).
 - Rate-limit violation logs include client IPs at WARNING level (GDPR-relevant — configure retention per deployment).
-- Secrets (API keys, Valkey password, session secret) are environment-variable-driven. Auto-generated in the all-in-one container if empty.
+- The Valkey and supervisor passwords and the session and edge secrets are auto-generated files under `<data-dir>/secrets/` (environment overrides where supported); LLM provider keys live in `settings.yaml` or the environment.
 
 ## If a secret is compromised
 
@@ -47,5 +47,5 @@ Rotate the credential first; removing it from disk, logs, or git history alone i
 
 - **Your password** — change it in Settings → Account. A password change bumps the session epoch, which immediately invalidates every active session.
 - **Session signing secret** — delete `<data-dir>/secrets/session_secret` and restart the container. A fresh secret is auto-generated on startup and all existing session cookies become invalid.
-- **LLM provider API keys** — revoke and re-issue the key at the provider (OpenAI, Anthropic, etc.), then update it in Settings → LLM Provider.
+- **LLM provider API keys** — revoke and re-issue the key at the provider (OpenAI, Anthropic, etc.), then update it in Settings → Models.
 - **Valkey password** — set a new `QUEUE_PASSWORD` and restart the stack so Cortex, Neuron, and Valkey pick it up together.

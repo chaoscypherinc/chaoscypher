@@ -6,7 +6,7 @@ import Graph from 'graphology';
 import type { Node as ApiNode, Edge as ApiEdge, Template } from '../../../../types';
 import type { SourceGroup } from '../../../../types/graph';
 import type { NodeAttributes, EdgeAttributes } from '../../types';
-import { SOURCE_GROUP_PREFIX, SOURCE_PROVENANCE_PREFIX } from '../../types';
+import { SOURCE_GROUP_PREFIX, SOURCE_PROVENANCE_PREFIX, unresolvedBucketId } from '../../types';
 import {
   populateGraphFromApi,
   addApiNodeToGraph,
@@ -14,7 +14,12 @@ import {
   applyDegreeSizing,
   addSourceGroupNode,
   addProvenanceEdges,
+  UNRESOLVED_HUB_SIZE,
 } from '../transformers';
+import { syncUnresolvedBuckets } from '../unresolvedBucket';
+
+/** The hub for unresolved nodes with no known source. */
+const UNRESOLVED_BUCKET_ID = unresolvedBucketId(null);
 
 // ========================================
 // Fixture helpers
@@ -551,6 +556,14 @@ describe('applyDegreeSizing', () => {
     applyDegreeSizing(graph);
     // Source group node size should remain unchanged at 12
     expect(graph.getNodeAttribute('sg:test', 'size')).toBe(12);
+  });
+
+  it('keeps the Unresolved hub at its hub size', () => {
+    addNode('regular');
+    graph.setNodeAttribute('regular', 'content', { orphan: true });
+    syncUnresolvedBuckets(graph);
+    applyDegreeSizing(graph);
+    expect(graph.getNodeAttribute(UNRESOLVED_BUCKET_ID, 'size')).toBe(UNRESOLVED_HUB_SIZE);
   });
 
   it('sizes are within [3, 8] range', () => {

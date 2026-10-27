@@ -140,7 +140,7 @@ chaoscypher upgrade
 
 ## Migration pre-upgrade backups
 
-Cortex automatically creates a backup before applying any pending Alembic migration. These auto-backups land in the database's own folder (not the API backup directory):
+Cortex automatically creates a backup before applying any pending Alembic migration to an existing database (building a new database's schema takes none: there is nothing to back up). These auto-backups land in the database's own folder (not the API backup directory):
 
 ```
 <data_dir>/databases/<db_name>/backups/pre-<first-pending-revision>-<YYYYMMDDTHHMMSSZ>.db
@@ -149,7 +149,7 @@ Cortex automatically creates a backup before applying any pending Alembic migrat
 For example, with `data_dir=/data` and database `default`:
 
 ```
-/data/databases/default/backups/pre-0001-20260601T123045Z.db
+/data/databases/default/backups/pre-0019-20260601T123045Z.db
 ```
 
 To roll back a failed migration, use the `db migrate` command:

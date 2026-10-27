@@ -528,6 +528,53 @@ class TestIndexFileHappyPath:
         mock_cli_context.storage_adapter.update_chunk_embedding.assert_not_called()
         mock_cli_context.storage_adapter.update_chunk_embeddings_batch.assert_not_called()
 
+    def test_indexing_with_vector_search_off_stores_keyword_only_chunks(
+        self, mock_cli_context: MagicMock, sample_text_file: Path
+    ) -> None:
+        """No embedding provider (vector search off) takes the skip branch without the flag."""
+        from chaoscypher_core.models import ChunksResult
+
+        mock_cli_context.embedding_service = None
+        service = CLISourceProcessingService(mock_cli_context)
+        file_id = service.upload_file(sample_text_file)
+        registry = _mock_loader_registry(documents=[{"content": "Lise sings."}])
+        chunk_result = ChunksResult(
+            small_chunks=[{"id": f"{file_id}:c0", "content": "Lise sings.", "token_count": 2}],
+            hierarchical_groups=[],
+            total_small_chunks=1,
+            total_groups=0,
+            total_original_chunks=1,
+            total_original_groups=0,
+        )
+        chunking_instance = MagicMock()
+        chunking_instance.create_chunks = AsyncMock(return_value=chunk_result)
+        chunking_instance.store_chunks = MagicMock()
+        complete_indexing = MagicMock(wraps=mock_cli_context.storage_adapter.complete_indexing)
+        mock_cli_context.storage_adapter.complete_indexing = complete_indexing
+
+        with (
+            patch(
+                "chaoscypher_core.services.sources.loaders.factory.get_loader_registry",
+                return_value=registry,
+            ),
+            patch(
+                "chaoscypher_core.utils.chunk.ChunkingService",
+                return_value=chunking_instance,
+            ),
+        ):
+            result = service.index_file(
+                file_id,
+                skip_embeddings=False,
+                enable_normalization=False,
+                enable_vision=False,
+            )
+
+        assert result["chunks_count"] == 1
+        assert result["embedding_model"] == "none"
+        assert complete_indexing.call_args.kwargs["embedding_model"] == "none"
+        assert complete_indexing.call_args.kwargs["embedding_dimensions"] == 0
+        mock_cli_context.storage_adapter.update_chunk_embeddings_batch.assert_not_called()
+
 
 class TestLoadDocumentText:
     """_load_document_text joins loader output / raises on empty."""

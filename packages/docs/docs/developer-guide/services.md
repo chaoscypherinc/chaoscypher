@@ -292,7 +292,7 @@ All protocols are available as top-level imports from `chaoscypher_core`.
 |--------|-----------|-------------|
 | `keyword_search` | `(query, limit=10, include_disabled_sources=False) -> dict` | Full-text keyword search |
 | `semantic_search` | `async (query, limit=10, embedding_provider_callback=None, ...) -> dict` | Vector similarity search |
-| `hybrid_search` | `async (query, limit=10, embedding_provider_callback=None, min_similarity=0.55, ...) -> dict` | Semantic with keyword fallback |
+| `hybrid_search` | `async (query, limit=10, embedding_provider_callback=None, min_similarity=0.55, ...) -> dict` | Keyword and semantic rankings fused by reciprocal rank |
 | `get_stats` | `() -> dict` | Index statistics |
 | `rebuild_indexes` | `() -> dict` | Rebuild all search indexes |
 

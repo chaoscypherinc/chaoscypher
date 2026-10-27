@@ -23,6 +23,9 @@ primitives to add backup and tier-aware routing.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from enum import StrEnum
 from importlib import resources
 from pathlib import Path
 
@@ -31,6 +34,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from sqlalchemy.engine import Connection
 
 from chaoscypher_core.adapters.sqlite.engine import get_engine
 from chaoscypher_core.exceptions import UnsupportedDatabaseLineageError
@@ -56,6 +60,27 @@ def _make_config(db_path: Path) -> Config:
     cfg = Config(str(_config_path()))
     cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
     return cfg
+
+
+@contextmanager
+def _migration_connection(db_path: Path) -> Iterator[Connection]:
+    """A connection of the app's engine for one Alembic command, in one transaction.
+
+    ``env.py`` turns foreign keys off for the batch rebuilds and back on at the end, but
+    ``PRAGMA foreign_keys`` is a no-op inside a transaction: once a migration has written a
+    row, that turn back on did nothing, and the connection went back to the pool with foreign
+    keys off. The next session on it could write a row naming a template that does not exist.
+    They are turned on here, after the transaction has ended, so every pooled connection
+    enforces them.
+    """
+    engine = get_engine(db_path)
+    with engine.connect() as connection:
+        try:
+            with connection.begin():
+                yield connection
+        finally:
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+            connection.commit()
 
 
 def head_revision() -> str | None:
@@ -108,9 +133,8 @@ def upgrade_to(db_path: Path, revision: str) -> None:
     (sqlite-vec) and PRAGMAs are already in place. Wraps the whole upgrade
     in a single transaction via Alembic's begin_transaction().
     """
-    engine = get_engine(db_path)
     cfg = _make_config(db_path)
-    with engine.begin() as connection:
+    with _migration_connection(db_path) as connection:
         cfg.attributes["connection"] = connection
         command.upgrade(cfg, revision)
     logger.info("alembic_upgrade_complete", db_path=str(db_path), revision=revision)
@@ -123,9 +147,8 @@ def downgrade_to(db_path: Path, revision: str) -> None:
     pattern as :func:`upgrade_to`. Tests roundtrip reversibility; not yet
     wired to a user-facing CLI command.
     """
-    engine = get_engine(db_path)
     cfg = _make_config(db_path)
-    with engine.begin() as connection:
+    with _migration_connection(db_path) as connection:
         cfg.attributes["connection"] = connection
         command.downgrade(cfg, revision)
     logger.info("alembic_downgrade_complete", db_path=str(db_path), revision=revision)
@@ -149,6 +172,129 @@ def _schema_has_non_alembic_tables(db_path: Path) -> bool:
             "AND name NOT LIKE 'chaoscypher_%'"
         ).fetchall()
     return bool(rows)
+
+
+class SchemaStart(StrEnum):
+    """What a database's schema starts from: the one decision every build or upgrade makes.
+
+    The startup run (every open: Cortex, the worker, the Engine, the CLI,
+    ``chaoscypher mcp``, a new or composed database) and the explicit apply
+    (``chaoscypher upgrade``, ``db migrate apply``, the Maintenance page, MCP
+    ``apply_upgrade``) both ask it, so a database is never an upgrade on one
+    surface and a first build on another.
+    """
+
+    NEW = "new"
+    """No version row and no tables: build it from nothing, quietly."""
+
+    UNFINISHED = "unfinished"
+    """No version row; tables, none of the migrations' tables holding a row.
+
+    A first build that did not finish: SQLite commits the baseline's ``CREATE TABLE``
+    statements as they run, while the version row is written only when the whole run
+    commits. Or a search index opened before the schema was built. Nothing in it is
+    data, so it is built again from nothing, quietly.
+    """
+
+    UNVERSIONED = "unversioned"
+    """No version row; a table the migrations make holds rows: a pre-Alembic install.
+
+    Stamped at the baseline and upgraded like any old database, after a backup.
+    """
+
+    VERSIONED = "versioned"
+    """A version row: built before, so anything pending is an upgrade."""
+
+
+def _migration_tables(conn: Connection) -> list[str]:
+    """The tables in the database that the migrations make, ``alembic_version`` included.
+
+    The migrations build exactly the models' schema (pinned by the autogenerate-diff
+    test); the search index's tables, ``chaoscypher_*`` bookkeeping and SQLite's own are
+    made elsewhere and are not among them.
+    """
+    from sqlmodel import SQLModel
+
+    from chaoscypher_core.adapters.sqlite import models as _models  # noqa: F401 — registers them
+
+    owned = {*SQLModel.metadata.tables, "alembic_version"}
+    rows = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'")
+    return sorted(row[0] for row in rows if row[0] in owned)
+
+
+def _quoted(table: str) -> str:
+    return '"' + table.replace('"', '""') + '"'
+
+
+def _holds_rows(conn: Connection, tables: list[str]) -> bool:
+    """Whether any of ``tables`` (names from the models' metadata) holds a row."""
+    for table in tables:
+        sql = f"SELECT 1 FROM {_quoted(table)} LIMIT 1"  # noqa: S608 — names from metadata
+        if conn.exec_driver_sql(sql).first() is not None:
+            return True
+    return False
+
+
+def schema_start(db_path: Path) -> SchemaStart:
+    """Classify the database at ``db_path`` (see :class:`SchemaStart`); read-only."""
+    if current_revision(db_path) is not None:
+        return SchemaStart.VERSIONED
+    if not _schema_has_non_alembic_tables(db_path):
+        return SchemaStart.NEW
+    with get_engine(db_path).connect() as conn:
+        if _holds_rows(conn, _migration_tables(conn)):
+            return SchemaStart.UNVERSIONED
+    return SchemaStart.UNFINISHED
+
+
+def drop_unfinished_schema(db_path: Path) -> bool:
+    """Drop the migrations' tables of an :attr:`SchemaStart.UNFINISHED` database.
+
+    The check and the drops are one write transaction (``BEGIN IMMEDIATE``) on one
+    connection: a writer that commits a row after the caller classed the database
+    is either seen by the check or waits for the drops. Every table dropped is empty,
+    so nothing is lost; the baseline can then create them again. Tables made
+    elsewhere (the search index, bookkeeping) are left. Interrupted, it leaves a
+    database that is still unfinished.
+
+    Returns:
+        False, dropping nothing, when the database has a version row or one of the
+        migrations' tables holds a row by the time the write lock is taken: it is
+        not unfinished (any more), and is upgraded as an install instead.
+    """
+    with get_engine(db_path).connect() as conn:
+        # Off before the transaction: inside one the pragma does nothing.
+        conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        try:
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
+            try:
+                tables = _migration_tables(conn)
+                versioned = "alembic_version" in tables and _holds_rows(conn, ["alembic_version"])
+                if versioned or _holds_rows(conn, tables):
+                    conn.rollback()
+                    logger.warning(
+                        "alembic_unfinished_schema_kept",
+                        db_path=str(db_path),
+                        reason="a_row_or_version_arrived",
+                    )
+                    return False
+                for table in tables:
+                    conn.exec_driver_sql(f"DROP TABLE {_quoted(table)}")
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+        finally:
+            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+            conn.commit()
+    if tables:
+        logger.warning(
+            "alembic_unfinished_schema_dropped",
+            db_path=str(db_path),
+            tables=len(tables),
+            reason="first_build_did_not_finish",
+        )
+    return True
 
 
 def _revision_is_known(revision: str) -> bool:
@@ -178,9 +324,9 @@ def ensure_stamped(db_path: Path) -> None:
 
     Handles three pre-Alembic-or-misaligned-stamp scenarios:
 
-    1. **Pre-Alembic install:** existing user tables + no ``alembic_version``
-       row. Stamp at ``_BASELINE_REVISION`` (not HEAD) so subsequent
-       migrations in the chain still run on this DB. Running the baseline
+    1. **Pre-Alembic install** (:attr:`SchemaStart.UNVERSIONED`): user tables
+       holding rows + no ``alembic_version`` row. Stamp at ``_BASELINE_REVISION``
+       (not HEAD) so subsequent migrations in the chain still run on this DB. Running the baseline
        upgrade would otherwise fail on ``CREATE TABLE`` of already-existing
        tables, which is why we stamp instead of applying.
     2. **Stamp from a lineage we don't ship:** the ``alembic_version`` row
@@ -194,8 +340,8 @@ def ensure_stamped(db_path: Path) -> None:
        and once, is what an operator can actually act on.
     3. **Healthy stamp:** revision is known to our script dir — no-op.
 
-    No-op on fresh DBs (no user tables, no version row) so the normal
-    upgrade path can create the schema from scratch.
+    No-op on new and unfinished DBs (no version row, no rows in the migrations'
+    tables) so the startup run can build the schema from scratch.
 
     Stamping at the baseline (rather than HEAD) is load-bearing: with
     constraint-change migrations shipped after the baseline, stamping
@@ -209,24 +355,24 @@ def ensure_stamped(db_path: Path) -> None:
         UnsupportedDatabaseLineageError: The DB is stamped at a revision
             this build's script directory does not contain.
     """
-    current = current_revision(db_path)
-
-    if current is None:
-        if not _schema_has_non_alembic_tables(db_path):
-            return
-    elif not _revision_is_known(current):
-        logger.error(
-            "alembic_unsupported_database_lineage",
-            db_path=str(db_path),
-            unknown_revision=current,
-        )
-        raise UnsupportedDatabaseLineageError(current, db_path=str(db_path))
-    else:
+    start = schema_start(db_path)
+    if start is SchemaStart.VERSIONED:
+        current = current_revision(db_path)
+        if current is not None and not _revision_is_known(current):
+            logger.error(
+                "alembic_unsupported_database_lineage",
+                db_path=str(db_path),
+                unknown_revision=current,
+            )
+            raise UnsupportedDatabaseLineageError(current, db_path=str(db_path))
+        return
+    if start is not SchemaStart.UNVERSIONED:
+        # New or unfinished: no data, nothing to stamp. The startup run builds it
+        # from nothing; stamping an unfinished one would make its build an upgrade.
         return
 
-    engine = get_engine(db_path)
     cfg = _make_config(db_path)
-    with engine.begin() as connection:
+    with _migration_connection(db_path) as connection:
         cfg.attributes["connection"] = connection
         command.stamp(cfg, _BASELINE_REVISION)
     logger.info(
@@ -238,11 +384,14 @@ def ensure_stamped(db_path: Path) -> None:
 
 
 __all__ = [
+    "SchemaStart",
     "current_revision",
     "downgrade_to",
+    "drop_unfinished_schema",
     "ensure_stamped",
     "head_revision",
     "pending_revisions",
+    "schema_start",
     "upgrade_to",
     "upgrade_to_head",
 ]

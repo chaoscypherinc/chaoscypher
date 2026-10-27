@@ -548,9 +548,9 @@ mcp:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `mode` | `read` | Tool access level. `read` exposes 25 read tools (search/query and the self-benchmark tools). `write` exposes all 44 tools — adding 19 write-only tools for create, update, delete, document and site import, and client-driven extraction. |
-| `profile` | `full` | The served tool profile. `full` is every tool; `memory` is the five memory tools (`remember`, `recall`, `forget`, `list_memories`, `digest`), the short list an agent memory client needs. |
-| `tools` | `[]` | An allowlist of tool names narrowing the profile. Empty serves the whole profile; a name that is not a registered tool is a configuration error. |
+| `mode` | `read` | Tool access level. `read` exposes 25 read tools (search/query, `list_nodes`, the memory read tools and the self-benchmark tools). `write` exposes all 44 tools — adding 19 write-only tools for create, update, delete, document and site import, and client-driven extraction. |
+| `profile` | `full` | The served tool profile. `full` is every tool of the mode; `memory` is the memory tools (`recall`, `list_memories` and `digest` in read mode, plus `remember` and `forget` in write mode), the short list an agent memory client needs. |
+| `tools` | `[]` | An allowlist of tool names narrowing the profile. Empty serves the whole profile; a name that is not a registered tool, or not in the chosen profile, is a configuration error; in read mode a write-only name is not served. |
 | `auto_extract` | `false` | Automatically run entity extraction after indexing documents uploaded via MCP. |
 
 See [MCP Server](../user-guide/mcp.md) for setup and usage details.
@@ -591,13 +591,13 @@ For a complete reference of all available settings and their defaults, see the s
 | Group | Key Settings |
 |-------|-------------|
 | **llm** | Provider selection, model names, API keys, temperature, token limits |
-| **mcp** | MCP server mode and document processing behavior |
+| **mcp** | MCP server mode, the served profile and tool allowlist, document processing behavior, and the memory tools' settings |
 | **queue** | Valkey connection details |
 | **chunking** | Chunk sizes, overlap, boundary handling |
 | **search** | Vector search, re-ranking, similarity thresholds |
 | **graphrag** | GraphRAG search and chat-context levers, and the profiles that bind them to a chat model |
 | **graph** | Graph commit configuration, including the post-commit identity resolver |
-| **embedding** | Embedding provider, model, dimensions, max text length |
+| **embedding** | Embedding provider, model, max text length (the vector size is `search.vector_dimensions`) |
 | **source_processing** | Extraction behavior, deduplication, quality controls |
 | **extraction** | Extraction quality knobs — loop detection, dedup thresholds, relationship caps, the Pass 1 known-entities limit |
 | **export** | Package metadata for CCX exports |
@@ -618,7 +618,7 @@ For a complete reference of all available settings and their defaults, see the s
 | **chat** | Chat tool-loop limits (`max_tool_iterations`, `max_total_tool_calls`), tool approval mode/timeout, mutating-tool list |
 | **intervals** | Frontend/backend polling intervals, incl. `chat_approval_poll_ms` |
 | **services** | External service URLs |
-| **workers** | Worker concurrency and timeout defaults |
+| **workers** | Operations-queue concurrency and the worker's health-report interval |
 | **priorities** | Queue priority levels (interactive, background, default) |
 | **queue_recovery** | Worker heartbeat TTLs and queue reconcile intervals |
 | **source_recovery** | Stalled-source detection, recovery attempts, orphan cleanup retention |
@@ -630,7 +630,7 @@ For a complete reference of all available settings and their defaults, see the s
 | **security** | HTTP boundary: `allowed_hosts` and `allow_external_access` |
 | **logs** | Logging service: known services, max log lines |
 | **workflows** | Workflow engine recursion depth and step retry delays |
-| **web** | Web-fetch timeouts, redirects, content-type detection, the User-Agent, and site-import politeness (crawl delay and its cap, concurrency, robots.txt, page and depth caps, the run length, the title length, the preview's time, sitemap and size budget) |
+| **web** | Web-fetch timeouts, redirects, content-type detection, the User-Agent, and site-import politeness (crawl delay and its cap, concurrency, robots.txt, page and depth caps, the run length, the title length, the sitemap and document-size caps, the preview's time, page, sitemap and size budget and its debounce); the full table is in [Import a Docs Site](../user-guide/site-import.md#politeness-and-limits) |
 | **graph_snapshot** | Graph snapshot staleness thresholds |
 | **pause** | Pause-operation limits |
 | **quality** | Quality dashboard tuning |

@@ -16,6 +16,7 @@ import pytest
 from chaoscypher_core.services.workflows.tools.engine.handlers.external_handlers import (
     ExternalToolHandlers,
 )
+from chaoscypher_core.utils.tool_failure import TOOL_FAILURES
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +87,7 @@ class TestExtractEntitiesFromText:
         result = await handler.extract_entities_from_text("bad text")
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
 
 # ===========================================================================
@@ -145,7 +146,7 @@ class TestResearchTopic:
         result = await handler.research_topic("topic")
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
 
 # ===========================================================================
@@ -190,7 +191,7 @@ class TestBuildTopicHierarchy:
         result = await handler.build_topic_hierarchy("topic")
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
 
 # ===========================================================================
@@ -233,4 +234,4 @@ class TestIdentifyKnowledgeGaps:
         result = await handler.identify_knowledge_gaps()
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]

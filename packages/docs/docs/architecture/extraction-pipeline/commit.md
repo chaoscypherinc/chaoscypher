@@ -75,8 +75,8 @@ edge. The flag lets each consumer decide instead:
   by vector like any named node, and ranks it after every connected
   entity of the same standing in the context and in the provenance lookup
   (`graphrag_handlers._by_standing`).
-- **The graph canvas** groups every flagged node in its "Unresolved"
-  region, which can be collapsed into one summary node.
+- **The graph canvas** links every flagged node to its "Unresolved (N)"
+  node, which starts closed and shows or hides them on a double-click.
 - **The identity resolver** treats an orphan as a normal node; when it
   merges an orphan into a connected node, the merged node is connected
   and loses the flag (it keeps the flag only when both nodes were
@@ -155,9 +155,9 @@ nodes and edges. Their consumers:
   order: the endpoints' standing first, then evidenced before unevidenced,
   then an unflagged edge before a capped, unmatched-label or
   type-mismatched one.
-- **The graph canvas** groups every flagged node in its "Unresolved"
-  region with a badge per flag, shows the flags as chips on the entity
-  page, draws an unevidenced edge dashed and a capped, unmatched-label or
+- **The graph canvas** links every flagged node to its "Unresolved (N)"
+  node and says why in the node's hover and detail panel, shows the flags
+  as chips on the entity page, draws an unevidenced edge dashed and a capped, unmatched-label or
   type-mismatched one thin, and the edge detail names every flag an edge
   carries with the reason given (or the label the model wrote).
 - **Merges** (the deduplication and the identity resolver) keep `orphan`,

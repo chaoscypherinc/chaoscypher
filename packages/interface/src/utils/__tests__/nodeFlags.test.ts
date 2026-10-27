@@ -68,6 +68,18 @@ describe('nodeFlags', () => {
     expect(nodeFlags({ unplaced_type: true })[0].label).toBe('Unplaced type');
   });
 
+  it('says in plain words why each flag leaves a node unresolved', () => {
+    for (const flag of NODE_FLAGS) {
+      expect(flag.reason.length).toBeGreaterThan(0);
+      // A short line for the canvas hover, not the long description.
+      expect(flag.reason.length).toBeLessThan(flag.description.length);
+    }
+    expect(nodeFlags({ orphan: true })[0].reason).toBe('No connections to other nodes');
+    expect(nodeFlags({ low_plausibility: true })[0].reason).toBe(
+      'Its name may not be a real entity',
+    );
+  });
+
   it('hasNodeFlags mirrors nodeFlags', () => {
     expect(hasNodeFlags({ orphan: true })).toBe(true);
     expect(hasNodeFlags({ orphan: 'true' })).toBe(false);

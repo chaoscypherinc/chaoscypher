@@ -4,7 +4,8 @@
 /**
  * NodePropertiesForm: Editable form for graph node properties.
  *
- * Renders the title editor with metadata tooltip, template-driven
+ * Renders the title editor with metadata tooltip, why the node is
+ * unresolved (its pipeline flags, in plain words), template-driven
  * property fields, tags, connected nodes list, provenance section,
  * and save/delete actions.
  */
@@ -37,6 +38,7 @@ import { ghostButtonSx } from '../../../theme/ghostStyles';
 import { ChaosCypherPalette } from '../../../theme/palette';
 import { Overlays } from '../../../theme/overlays';
 import { SYSTEM_PROPERTY_KEYS } from '../../../utils/propertyKeys';
+import { NODE_FLAG_KEYS, nodeFlags } from '../../../utils/nodeFlags';
 import PropertyFieldRenderer from './PropertyFieldRenderer';
 import ProvenanceSection from './ProvenanceSection';
 import ConnectedNodesList from './ConnectedNodesList';
@@ -101,6 +103,8 @@ const PropertiesFactsList: React.FC<{
   const facts = Object.entries(properties).filter(([key, value]) => {
     if (templatePropertyNames.includes(key)) return false;
     if (SYSTEM_PROPERTY_KEYS.has(key)) return false;
+    // A pipeline flag shows as its plain reason (UnresolvedReasons), not as a fact.
+    if (NODE_FLAG_KEYS.has(key) && value === true) return false;
     if (value === null || value === undefined || value === '') return false;
     return true;
   });
@@ -213,6 +217,26 @@ const PropertiesFactsList: React.FC<{
   );
 };
 
+/** Why the node is unresolved: one plain line per pipeline flag it carries. */
+const UnresolvedReasons: React.FC<{ properties: unknown }> = ({ properties }) => {
+  const flags = nodeFlags(properties);
+  if (flags.length === 0) return null;
+  return (
+    <Box sx={{ mb: 2 }}>
+      <Typography variant="subtitle2" gutterBottom>
+        Why it's unresolved
+      </Typography>
+      {flags.map((flag) => (
+        <Tooltip key={flag.key} title={flag.description} placement="left">
+          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+            {flag.reason}
+          </Typography>
+        </Tooltip>
+      ))}
+    </Box>
+  );
+};
+
 /**
  * Renders the full editing form for a selected graph node.
  */
@@ -293,6 +317,8 @@ const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
           </IconButton>
         </Tooltip>
       </Box>
+
+      <UnresolvedReasons properties={selectedNodeData.content} />
 
       {/* Properties — shows template-driven fields for editing,
           then read-only display of all content properties (the "facts") */}

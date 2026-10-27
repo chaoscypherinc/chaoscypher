@@ -33,6 +33,8 @@ Usage:
 
 from chaoscypher_core.adapters.embedding.factory import (
     create_embedding_provider,
+    embedding_provider_for,
+    require_embedding_provider,
     validate_embedding_model,
 )
 from chaoscypher_core.adapters.embedding.gemini_provider import GeminiEmbeddingProvider
@@ -57,5 +59,7 @@ __all__ = [
     "OllamaEmbeddingProvider",
     "OpenAIEmbeddingProvider",
     "create_embedding_provider",
+    "embedding_provider_for",
+    "require_embedding_provider",
     "validate_embedding_model",
 ]

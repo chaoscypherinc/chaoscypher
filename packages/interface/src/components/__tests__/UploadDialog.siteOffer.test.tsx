@@ -253,4 +253,25 @@ describe('<UploadDialog /> site offer', () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(mockedApiClient.post).not.toHaveBeenCalled();
   });
+
+  it('says the detected packs apply straight away once the whole site is chosen', async () => {
+    mockedApiClient.post.mockResolvedValue({ data: preview() });
+    renderDialog(
+      makeProps({
+        availableDomains: [
+          { name: 'generic', description: 'The floor', builtin: true, role: 'floor' },
+          { name: 'technical', description: 'Software', builtin: true, role: 'pack' },
+        ],
+      }),
+    );
+    const helper = await screen.findByTestId('pack-select-helper');
+    expect(helper).toHaveTextContent('you review them before extraction starts');
+
+    fireEvent.click(await screen.findByRole('radio', { name: /Import the whole site/ }));
+    expect(helper).toHaveTextContent('the pages extract with them straight away');
+    fireEvent.mouseOver(screen.getByLabelText('What are packs?'));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'a whole-site import extracts with them straight away, without a review.',
+    );
+  });
 });

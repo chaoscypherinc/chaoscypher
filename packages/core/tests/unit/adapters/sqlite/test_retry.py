@@ -36,10 +36,24 @@ def test_non_lock_operational_error_not_detected() -> None:
     assert not is_sqlite_lock_error(exc)
 
 
-def test_non_operational_error_message_check() -> None:
-    """Non-SQLAlchemy exceptions with lock text are detected via fallback."""
-    exc = RuntimeError("database is locked")
-    assert is_sqlite_lock_error(exc)  # fallback for wrapped exceptions
+def test_an_error_that_is_no_operational_error_is_not_a_lock_error() -> None:
+    """Only SQLite's own error counts: any other error quoting the phrase is not busy.
+
+    The phrase can be a value the statement was given (a parameter, a memory's words).
+    """
+    assert not is_sqlite_lock_error(RuntimeError("database is locked"))
+
+
+def test_the_result_code_decides_over_the_message() -> None:
+    """With SQLite's result code there, the code decides; the message is not read."""
+    import sqlite3
+
+    locked = sqlite3.OperationalError("not the usual words")
+    locked.sqlite_errorcode = sqlite3.SQLITE_BUSY  # type: ignore[attr-defined]
+    assert is_sqlite_lock_error(OperationalError("", {}, locked))
+    other = sqlite3.OperationalError("database is locked")
+    other.sqlite_errorcode = sqlite3.SQLITE_ERROR  # type: ignore[attr-defined]
+    assert not is_sqlite_lock_error(OperationalError("UPDATE", ("database is locked",), other))
 
 
 def test_unrelated_exception_not_detected() -> None:

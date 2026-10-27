@@ -378,10 +378,11 @@ class ChunkingService:
         # works" without callers having to wire embeddings explicitly. The
         # underlying extract_entities_from_groups requires the kwarg; we
         # supply it here rather than forcing every caller to think about it.
+        # With vector search off it stays None: exact and name-key dedup only.
         if embedding_service is None:
-            from chaoscypher_core.adapters.embedding import create_embedding_provider
+            from chaoscypher_core.adapters.embedding import embedding_provider_for
 
-            embedding_service = create_embedding_provider(self.settings)
+            embedding_service = embedding_provider_for(self.settings)
 
         chunks = await self.create_chunks(
             full_text=text,

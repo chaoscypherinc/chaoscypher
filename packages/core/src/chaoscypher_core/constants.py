@@ -55,6 +55,19 @@ OP_GRAPH_CLEANUP = "graph_cleanup"
 OP_CLEANUP_ORPHANS = "cleanup_orphans"
 OP_BUILD_GRAPH_SNAPSHOT = "build_graph_snapshot"
 
+SYSTEM_TEMPLATE_ID_PREFIX = "system_template_"
+"""The id prefix of every shipped entity template (``templates/default_templates.py``)."""
+
+
+def is_system_template_id(template_id: str | None) -> bool:
+    """Whether ``template_id`` is a shipped entity template's (``system_template_*``), owned by no source.
+
+    The workflow and lens templates (:data:`SYSTEM_TEMPLATE_IDS`) are shipped too, but hold
+    no entities.
+    """
+    return bool(template_id) and str(template_id).startswith(SYSTEM_TEMPLATE_ID_PREFIX)
+
+
 # System template IDs
 SYSTEM_TEMPLATE_IDS = [
     "system_workflow",

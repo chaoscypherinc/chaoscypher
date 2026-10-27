@@ -73,9 +73,9 @@ def test_no_drift_does_not_log_or_raise(fresh_db: Path) -> None:
         check_schema_drift(fresh_db, strict=False)
 
     # No error event should have been emitted in either mode.
-    assert not any(
-        entry.get("event") == "schema_drift_detected" for entry in cap
-    ), f"expected no schema_drift_detected log, got: {cap!r}"
+    assert not any(entry.get("event") == "schema_drift_detected" for entry in cap), (
+        f"expected no schema_drift_detected log, got: {cap!r}"
+    )
 
 
 def test_no_drift_strict_does_not_raise(fresh_db: Path) -> None:
@@ -98,12 +98,9 @@ def test_drift_non_strict_logs_error_but_does_not_raise(
     drift_events = [
         e
         for e in cap
-        if e.get("event") == "schema_drift_detected"
-        and e.get("log_level") == "error"
+        if e.get("event") == "schema_drift_detected" and e.get("log_level") == "error"
     ]
-    assert drift_events, (
-        f"expected one schema_drift_detected error event, got: {cap!r}"
-    )
+    assert drift_events, f"expected one schema_drift_detected error event, got: {cap!r}"
     event = drift_events[0]
     assert event.get("strict") is False
     assert isinstance(event.get("diffs"), list)

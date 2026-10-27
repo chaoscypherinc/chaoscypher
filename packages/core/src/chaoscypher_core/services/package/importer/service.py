@@ -50,14 +50,22 @@ import base64
 import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import structlog
 
+from chaoscypher_core.constants import is_system_template_id
 from chaoscypher_core.exceptions import DataIntegrityError, ValidationError
-from chaoscypher_core.models import EdgeCreate, NodeCreate, PropertyDefinition, TemplateCreate
+from chaoscypher_core.models import (
+    MEMORY_SOURCE_TYPE,
+    EdgeCreate,
+    NodeCreate,
+    PropertyDefinition,
+    TemplateCreate,
+    is_memory_source,
+)
 from chaoscypher_core.services.export import ccx_identity, ccx_mapping
 from chaoscypher_core.services.graph.resolution.apply import (
     edge_create_snapshot,
@@ -70,7 +78,6 @@ from chaoscypher_core.services.package.importer.core_types import (
     bundle_packs,
 )
 from chaoscypher_core.services.package.importer.models import ImportOptions, ImportStats
-from chaoscypher_core.services.workflows.tools.engine.memory_render import MEMORY_SOURCE_TYPE
 
 
 if TYPE_CHECKING:
@@ -428,6 +435,9 @@ class CcxImporter:
                 node_readings=node_readings,
                 imported_edges=imported_edges,
             )
+            # 5b. A memory the package brought reads linked (or linked_empty when it
+            #     attests no node), as at its origin, once its memberships are written.
+            self.sources.settle_imported_memory_links(stats.imported_source_ids, database_name)
             # 6. Own this import's templates by its source so they cascade-delete
             #    with it (mirrors extraction's source-scoped templates).
             self._link_templates_to_source(
@@ -1188,20 +1198,26 @@ class CcxImporter:
         closures: list[tuple[str, dict[str, Any]]],
         stats: ImportStats,
     ) -> None:
-        """Give the imported edges their member sources, rebuild them, and restore the closures.
+        """Give the imported edges their member sources, homes and dates, and restore the closures.
 
         A single-source import attests every edge it wrote, as it does every
         node; a bundle attests an edge from each source citing it. Each member's
-        snapshot is the package's reading of the edge. The member rebuild
-        (``release.rebuild_from_members``, the one a commit and a release run)
-        then writes each edge's ``valid_from`` from its members (a memory's) and
-        re-homes it. Last, each closure a memory carries (``ccx_mapping.CLOSES_KEY``)
-        closes its edge at its date, closed by that memory. One unit of work.
+        snapshot is the package's reading of the edge. Each edge is homed at its
+        first member (the one source, or the first citer, as
+        ``assign_source_to_nodes`` homes a node) and dated by its members
+        (``supersession.edge_valid_from``, the rule the rebuild dates by: a memory's ``valid_from``) here, so no
+        imported edge waits on the rebuild for a home: an edge with no home and no
+        member is released like any source's (only a person-made row stays). The
+        member rebuild (``release.rebuild_from_members``, the one a commit and a
+        release run) then folds the readings. Last, each closure a memory carries
+        (``ccx_mapping.CLOSES_KEY``) closes its edge at its date, closed by that
+        memory. One unit of work.
         """
         from chaoscypher_core.services.graph.management.release import (
             graph_conventions,
             rebuild_from_members,
         )
+        from chaoscypher_core.services.graph.memory.supersession import edge_valid_from
 
         assert self.sources is not None
         if len(source_ids) == 1:
@@ -1218,12 +1234,41 @@ class CcxImporter:
         with self.graph.write_locked():
             if rows:
                 self.graph.record_edge_sources(rows)
+                self.graph.rehome({}, self._unhomed_edge_homes(members))
+                for edge_id in members:
+                    self._date_edge(edge_id, edge_valid_from(self.graph, edge_id))
                 conventions = graph_conventions(
                     self.graph, self.sources, database_name, self._engine_settings()
                 )
                 rebuild_from_members(self.graph, [], sorted(members), conventions)
             for closer_id, closed in closures:
                 self._restore_closure(closer_id, closed, edges, stats)
+
+    def _unhomed_edge_homes(self, members: dict[str, list[str]]) -> dict[str, str]:
+        """Each imported edge with no home yet, mapped to its first member.
+
+        An edge another source homed already (a second package citing it) keeps that
+        home, and a person's edge is never homed, as ``assign_source_to_nodes`` homes a
+        node only when it has none.
+        """
+        homes: dict[str, str] = {}
+        for edge_id, sids in members.items():
+            edge = self.graph.get_edge(edge_id)
+            if sids and edge is not None and edge.source_id is None and not edge.person_made:
+                homes[edge_id] = sids[0]
+        return homes
+
+    def _date_edge(self, edge_id: str, valid_from: date | None) -> None:
+        """Set an imported edge's ``valid_from`` when its members date it."""
+        edge = self.graph.get_edge(edge_id)
+        if edge is None or valid_from is None or edge.valid_from == valid_from:
+            return
+        self.graph.set_edge_validity(
+            edge_id,
+            valid_from=valid_from,
+            valid_to=edge.valid_to,
+            closed_by_source_id=edge.closed_by_source_id,
+        )
 
     def _restore_closure(
         self,
@@ -1443,7 +1488,7 @@ class CcxImporter:
             return
         source_id = imported_source_ids[0]
         template_ids = set(template_name_to_id.values()) | set(template_iri_to_id.values())
-        owned = [tid for tid in template_ids if not tid.startswith("system_template_")]
+        owned = [tid for tid in template_ids if not is_system_template_id(tid)]
         if owned:
             self.graph.assign_source_to_templates(owned, source_id, database_name)
 
@@ -1467,7 +1512,7 @@ class CcxImporter:
         local_id = ccx_identity.local_id_from_iri(ccx_iri)
         display_name = src_rec.get("title") or local_id or ccx_iri
         provenance = ccx_import_mapping.source_provenance(src_rec)
-        is_memory = provenance.get("source_type") == MEMORY_SOURCE_TYPE
+        is_memory = is_memory_source(provenance)
 
         # ``id`` is minted fresh (not the recovered local id): ``sources.id``
         # is a GLOBAL primary key, so reusing the original id collides when

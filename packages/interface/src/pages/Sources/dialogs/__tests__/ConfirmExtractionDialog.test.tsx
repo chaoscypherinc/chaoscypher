@@ -206,4 +206,11 @@ describe('<ConfirmExtractionDialog />', () => {
     );
     expect(screen.getByRole('button', { name: /^confirm/i })).toBeDisabled();
   });
+
+  it('keeps the picker with the proposal chips, and no detect switch or explainer', () => {
+    renderDialog(makeSource());
+    expect(screen.getByRole('combobox', { name: /packs/i })).toBeEnabled();
+    expect(screen.queryByRole('switch', { name: /detect packs automatically/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('What are packs?')).not.toBeInTheDocument();
+  });
 });

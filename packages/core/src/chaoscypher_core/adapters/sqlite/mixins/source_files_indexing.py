@@ -793,6 +793,7 @@ class SourceIndexingMixin(
                     SourceRow.commit_complete,
                     SourceRow.detection_proposal,
                     SourceRow.confirmation_required,
+                    SourceRow.source_type,  # recovery leaves memories to the link step
                 )
             )
             .where(

@@ -105,7 +105,6 @@ Secret fields (API keys, tokens, passwords) are always masked in responses — a
   },
   "search": {
     "enable_vector_search": true,
-    "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
     "vector_dimensions": 1024,
     "min_similarity_threshold": 0.55,
     "enable_rerank": true
@@ -133,7 +132,7 @@ Secret fields (API keys, tokens, passwords) are always masked in responses — a
     "app_db_filename": "app.db"
     // + settings paths, graphs, search, imports, static dirs
   },
-  "priorities": { "interactive": 10, "background": 50, "default": 0 },
+  "priorities": { "interactive": 100, "background": 50, "default": 1 },
   "timeouts": {
     "llm_chat_wait": 120,
     "http_request": 30,
@@ -376,7 +375,7 @@ curl http://localhost/api/v1/settings/presets
     {
       "name": "vram_16gb",
       "display_name": "16GB VRAM",
-      "description": "High-end consumer configuration for 8B parameter models with larger context. Great for complex documents and multi-turn conversations.",
+      "description": "High-end consumer configuration: a 9B chat model and a 14B extraction model with larger context. Great for complex documents and multi-turn conversations.",
       "vram_gb": 16,
       "gpu_examples": ["RTX 4080 Super", "RTX 5080", "RTX 4080", "RX 7900 XT"],
       "version": "1.0.0",
@@ -399,7 +398,7 @@ curl http://localhost/api/v1/settings/presets
     {
       "name": "vram_24gb",
       "display_name": "24GB VRAM",
-      "description": "Enthusiast tier configuration for 30B parameter models with large context windows. Excellent for research and complex knowledge extraction.",
+      "description": "Enthusiast tier configuration for 27B-class models with large context windows. Excellent for research and complex knowledge extraction.",
       "vram_gb": 24,
       "gpu_examples": ["RTX 4090", "RTX 3090", "RTX A5000", "RTX 3090 Ti"],
       "version": "1.0.0",
@@ -455,7 +454,7 @@ curl http://localhost/api/v1/settings/presets/vram_24gb
 {
   "name": "vram_24gb",
   "display_name": "24GB VRAM",
-  "description": "Enthusiast tier configuration for 30B parameter models with large context windows. Excellent for research and complex knowledge extraction.",
+  "description": "Enthusiast tier configuration for 27B-class models with large context windows. Excellent for research and complex knowledge extraction.",
   "vram_gb": 24,
   "gpu_examples": ["RTX 4090", "RTX 3090", "RTX A5000", "RTX 3090 Ti"],
   "version": "1.0.0",
@@ -1402,10 +1401,10 @@ curl http://localhost/api/v1/settings/embedding/models
     {
       "name": "Qwen3 Embedding 0.6B",
       "local": "Qwen/Qwen3-Embedding-0.6B",
-      "ollama": "qwen3-embedding:4b",
+      "ollama": "qwen3-embedding:0.6b",
       "dimensions": 1024,
       "mrl": true,
-      "default": true
+      "default": false
     }
   ],
   "cloud": {

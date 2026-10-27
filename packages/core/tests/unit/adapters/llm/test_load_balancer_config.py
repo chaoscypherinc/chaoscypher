@@ -321,13 +321,16 @@ async def test_acquire_instance_yields_id_and_provider() -> None:
 
 @pytest.mark.asyncio
 async def test_acquire_instance_no_providers_raises() -> None:
-    """acquire_instance with an empty pool raises RuntimeError before selection."""
+    """acquire_instance with an empty pool raises the classified, retryable LLMError."""
+    from chaoscypher_core.exceptions import LLMError
+
     bal = _bare_balancer()
     bal._providers = {}
 
-    with pytest.raises(RuntimeError, match="No Ollama instances configured"):
+    with pytest.raises(LLMError, match="No Ollama instances configured") as excinfo:
         async with bal.acquire_instance():
             pass
+    assert excinfo.value.is_retryable is True  # 2026-10-19 audit: was a bare RuntimeError
 
 
 @pytest.mark.asyncio

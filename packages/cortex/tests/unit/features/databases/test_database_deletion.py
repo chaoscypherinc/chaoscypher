@@ -122,10 +122,11 @@ class TestDatabaseServiceDelete:
 
         return DatabasesService(database_repository=mock_repo, settings=mock_settings)
 
-    def test_blocks_active_database_deletion(self, service, mock_settings) -> None:
+    def test_blocks_active_database_deletion(self, service, mock_repo, mock_settings) -> None:
         mock_settings.current_database = "active_db"
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match="currently active"):
             service.delete_database("active_db")
+        mock_repo.delete_database.assert_not_called()
 
     def test_delegates_to_repository(self, service, mock_repo) -> None:
         service.delete_database("other_db")

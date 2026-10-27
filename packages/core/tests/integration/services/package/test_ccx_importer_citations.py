@@ -14,11 +14,14 @@ index rather than a running import counter (FIX 4).
 from __future__ import annotations
 
 import base64
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import numpy as np
 import pytest
+from sqlmodel import SQLModel
 
+from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
+from chaoscypher_core.adapters.sqlite.engine import get_engine
 from chaoscypher_core.adapters.sqlite.models import (
     DocumentChunk,
     GraphNode,
@@ -33,10 +36,6 @@ from chaoscypher_core.app_config import get_settings
 from chaoscypher_core.app_config.engine_factory import build_engine_settings
 from chaoscypher_core.services.export import CcxExporter
 from chaoscypher_core.services.package.importer import CcxImporter, ImportOptions
-
-
-if TYPE_CHECKING:
-    from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
 
 
 def _seed_source_with_citation(adapter: SqliteAdapter, database_name: str = "default") -> None:
@@ -378,3 +377,63 @@ async def test_ccx_importer_skips_embeddings_on_model_mismatch(
         )
     ).one()
     assert not alice_row.embedding
+
+
+def _install_adapter(root: Path) -> SqliteAdapter:
+    """A connected adapter on its own fresh SQLite file: one install of the app."""
+    root.mkdir(parents=True)
+    SQLModel.metadata.create_all(get_engine(str(root / "app.db")), checkfirst=True)
+    adapter = SqliteAdapter(str(root / "app.db"), database_name="default")
+    adapter.connect()
+    return adapter
+
+
+@pytest.mark.asyncio
+async def test_ccx_citations_survive_a_second_hop(
+    integration_adapter: SqliteAdapter, tmp_path: Path
+) -> None:
+    """Install A -> B -> C: re-exporting an imported node keeps its citations resolvable.
+
+    On B the imported node keeps its foreign ``@id`` (its persisted ``ccx_iri``),
+    so its citations must name that same IRI, not one minted from B's local node
+    id, or the import into C skips every citation as an unresolved entity.
+    """
+    _seed_source_with_citation(integration_adapter)
+    settings = build_engine_settings(get_settings())
+    alice_iri = "urn:ccx:chaoscypher:node/node_alice"
+    install_b = _install_adapter(tmp_path / "install-b")
+    install_c = _install_adapter(tmp_path / "install-c")
+
+    def export_from(adapter: SqliteAdapter, source_id: str) -> bytes:
+        assert adapter.session is not None
+        exporter = CcxExporter(
+            graph_repository=GraphRepository(adapter.session, "default"),
+            sources_repository=adapter,
+            settings=settings,
+            workflow_db=None,
+        )
+        return exporter.export(include_embeddings=False, source_ids=[source_id])
+
+    async def import_into(adapter: SqliteAdapter, data: bytes) -> GraphRepository:
+        assert adapter.session is not None
+        repo = GraphRepository(adapter.session, "default")
+        importer = CcxImporter(graph_repository=repo, sources_repository=adapter, workflow_db=None)
+        stats = await importer.import_from_bytes(data, ImportOptions(database_name="default"))
+        assert not stats.errors, stats.errors
+        assert stats.citations_imported == 1, stats.warnings
+        return repo
+
+    try:
+        await import_into(install_b, export_from(integration_adapter, "src_cite"))
+        src_b = install_b.get_source_by_ccx_iri("urn:ccx:chaoscypher:source/src_cite", "default")
+        assert src_b is not None
+
+        repo_c = await import_into(install_c, export_from(install_b, src_b["id"]))
+
+        alice_c = repo_c.get_node_by_ccx_iri(alice_iri, "default")
+        assert alice_c is not None
+        citations_c = install_c.list_citations(database_name="default")
+        assert [c["entity_uri"] for c in citations_c] == [alice_c["id"]]
+    finally:
+        install_b.disconnect()
+        install_c.disconnect()

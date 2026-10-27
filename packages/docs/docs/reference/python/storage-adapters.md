@@ -118,7 +118,7 @@ Group multiple repository writes into a single database transaction.
 Inside this context, repository methods call `_maybe_commit()`
 which flushes to the database buffer but does not commit. The
 outer transaction commits at context exit, or rolls back on any
-exception. Supports nesting — only the outermost context
+exception, cancellation included. Supports nesting — only the outermost context
 actually commits / rolls back.
 
 Example:

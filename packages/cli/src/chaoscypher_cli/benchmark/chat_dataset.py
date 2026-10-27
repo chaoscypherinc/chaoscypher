@@ -279,8 +279,14 @@ class GraphRAGChatDataset:
         call: Callable[[], Awaitable[T]],
         model: ModelConfig,
         entry: dict[str, Any],
+        *,
+        counter: str = "retries",
     ) -> T:
         """``call()``, again after a backoff while it fails transiently; ``retried``/``retries`` on ``entry``.
+
+        ``counter`` names the entry key the retries are counted under: the
+        candidate's are ``retries``, the judge's ``judge_retries`` (a dropped
+        judge connection used to error the question outright, 2026-10-19 audit).
 
         Raises:
             Exception: The last failure, once it is not transient or the retries are spent.
@@ -307,8 +313,9 @@ class GraphRAGChatDataset:
                 budget = retry_budget(exc, retries) if hasattr(exc, "is_retryable") else retries
                 if not transient_failure(exc) or attempt >= budget:
                     raise
-                entry["retried"] = True
-                entry["retries"] = int(entry.get("retries") or 0) + 1
+                if counter == "retries":
+                    entry["retried"] = True
+                entry[counter] = int(entry.get(counter) or 0) + 1
                 logger.warning(
                     "chat_question_retry",
                     model=model.model_id,
@@ -416,7 +423,12 @@ class GraphRAGChatDataset:
                         if self.judge is not None:
                             # the judge's calls are not the candidate's (the stage's site, chat)
                             with call_site("judge"):
-                                verdict = await self._judge_query(q, answer, retrieved)
+                                verdict = await self._with_retries(
+                                    functools.partial(self._judge_query, q, answer, retrieved),
+                                    self.judge,
+                                    entry,
+                                    counter="judge_retries",
+                                )
                             entry["judge_scores"] = {
                                 "faithfulness": verdict.faithfulness,
                                 "correctness": verdict.correctness,

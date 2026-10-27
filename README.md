@@ -255,7 +255,7 @@ chaoscypher/
 make docker-up       # Start all-in-one container (http://localhost)
 make docker-rebuild  # Rebuild and restart all-in-one
 make docker-dev      # Start multi-container dev environment (hot-reload)
-make docker-prod     # Start multi-container production
+make docker-prod     # Start multi-container production (export QUEUE_PASSWORD first)
 make docker-down     # Stop all Docker services
 ```
 
@@ -265,9 +265,8 @@ make docker-down     # Stop all Docker services
 # All-in-one
 docker logs -f chaoscypher
 
-# Multi-container
-cd packages/docker/multi-container
-docker compose -f docker-compose.dev.yml logs -f cortex
+# Multi-container (the compose file requires QUEUE_PASSWORD for every subcommand)
+docker logs -f chaoscypher-cortex
 ```
 
 ### Testing
@@ -376,8 +375,10 @@ The `packages/core/` library uses **Hexagonal Architecture** for maximum flexibi
 
 ### Queue System
 
-- **LLM Worker** (1 concurrent) - Chat, embeddings, tool LLM calls
-- **Operations Worker** (8 concurrent) - Source processing, exports, workflows
+One unified Neuron worker consumes both queues:
+
+- **LLM queue** (default 1 concurrent, one per enabled Ollama instance) - Chat, embeddings, entity extraction, tool LLM calls
+- **Operations queue** (8 concurrent) - Source processing, exports, workflows
 
 Monitor: http://localhost/queues (all-in-one; dev stack: http://localhost:3000/queues)
 
@@ -394,7 +395,7 @@ cd packages/cortex
 # If using Docker, hot-reload will restart services
 
 # Run tests
-pytest
+uv run pytest packages/*/tests --import-mode=importlib   # or: make test
 
 # Commit changes (Conventional Commits — see CONTRIBUTING.md)
 git add .

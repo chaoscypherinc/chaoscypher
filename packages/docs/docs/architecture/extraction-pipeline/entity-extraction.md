@@ -367,7 +367,7 @@ reason in `properties.evidence_reason` ("\"Anna Pávlovna\" is not named in
 S2"); `evidence_validator.sort_entities_by_evidence` is the one decision.
 Pass 2 then lists it, so its relationships can attach to it; chat retrieval
 ranks it after every undoubted entity of its standing, and the graph canvas
-groups it in its "Unresolved" region. Only an entity that carries nothing is
+links it to its "Unresolved (N)" node. Only an entity that carries nothing is
 dropped. The rules that decide whether a sentence names an entity are
 unchanged. The `entity_evidence_filter` stage counts the drops as its
 `removed_count` and the flags under `counts.unevidenced_kept`; the source's

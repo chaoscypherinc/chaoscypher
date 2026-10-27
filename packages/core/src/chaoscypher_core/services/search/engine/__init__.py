@@ -12,6 +12,7 @@ Components:
 - Query expansion utilities (functions)
 
 Example:
+    from chaoscypher_core.adapters.embedding import embedding_provider_for
     from chaoscypher_core.services.search.engine import SearchService, IndexingService
 
     # Execute searches
@@ -21,7 +22,9 @@ Example:
     results = search.keyword_search("knowledge graph", limit=10)
 
     # Index documents
-    indexer = IndexingService(indexing_repo, settings)
+    indexer = IndexingService(
+        indexing_repo, settings, embedding_service=embedding_provider_for(settings)
+    )
     await indexer.create_index(source_id)
 
 """

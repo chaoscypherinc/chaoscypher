@@ -19,6 +19,7 @@ import { useGraphStore } from './hooks';
 import { ChaosCypherPalette, ChaosCypherBackground, ChaosCypherNeutrals } from '../../theme/palette';
 import { hexToRgba } from '../../theme/cardStyles';
 import { isWebGLSupported } from '../../utils/webgl';
+import { hoverDetailLines } from './utils/unresolvedBucket';
 
 interface SigmaNodeRenderData {
   x: number;
@@ -26,6 +27,10 @@ interface SigmaNodeRenderData {
   size?: number;
   color?: string;
   label?: string | null;
+  /** The node id (sigma adds it to hover data). */
+  key?: string;
+  /** The node's properties bag (carried through the node reducer). */
+  content?: unknown;
 }
 
 interface SigmaRenderSettings {
@@ -66,7 +71,8 @@ function drawLabel(
   context.restore();
 }
 
-// Custom hover renderer with glow effect and dark label background
+// Custom hover renderer with glow effect and dark label background; under the
+// label, why an unresolved node is unresolved (or how to open the Unresolved hub)
 function drawHover(
   context: CanvasRenderingContext2D,
   data: SigmaNodeRenderData,
@@ -102,16 +108,24 @@ function drawHover(
   const size = settings.labelSize || 14;
   const font = settings.labelFont || 'sans-serif';
   const weight = settings.labelWeight || 'bold';
+  const detailSize = Math.round(size * 0.8);
+  const detailFont = `${detailSize}px ${font}`;
+  const details = hoverDetailLines(data.key ?? '', data.content);
 
   context.font = `${weight} ${size}px ${font}`;
-  const textWidth = context.measureText(label).width;
+  let textWidth = context.measureText(label).width;
+  context.font = detailFont;
+  for (const line of details) textWidth = Math.max(textWidth, context.measureText(line).width);
+  context.font = `${weight} ${size}px ${font}`;
 
+  const lineGap = detailSize + 4;
   const h = Math.round(size + 10);
+  const boxHeight = h + details.length * lineGap;
   const labelX = x + nodeSize + 6;
 
   // Dark rounded rect background
   context.beginPath();
-  context.roundRect(labelX - 6, y - h / 2, textWidth + 12, h, 4);
+  context.roundRect(labelX - 6, y - h / 2, textWidth + 12, boxHeight, 4);
   context.fillStyle = hexToRgba(ChaosCypherBackground.dark.default, 0.92);
   context.fill();
 
@@ -126,6 +140,13 @@ function drawHover(
   context.fillStyle = ChaosCypherNeutrals.textPrimary;
   context.textBaseline = 'middle';
   context.fillText(label, labelX, y);
+
+  // Detail lines, muted, one per reason
+  context.font = detailFont;
+  context.fillStyle = ChaosCypherNeutrals.textSecondary;
+  details.forEach((line, index) => {
+    context.fillText(line, labelX, y + h / 2 + lineGap * index + lineGap / 2);
+  });
 }
 
 const GraphCanvasPage: React.FC = () => {

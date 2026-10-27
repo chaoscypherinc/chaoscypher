@@ -20,6 +20,7 @@ import pytest
 from chaoscypher_core.services.workflows.tools.engine.handlers.edge_handlers import (
     EdgeToolHandlers,
 )
+from chaoscypher_core.utils.tool_failure import TOOL_FAILURES
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +244,7 @@ class TestCreateEdge:
         )
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
 
 # ===========================================================================
@@ -442,7 +443,7 @@ class TestListEdges:
         result = await handler.list_edges()
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
 
 # ===========================================================================
@@ -834,7 +835,7 @@ class TestGetNodeEdges:
         result = await handler.get_node_edges(node_id="n1")
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
     @pytest.mark.asyncio
     async def test_empty_edges_for_node(

@@ -15,11 +15,8 @@ from sqlalchemy.exc import OperationalError
 if TYPE_CHECKING:
     from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
 
-from chaoscypher_core.adapters.sqlite.repos import GraphRepository
 from chaoscypher_core.models import SourceStatus
-from chaoscypher_core.services.sources.engine.commit.service import (
-    SourceCommitService,
-)
+from tests.unit.services.sources.commit_wiring import commit_service_on
 
 
 @pytest.fixture
@@ -59,44 +56,6 @@ def seeded_source(adapter_with_default_templates: SqliteAdapter) -> str:
     return source_id
 
 
-def _build_commit_service(
-    in_memory_adapter: SqliteAdapter,
-) -> SourceCommitService:
-    """Construct SourceCommitService with real repositories sharing the adapter session.
-
-    Mirrors the production wiring at
-    packages/cortex/.../import_service.py where the cortex API constructs
-    the service. Uses the adapter directly as source_repository,
-    sources_repository, and indexing_repository because SqliteAdapter
-    implements all three storage protocols via its mixins.
-    """
-    from chaoscypher_core.adapters.sqlite.engine import get_engine
-    from chaoscypher_core.adapters.sqlite.repos import SearchRepository
-    from chaoscypher_core.settings import EngineSettings
-
-    graph_repository = GraphRepository(
-        session=in_memory_adapter.session,
-        database_name=in_memory_adapter.database_name,
-    )
-    settings = EngineSettings()
-    # Use a small fixed vector_dim and placeholder model name — tests don't
-    # hit the LLM in the crash path so no real embeddings are generated.
-    # The same pattern is used in test_search_repository.py.
-    search_repository = SearchRepository(
-        engine=get_engine(in_memory_adapter.db_path),
-        vector_dim=4,
-        embedding_model="test-model",
-    )
-    return SourceCommitService(
-        graph_repository=graph_repository,
-        source_repository=in_memory_adapter,
-        sources_repository=in_memory_adapter,
-        indexing_repository=in_memory_adapter,
-        search_repository=search_repository,
-        settings=settings,
-    )
-
-
 @pytest.mark.asyncio
 async def test_commit_rolls_back_on_mid_write_crash(
     in_memory_adapter: SqliteAdapter, seeded_source: str, monkeypatch: pytest.MonkeyPatch
@@ -111,7 +70,7 @@ async def test_commit_rolls_back_on_mid_write_crash(
 
     from chaoscypher_core.adapters.sqlite.models import GraphNode, SourceRow
 
-    service = _build_commit_service(in_memory_adapter)
+    service = commit_service_on(in_memory_adapter)
 
     async def raise_boom(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("injected crash during node creation")
@@ -153,7 +112,7 @@ async def test_commit_writes_all_entities_atomically(
 
     from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode, SourceRow
 
-    service = _build_commit_service(in_memory_adapter)
+    service = commit_service_on(in_memory_adapter)
 
     commit_data = {
         "entities": [
@@ -201,7 +160,7 @@ async def test_commit_retry_after_failure_has_no_duplicates(
 
     from chaoscypher_core.adapters.sqlite.models import GraphNode
 
-    service = _build_commit_service(in_memory_adapter)
+    service = commit_service_on(in_memory_adapter)
 
     commit_data = {
         "entities": [{"name": "Alice", "type": "Person", "properties": {}}],
@@ -244,7 +203,7 @@ async def test_llm_calls_happen_outside_transaction(
     inside adapter.transaction(), depth > 0; outside, depth == 0. LLM
     calls (template embedding) must observe depth == 0 every time.
     """
-    service = _build_commit_service(in_memory_adapter)
+    service = commit_service_on(in_memory_adapter)
 
     depth_during_embed: list[int] = []
     original_embed = service._embed_created_templates
@@ -296,7 +255,7 @@ async def test_commit_recovers_from_search_indexing_failure(
 
     from chaoscypher_core.adapters.sqlite.models import GraphNode, SourceRow
 
-    service = _build_commit_service(in_memory_adapter)
+    service = commit_service_on(in_memory_adapter)
 
     def boom(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("injected-search-failure")
@@ -345,7 +304,7 @@ async def test_first_attempt_commit_skips_cleanup(
     still fight the SQLite writer lock under concurrent load. Skipping them on fresh
     commits removes a failure mode that has been observed in production.
     """
-    service = _build_commit_service(in_memory_adapter)
+    service = commit_service_on(in_memory_adapter)
 
     cleanup_calls: list[tuple[str, str]] = []
     original_cleanup = service._cleanup_previous_commit
@@ -383,7 +342,7 @@ async def test_retry_commit_runs_cleanup(
     caller), and we're now committing again. Cleanup must run so the prior
     graph data is removed before the new write.
     """
-    service = _build_commit_service(in_memory_adapter)
+    service = commit_service_on(in_memory_adapter)
 
     commit_data = {
         "entities": [{"name": "Alice", "type": "Person", "properties": {}}],
@@ -432,7 +391,7 @@ async def test_commit_retries_on_db_lock(
 
     from chaoscypher_core.adapters.sqlite.models import GraphNode, SourceRow
 
-    service = _build_commit_service(in_memory_adapter)
+    service = commit_service_on(in_memory_adapter)
 
     # Monkeypatch transaction() so the first entry raises a lock error,
     # then subsequent calls work normally via the real implementation.

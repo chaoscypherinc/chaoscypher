@@ -32,7 +32,7 @@ def _build_settings() -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_upload_single_forwards_all_upload_settings() -> None:
+async def test_upload_single_forwards_all_upload_settings(tmp_path: Path) -> None:
     """Posting extract_entities=False / vision off / strict mode forwards all flags."""
     from chaoscypher_cortex.features.sources.upload_service import UploadService
 
@@ -51,7 +51,7 @@ async def test_upload_single_forwards_all_upload_settings() -> None:
     )
     service.preflight_disk_for_upload = MagicMock()
     service.validate_content_type = MagicMock()
-    service.stream_upload_to_temp = AsyncMock(return_value=(Path("/tmp/x"), "hash", 5))
+    service.stream_upload_to_temp = AsyncMock(return_value=(tmp_path / "staged", "hash", 5))
 
     upload_file = MagicMock()
     upload_file.filename = "t.txt"

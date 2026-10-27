@@ -21,7 +21,7 @@ import {
   addProvenanceEdges,
 } from '../utils/transformers';
 import type { NodeAttributes, EdgeAttributes } from '../types';
-import { SOURCE_GROUP_PREFIX, isSourceGroupNode } from '../types';
+import { SOURCE_GROUP_PREFIX, isSyntheticNode } from '../types';
 
 export interface SourceGroupState {
   group: SourceGroup;
@@ -59,7 +59,7 @@ function detectExternalNodes(
 
     const neighbors = graph.neighbors(nodeId);
     for (const neighbor of neighbors) {
-      if (memberSet.has(neighbor) || isSourceGroupNode(neighbor)) continue;
+      if (memberSet.has(neighbor) || isSyntheticNode(neighbor)) continue;
       external.add(nodeId);
       break;
     }

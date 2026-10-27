@@ -281,13 +281,7 @@ class OpenAIProvider(BaseLLMProvider):
         raw_finish_reason: str | None = None
         if hasattr(response, "response_metadata"):
             meta = response.response_metadata
-            if "token_usage" in meta:
-                token_usage = meta["token_usage"]
-                usage = {
-                    "prompt_tokens": token_usage.get("prompt_tokens", 0),
-                    "completion_tokens": token_usage.get("completion_tokens", 0),
-                    "total_tokens": token_usage.get("total_tokens", 0),
-                }
+            usage = extract_streaming_usage(response)
             # OpenAI returns finish_reason at the top level of response_metadata.
             raw_finish_reason = meta.get("finish_reason")
 

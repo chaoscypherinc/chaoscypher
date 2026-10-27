@@ -21,6 +21,7 @@ These tests assert the MCP path now reads:
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -630,3 +631,51 @@ async def test_finalize_alias_length_matches_the_queue_path_under_a_moved_slider
     assert queue_limits.min_alias_length == 1
     assert mcp_entities[0].get("aliases") == queue_entities[0].get("aliases")
     assert "X" in mcp_entities[0].get("aliases", [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("embedding_service", "generate"), [(None, False), (MagicMock(), True)])
+async def test_finalize_generates_entity_vectors_only_with_a_provider(
+    embedding_service: Any, generate: bool
+) -> None:
+    """Vector search off (the engine has no provider): the finalize asks for no entity vectors."""
+    engine = _make_engine()
+    engine.embedding_service = embedding_service
+    engine.storage_adapter.transition_source_status.return_value = True
+    engine.storage_adapter.get_source.return_value = {
+        "id": "src_kw",
+        "filename": "doc.txt",
+        "status": "mcp_extracting",
+        "filtering_mode": "standard",
+        "extraction_depth": "full",
+        "extraction_domain": None,
+        "forced_domain": None,
+        "_test_expected_chunk_indices": [0],
+        "chunk_count": 1,
+    }
+    engine.storage_adapter.list_extraction_submissions.return_value = [
+        {"chunk_group_index": 0, "entities_text": "", "relationships_text": ""}
+    ]
+    engine.storage_adapter.delete_extraction_submissions.return_value = 1
+    engine.extraction_service.finalize_distributed_extraction = AsyncMock(
+        return_value={
+            "entities": [],
+            "relationships": [],
+            "suggested_templates": [],
+            "suggested_edge_templates": [],
+            "metadata": {"total_entities": 0, "total_relationships": 0},
+        }
+    )
+    engine.commit_service.commit = AsyncMock(
+        return_value={"created_nodes": [], "created_edges": [], "created_templates": []}
+    )
+    orchestrator = ExtractionOrchestrator(engine=engine)
+    install_chunk_indices_shortcut(orchestrator)
+
+    with patch(
+        "chaoscypher_core.services.sources.engine.extraction.orchestration.cache_quality_scores"
+    ):
+        await orchestrator.finalize("src_kw")
+
+    fde = engine.extraction_service.finalize_distributed_extraction
+    assert fde.await_args.kwargs["generate_embeddings"] is generate

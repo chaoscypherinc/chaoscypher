@@ -234,3 +234,57 @@ def template_from_suggestion(
         color=template_data.get("color"),
         source_id=source_id,
     )
+
+
+def live_offered_templates(
+    graph_repository: GraphRepositoryProtocol, offered_templates: Mapping[str, str]
+) -> dict[str, str]:
+    """The offered templates (folded name -> id) that still exist.
+
+    One deleted since the extraction offered it binds nothing, and its entities fall
+    back to the matcher.
+    """
+    return {
+        name: template_id
+        for name, template_id in offered_templates.items()
+        if graph_repository.get_template(template_id) is not None
+    }
+
+
+def drop_bound_suggestions(
+    commit_data: Mapping[str, Any], offered_templates: Mapping[str, str]
+) -> list[dict[str, Any]]:
+    """The suggested templates the commit still needs once offered templates bind (D26).
+
+    With ``offered_templates`` (a memory's, live: :func:`live_offered_templates`), a
+    suggestion is kept only when its committed name (:func:`template_from_suggestion`) is
+    the core type of an entity that will not bind; a memory whose every entity binds
+    creates no template of its own. With none, every suggestion stands (documents).
+    """
+    from chaoscypher_core.services.sources.engine.extraction.utils.offered_types import (
+        take_offered_template,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import (
+        core_typed,
+    )
+
+    suggestions = [dict(s) for s in commit_data.get("suggested_templates") or []]
+    if not offered_templates:
+        return suggestions
+    needed: set[str] = set()
+    for entity in commit_data.get("entities") or []:
+        entity_data, bound = take_offered_template(
+            core_typed(entity.get("entity_data", entity)), offered_templates
+        )
+        if bound is None:
+            needed.add(str(entity_data.get("type") or "").strip().lower())
+    kept: list[dict[str, Any]] = []
+    for suggestion in suggestions:
+        try:
+            built = template_from_suggestion(suggestion)
+        except KeyError, ValueError:  # malformed: the creator skips and logs it
+            kept.append(suggestion)
+            continue
+        if built is None or built.name.lower() in needed:
+            kept.append(suggestion)
+    return kept

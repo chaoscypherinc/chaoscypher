@@ -18,10 +18,11 @@ since it never touches the graph).
 
 import asyncio
 import json
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import mcp.types
 import structlog
 from mcp.server import Server
 from mcp.types import CallToolResult, TextContent, Tool
@@ -30,6 +31,7 @@ from chaoscypher_core.mcp.benchmark import BenchmarkBridge
 from chaoscypher_core.mcp.bridge import MCPToolBridge
 from chaoscypher_core.mcp.extraction import ExtractionOrchestrator
 from chaoscypher_core.mcp.indexing import index_source_text
+from chaoscypher_core.mcp.memory_link import MemoryLinker
 from chaoscypher_core.mcp.processor import DocumentProcessor
 from chaoscypher_core.mcp.sites import SITE_TOOLS, handle_site_tool
 from chaoscypher_core.mcp.tools import ToolDefinition, get_tools
@@ -43,6 +45,8 @@ from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
 )
 from chaoscypher_core.services.sources.web import fetch_page, page_names
 from chaoscypher_core.services.workflows.tools.engine.executor import ToolExecutorService
+from chaoscypher_core.utils.retry import is_sqlite_lock_error
+from chaoscypher_core.utils.tool_failure import discard_failed_work, log_tool_failure
 
 
 if TYPE_CHECKING:
@@ -55,9 +59,33 @@ logger = structlog.get_logger(__name__)
 MEMORY_TOOLS = frozenset({"remember", "recall", "forget", "list_memories", "digest"})
 """The memory tools the server dispatches to ``mcp.memory``."""
 
+TEXT_LINE_TOOLS = MEMORY_TOOLS | SITE_TOOLS
+"""The tools that answer plain text lines, a failure included; every other tool answers JSON."""
+
+
+def _register_relink_on_start(
+    server: Server, settings: EngineSettings, linker: MemoryLinker
+) -> None:
+    """In write mode (unless ``mcp.memory.relink_on_start`` is off), sweep after the handshake.
+
+    The client's ``initialized`` notification ends the MCP handshake; the sweep then links
+    the memories not linked yet in the background, and the linker's ``close`` stops it.
+    """
+    if settings.mcp.mode != "write" or not settings.mcp.memory.relink_on_start:
+        return
+
+    async def _start_relink(_notification: mcp.types.InitializedNotification) -> None:
+        """Start the linker's sweep (once per linker)."""
+        linker.start_sweep()
+
+    server.notification_handlers[mcp.types.InitializedNotification] = _start_relink
+
 
 def create_mcp_server(
-    engine: Engine, *, naive_retriever: NaiveRetrieverFactory | None = None
+    engine: Engine,
+    *,
+    naive_retriever: NaiveRetrieverFactory | None = None,
+    linker: MemoryLinker | None = None,
 ) -> Server:
     """Create a configured MCP Server from an Engine instance.
 
@@ -69,6 +97,10 @@ def create_mcp_server(
         naive_retriever: The benchmark bridge's naive-rung index builder
             (the CLI's ``chaoscypher mcp`` passes it; Core owns no
             llama-index dependency).
+        linker: The memory links ``remember`` leaves running when its wait runs
+            out; the caller closes it on shutdown so each gives its claim back.
+            None builds one nobody closes (a claim left open goes stale and the
+            memory is linked again later).
 
     Returns:
         Configured MCP Server ready for transport binding.
@@ -76,16 +108,18 @@ def create_mcp_server(
     """
     settings = engine.settings
     mode = settings.mcp.mode
+    memory_linker = linker or MemoryLinker(engine)
 
-    # Build optional embedding callback. With search.enable_vector_search off the server runs
-    # on keywords alone and never embeds a query (2026-10-20: until then the setting was read
-    # nowhere, and a keyword-only process still paid an embedding call per search).
+    # Build optional embedding callback. With vector search off the engine has no embedding
+    # provider (embedding_provider_for, the one reader of search.enable_vector_search), and the
+    # server runs on keywords alone: it never embeds a query or a written node.
     embedding_callback = None
-    if engine.embedding_service and settings.search.enable_vector_search:
+    provider = engine.embedding_service
+    if provider is not None:
 
         async def _embed(text: str) -> Any:
             """Forward to the engine's embedding service for MCP tool callbacks."""
-            return await engine.embedding_service.embed(text)
+            return await provider.embed(text)
 
         embedding_callback = _embed
 
@@ -95,9 +129,8 @@ def create_mcp_server(
         search_repository=engine.search_repository,
         indexing_repository=engine.storage_adapter,
         embedding_callback=embedding_callback,
-        # the same switch: a node written through the tools gets a vector only when
-        # searches read vectors
-        embedding_provider=engine.embedding_provider if embedding_callback else None,
+        # a node written through the tools gets a vector only when searches read vectors
+        embedding_provider=provider,
         engine_settings=settings,
         source_storage=engine.storage_adapter,
         scope={"database_name": settings.current_database},
@@ -132,6 +165,7 @@ def create_mcp_server(
     # Build MCP Server
     server = Server("chaoscypher")
     tool_defs = get_tools(mode, settings.mcp.profile, settings.mcp.tools)
+    _register_relink_on_start(server, settings, memory_linker)
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
@@ -145,13 +179,8 @@ def create_mcp_server(
             for t in tool_defs
         ]
 
-    @server.call_tool()
-    async def call_tool(
-        name: str, arguments: dict | None = None
-    ) -> list[TextContent] | CallToolResult:
+    async def dispatch(name: str, args: dict[str, Any]) -> list[TextContent] | CallToolResult:
         """Route a tool call to the appropriate handler."""
-        args = arguments or {}
-
         effective_mode = _extract_effective_mode(server, default=mode)
         rejected = _gate_tool_call(name, effective_mode, tool_defs)
         if rejected is not None:
@@ -201,7 +230,9 @@ def create_mcp_server(
                 engine=engine,
             )
         if name in MEMORY_TOOLS or name in SITE_TOOLS:
-            return await _handle_module_tool(name, engine, args, settings, tool_executor)
+            return await _handle_module_tool(
+                name, engine, args, settings, tool_executor, memory_linker
+            )
         if name == "wait_for_document":
             return await _handle_wait_for_document(doc_processor, index_only_processor, args)
         if name == "remove_document":
@@ -245,6 +276,8 @@ def create_mcp_server(
             isError=bridge_result.is_error,
         )
 
+    server.call_tool()(_tool_call_handler(engine, dispatch))
+
     logger.info(
         "mcp_server_created",
         mode=mode,
@@ -253,18 +286,63 @@ def create_mcp_server(
     return server
 
 
+Dispatch = Callable[[str, dict[str, Any]], Awaitable[list[TextContent] | CallToolResult]]
+"""A server's tool router: the tool's name and arguments to its answer."""
+
+
+def _tool_call_handler(
+    engine: Engine, dispatch: Dispatch
+) -> Callable[[str, dict | None], Awaitable[list[TextContent] | CallToolResult]]:
+    """The server's ``call_tool`` handler: ``dispatch`` from fresh rows, a failure as a fixed answer.
+
+    Another process may have written since the last call, so the engine's cached rows
+    are expired first (spec 2026-10-24 § 3, G4). An error that escapes a tool would reach
+    the client as the exception's text (the MCP SDK answers ``str(exc)``), which can carry
+    the SQL and its parameters (a memory's words). It answers its class's fixed failure
+    instead (``tool_failure``: a busy database, a missing node, ...; ``isError``) in the
+    tool's own shape (:func:`_failure_result`). The log keeps the tool, the error's type
+    and the code (``log_tool_failure``), never its message; a busy database is a warning.
+    """
+
+    async def call_tool(
+        name: str, arguments: dict | None = None
+    ) -> list[TextContent] | CallToolResult:
+        """Route one tool call (see :func:`_tool_call_handler`)."""
+        engine.expire_cached_rows()
+        try:
+            return await dispatch(name, arguments or {})
+        except Exception as exc:
+            level = "warning" if is_sqlite_lock_error(exc) else "error"
+            answer = log_tool_failure(logger, "mcp_tool_failed", exc, level=level, tool=name)
+            return _failure_result(name, answer)
+
+    return call_tool
+
+
+def _failure_result(name: str, answer: dict[str, Any]) -> CallToolResult:
+    """A failed call's answer (``tool_failure``) in its tool's shape, flagged ``isError``.
+
+    The memory and site tools (:data:`TEXT_LINE_TOOLS`) answer the failure's sentence as
+    a line, the way they answer everything (Tsukumo reads those lines); every other tool
+    answers the failure as JSON, as its own catches do.
+    """
+    text = answer["error"] if name in TEXT_LINE_TOOLS else json.dumps(answer)
+    return CallToolResult(content=[TextContent(type="text", text=text)], isError=True)
+
+
 async def _handle_module_tool(
     name: str,
     engine: Engine,
     args: dict[str, Any],
     settings: EngineSettings,
     tool_executor: ToolExecutorService,
+    linker: MemoryLinker,
 ) -> CallToolResult:
     """The tools with a handler module of their own: the sites (``mcp/sites.py``), the memory."""
     if name in SITE_TOOLS:
         answer, is_error = await handle_site_tool(engine, name, args)
         return CallToolResult(content=[TextContent(type="text", text=answer)], isError=is_error)
-    return await _handle_memory_tool(name, engine, args, settings, tool_executor)
+    return await _handle_memory_tool(name, engine, args, settings, tool_executor, linker)
 
 
 async def _handle_memory_tool(
@@ -273,12 +351,13 @@ async def _handle_memory_tool(
     args: dict[str, Any],
     settings: EngineSettings,
     tool_executor: ToolExecutorService,
+    linker: MemoryLinker,
 ) -> CallToolResult:
     """Dispatch one of :data:`MEMORY_TOOLS` to its handler in ``mcp.memory``."""
     from chaoscypher_core.mcp import memory
 
     if name == "remember":
-        return await memory.handle_remember(engine, args, settings)
+        return await memory.handle_remember(engine, args, settings, linker)
     if name == "recall":
         return await memory.handle_recall(engine, args, settings, tool_executor)
     if name == "forget":
@@ -666,6 +745,15 @@ async def _handle_wait_for_document(
     return [TextContent(type="text", text=json.dumps(result, default=str))]
 
 
+def _discard_failed_work(engine: Engine) -> None:
+    """Discard what a failed call left in the engine's two sessions (graph and storage).
+
+    A tool here that answers a failure and goes on must not leave the next call a session
+    needing a rollback (``SafeSession.discard_failed_work``).
+    """
+    discard_failed_work(engine.graph_repository, engine.storage_adapter.session)
+
+
 async def _handle_remove_document(
     engine: Engine,
     args: dict[str, Any],
@@ -686,8 +774,10 @@ async def _handle_remove_document(
             if not deleted:
                 result["error"] = "Source not found"
         except Exception as e:
-            logger.warning("mcp_source_tool_failed", error=str(e))
-            result = {"success": False, "error": "Operation failed"}
+            _discard_failed_work(engine)
+            result = log_tool_failure(
+                logger, "mcp_source_tool_failed", e, level="warning", tool="remove_document"
+            )
     return [TextContent(type="text", text=json.dumps(result, default=str))]
 
 
@@ -740,8 +830,10 @@ async def _handle_confirm_extraction(
             overrides,
         )
     except Exception as e:
-        logger.warning("mcp_confirm_extraction_failed", error=str(e))
-        result = {"success": False, "error": "Confirm failed"}
+        _discard_failed_work(engine)
+        result = log_tool_failure(
+            logger, "mcp_confirm_extraction_failed", e, level="warning", tool="confirm_extraction"
+        )
         return [TextContent(type="text", text=json.dumps(result, default=str))]
 
     if not ok:
@@ -827,15 +919,16 @@ async def _handle_extraction_tool(
         return [TextContent(type="text", text=json.dumps(result, default=str))]
     except (ValueError, KeyError) as exc:  # fmt: skip
         # The orchestrator's ValueError text is written for the client
-        # ("Incomplete: N/M chunks submitted …"); it is still replaced by the
-        # generic line here, but no longer silently — the server log keeps
-        # the real reason.
-        logger.warning(
+        # ("Incomplete: N/M chunks submitted …") but can quote what was
+        # submitted; it is replaced by the class's fixed line here, and the
+        # log keeps the tool, the error's type and the code (``log_tool_failure``).
+        result = log_tool_failure(
+            logger,
             "mcp_extraction_tool_failed",
+            exc,
+            level="warning",
             tool=getattr(method, "__name__", str(method)),
-            error=str(exc),
         )
-        result = {"success": False, "error": "Tool execution failed"}
         return [TextContent(type="text", text=json.dumps(result, default=str))]
 
 

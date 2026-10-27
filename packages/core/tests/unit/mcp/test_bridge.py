@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from chaoscypher_core.mcp.bridge import MCPToolBridge
+from chaoscypher_core.utils.tool_failure import TOOL_FAILURES
 
 
 @pytest.fixture
@@ -53,7 +54,7 @@ class TestBridgeExecute:
         mock_executor.execute_tool.side_effect = Exception("kaboom")
         result = await bridge.execute("get_node", {"node_id": "x"})
         assert result.is_error is True
-        assert "Tool execution failed" in result.text
+        assert TOOL_FAILURES["OPERATION_FAILED"] in result.text
 
     @pytest.mark.asyncio
     async def test_passes_params_to_executor(self, bridge, mock_executor):

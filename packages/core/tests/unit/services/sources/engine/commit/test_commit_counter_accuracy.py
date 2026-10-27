@@ -21,33 +21,7 @@ from sqlmodel import func, select
 
 from chaoscypher_core.adapters.sqlite.models import GraphEdge, SourceRow
 from chaoscypher_core.models import SourceStatus
-
-
-def _build_commit_service(adapter):
-    """Construct SourceCommitService wired from the test adapter."""
-    from chaoscypher_core.adapters.sqlite.engine import get_engine
-    from chaoscypher_core.adapters.sqlite.repos import GraphRepository, SearchRepository
-    from chaoscypher_core.services.sources.engine.commit.service import SourceCommitService
-    from chaoscypher_core.settings import EngineSettings
-
-    graph_repository = GraphRepository(
-        session=adapter.session,
-        database_name=adapter.database_name,
-    )
-    settings = EngineSettings()
-    search_repository = SearchRepository(
-        engine=get_engine(adapter.db_path),
-        vector_dim=4,
-        embedding_model="test-model",
-    )
-    return SourceCommitService(
-        graph_repository=graph_repository,
-        source_repository=adapter,
-        sources_repository=adapter,
-        indexing_repository=adapter,
-        search_repository=search_repository,
-        settings=settings,
-    )
+from tests.unit.services.sources.commit_wiring import commit_service_on
 
 
 def _seed_extracted_source(adapter, source_id: str) -> None:
@@ -124,7 +98,7 @@ async def test_commit_edges_created_matches_row_count(
     source_id = "src_counter_test"
 
     _seed_extracted_source(adapter, source_id)
-    service = _build_commit_service(adapter)
+    service = commit_service_on(adapter)
 
     await service.commit(
         file_id=source_id,

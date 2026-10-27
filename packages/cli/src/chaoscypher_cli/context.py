@@ -401,16 +401,23 @@ class CLIContext:
         return self._llm_provider
 
     @property
-    def embedding_service(self) -> EmbeddingProviderProtocol:
-        """Get embedding provider (lazy-initialized via factory).
+    def embedding_service(self) -> EmbeddingProviderProtocol | None:
+        """Get the embedding provider the settings call for (lazy-initialized).
+
+        Built through ``embedding_provider_for``, the one reader of
+        ``search.enable_vector_search``: None with vector search off (asked
+        again on each access, which builds nothing). The benchmark resets
+        ``_embedding_provider`` after pinning another embedder, so the next
+        access builds that one.
 
         Returns:
-            EmbeddingProviderProtocol instance configured from engine settings.
+            EmbeddingProviderProtocol instance configured from engine settings,
+            or None when vector search is off.
         """
         if self._embedding_provider is None:
-            from chaoscypher_core.adapters.embedding import create_embedding_provider
+            from chaoscypher_core.adapters.embedding import embedding_provider_for
 
-            self._embedding_provider = create_embedding_provider(self.settings)
+            self._embedding_provider = embedding_provider_for(self.settings)
         return self._embedding_provider
 
     def _validate_llm_available(self, provider: str) -> bool:  # noqa: PLR0911
@@ -698,9 +705,10 @@ pass_context = _make_pass_context()
 def cli_release_embedder(ctx: CLIContext) -> LazyEmbedder:
     """The CLI's embedding provider, lent to a post-release refresh and built only when needed.
 
-    ``ctx.embedding_service`` raises for a cloud provider with no API key; the
-    refresh builds it only when a node went stale and treats a failure as its
-    logged, non-fatal one, so a committed delete or reset never reports an
+    ``ctx.embedding_service`` raises for a cloud provider with no API key, and is
+    None with vector search off (the refresh then re-indexes for keywords only);
+    the refresh builds it only when a node went stale and treats a failure as
+    its logged, non-fatal one, so a committed delete or reset never reports an
     error. Lent, not owned: the context keeps (and later reuses) the provider.
     """
     from chaoscypher_core.services.graph.management.release import LazyEmbedder

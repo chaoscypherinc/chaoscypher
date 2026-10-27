@@ -95,3 +95,18 @@ def test_upgrade_registered_on_main() -> None:
     result = CliRunner().invoke(main, ["--help"])
     assert result.exit_code == 0, result.output
     assert "upgrade" in result.output
+
+
+def test_upgrade_builds_a_new_database_without_a_backup_or_record(isolated_settings) -> None:
+    """A first install is not an upgrade: no pre-upgrade backup, nothing to roll back."""
+    from chaoscypher_core.database.engine import get_db_path
+    from chaoscypher_core.database.migrations.runner import current_revision, head_revision
+    from chaoscypher_core.database.migrations.state import UpgradeState, get_upgrade_state
+
+    result = CliRunner().invoke(upgrade_command, ["--database", "brandnew"])
+
+    assert result.exit_code == 0, result.output
+    db = get_db_path("brandnew")
+    assert current_revision(db) == head_revision()
+    assert get_upgrade_state(db) == UpgradeState(ready=True)
+    assert not (db.parent / "backups").exists()

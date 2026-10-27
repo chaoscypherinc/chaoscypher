@@ -8,6 +8,17 @@ import type { NodeAttributes, EdgeAttributes } from '../../types';
 import { SOURCE_GROUP_PREFIX, SOURCE_PROVENANCE_PREFIX } from '../../types';
 import { useGraphReducers } from '../useGraphReducers';
 import { FLAGGED_EDGE_SIZE } from '../../../../utils/edgeFlags';
+import { unresolvedBucketId } from '../../types';
+import {
+  syncUnresolvedBuckets,
+  unresolvedEdgeId,
+  unresolvedHiddenIds,
+  unresolvedRootEdgeId,
+} from '../../utils/unresolvedBucket';
+import { addSourceGroupNode } from '../../utils/transformers';
+
+/** The hub for unresolved nodes with no known source. */
+const UNRESOLVED_BUCKET_ID = unresolvedBucketId(null);
 
 // ---------------------------------------------------------------------------
 // Fake sigma: capture the reducer functions registered via setSetting.
@@ -547,6 +558,106 @@ describe('useGraphReducers', () => {
         expect(res.label).toBe('');
         expect(res.zIndex).toBe(2);
       });
+    });
+  });
+
+  describe('Unresolved hub', () => {
+    /** Graph with the real nodes A (hub of real edges) and M (unresolved), synced. */
+    function buildBucketGraph() {
+      const graph = new Graph<NodeAttributes, EdgeAttributes>({ type: 'directed' });
+      graph.addNode('A', nodeAttrs({ nodeId: 'A', color: '#FF0080' }));
+      graph.addNode('B', nodeAttrs({ nodeId: 'B', color: '#FF0080' }));
+      graph.addNode('M', nodeAttrs({ nodeId: 'M', color: '#00BFA5', content: { orphan: true } }));
+      graph.addEdgeWithKey('AB', 'A', 'B', edgeAttrs({ edgeId: 'AB' }));
+      graph.addEdgeWithKey('AM', 'A', 'M', edgeAttrs({ edgeId: 'AM' }));
+      syncUnresolvedBuckets(graph);
+      return graph;
+    }
+    const BUCKET_EDGE = unresolvedEdgeId('M');
+
+    it('draws the hub like a source root: glow border, never hidden or dimmed by filters', () => {
+      const graph = buildBucketGraph();
+      const { nodeReducer } = renderReducers(graph, {
+        hasActiveSearch: true,
+        selectedNodeId: 'B',
+      });
+      const hub = graph.getNodeAttributes(UNRESOLVED_BUCKET_ID);
+      const res = nodeReducer(UNRESOLVED_BUCKET_ID, hub);
+      expect(res.hidden).toBeFalsy();
+      expect(res.color).toBe(hub.color);
+      expect(res.borderColor).toBe(hub.color);
+      expect(res.borderSize).toBe(0.5);
+      expect(res.label).toBe('Unresolved (1)');
+    });
+
+    it('hides a hub in the hidden set (its document collapsed), with its root edge', () => {
+      const graph = new Graph<NodeAttributes, EdgeAttributes>({ type: 'directed' });
+      graph.addNode('M', { ...nodeAttrs({ nodeId: 'M', content: { orphan: true } }), sourceDocumentId: 's1' });
+      addSourceGroupNode(graph, {
+        source_id: 's1', title: 'Doc', source_type: 'text', filename: 'd.txt',
+        entity_count: 1, entity_node_ids: ['M'],
+      });
+      syncUnresolvedBuckets(graph);
+      const hub = unresolvedBucketId('s1');
+      const { nodeReducer, edgeReducer } = renderReducers(graph, {
+        hiddenNodeIds: unresolvedHiddenIds(new Map([[hub, ['M']]]), new Set(), new Set(['s1'])),
+      });
+      expect(nodeReducer(hub, graph.getNodeAttributes(hub)).hidden).toBe(true);
+      const rootEdge = unresolvedRootEdgeId('s1');
+      expect(edgeReducer(rootEdge, graph.getEdgeAttributes(rootEdge)).hidden).toBe(true);
+    });
+
+    it('draws the root-to-hub edge like a provenance edge', () => {
+      const graph = new Graph<NodeAttributes, EdgeAttributes>({ type: 'directed' });
+      graph.addNode('M', { ...nodeAttrs({ nodeId: 'M', content: { orphan: true } }), sourceDocumentId: 's1' });
+      addSourceGroupNode(graph, {
+        source_id: 's1', title: 'Doc', source_type: 'text', filename: 'd.txt',
+        entity_count: 1, entity_node_ids: ['M'],
+      });
+      syncUnresolvedBuckets(graph);
+      const { edgeReducer } = renderReducers(graph);
+      const rootEdge = unresolvedRootEdgeId('s1');
+      const res = edgeReducer(rootEdge, graph.getEdgeAttributes(rootEdge));
+      expect(res.hidden).toBeFalsy();
+      expect(res.type).toBe('line');
+      expect(res.color).not.toBe(graph.getNodeAttribute(`${SOURCE_GROUP_PREFIX}s1`, 'color'));
+    });
+
+    it('collapsed: hides the members, their hub edge and their real edges', () => {
+      const graph = buildBucketGraph();
+      const { nodeReducer, edgeReducer } = renderReducers(graph, {
+        hiddenNodeIds: unresolvedHiddenIds(new Map([[UNRESOLVED_BUCKET_ID, ['M']]]), new Set()),
+      });
+      expect(nodeReducer('M', graph.getNodeAttributes('M')).hidden).toBe(true);
+      expect(edgeReducer(BUCKET_EDGE, graph.getEdgeAttributes(BUCKET_EDGE)).hidden).toBe(true);
+      expect(edgeReducer('AM', graph.getEdgeAttributes('AM')).hidden).toBe(true);
+      // The rest of the graph stays.
+      expect(nodeReducer('A', graph.getNodeAttributes('A')).hidden).toBeUndefined();
+      expect(edgeReducer('AB', graph.getEdgeAttributes('AB')).hidden).toBeUndefined();
+    });
+
+    it('expanded: shows the members and draws the hub edge faint, like a provenance edge', () => {
+      const graph = buildBucketGraph();
+      const { nodeReducer, edgeReducer } = renderReducers(graph, {
+        hiddenNodeIds: unresolvedHiddenIds(new Map([[UNRESOLVED_BUCKET_ID, ['M']]]), new Set([UNRESOLVED_BUCKET_ID])),
+      });
+      expect(nodeReducer('M', graph.getNodeAttributes('M')).hidden).toBeUndefined();
+      const res = edgeReducer(BUCKET_EDGE, graph.getEdgeAttributes(BUCKET_EDGE));
+      expect(res.hidden).toBeFalsy();
+      expect(res.type).toBe('line');
+      expect(res.dashed).toBeUndefined();
+      // Faint: a mix of the hub's grey into the background, never the full colour.
+      const hubColor = graph.getNodeAttribute(UNRESOLVED_BUCKET_ID, 'color');
+      expect(res.color).not.toBe(hubColor);
+      expect(res.targetColor).not.toBe(hubColor);
+    });
+
+    it('does not count the hub link as a connection (a member keeps its muted look)', () => {
+      const graph = buildBucketGraph();
+      // M has one real edge (AM) plus its hub edge: still below the threshold.
+      const { nodeReducer } = renderReducers(graph);
+      const res = nodeReducer('M', graph.getNodeAttributes('M'));
+      expect(res.color).not.toBe('#00BFA5');
     });
   });
 

@@ -101,3 +101,30 @@ def test_mixed_aggregate():
 def test_scorer_version_pinned():
     assert CHAT_SCORER_VERSION == 1
     assert GraphRAGChatScorer().version == CHAT_SCORER_VERSION
+
+
+def test_an_errored_question_scores_zero_instead_of_vanishing():
+    """2026-10-19 audit: a question the candidate (or judge) failed on is a 0, not a non-question."""
+    qs = _qs(
+        LabeledQuery(
+            id="q1", band="factual_single_hop", question="?", gold_entities=[], gold_answer="a"
+        ),
+        LabeledQuery(
+            id="q2", band="factual_single_hop", question="?", gold_entities=[], gold_answer="b"
+        ),
+    )
+    raw = _raw(
+        [
+            {
+                "query_id": "q1",
+                "band": "factual_single_hop",
+                "judge_scores": {"faithfulness": 5, "correctness": 5, "refusal_correct": None},
+            },
+            {"query_id": "q2", "band": "factual_single_hop", "error": "ConnectError: dropped"},
+        ]
+    )
+    score = GraphRAGChatScorer().score(raw, qs)
+    assert score.headline_score == 50.0
+    assert score.metrics["queries_scored"] == 1
+    assert score.metrics["queries_errored"] == 1
+    assert score.metrics["queries_total"] == 2

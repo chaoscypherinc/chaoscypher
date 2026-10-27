@@ -5,6 +5,8 @@
  * useNodeEdgeManager: CRUD operations for nodes and edges.
  *
  * Mutates the graphology graph directly (which triggers sigma re-renders).
+ * The API boundary for the canvas: a synthetic node or edge (a source root,
+ * the Unresolved hub, their links) is never sent to the API.
  */
 
 import { useCallback } from 'react';
@@ -14,6 +16,7 @@ import { edgeApi } from '../../../services/api/edges';
 import { templateApi } from '../../../services/api/templates';
 import { addApiNodeToGraph, addApiEdgeToGraph } from '../utils/transformers';
 import type { NodeAttributes, EdgeAttributes, GraphNodeData } from '../types';
+import { isSyntheticEdge, isSyntheticNode } from '../types';
 import { getColorForTemplate } from '../../../utils/colorUtils';
 import { logger } from '../../../utils/logger';
 import { getApiErrorMessage } from '../../../utils/errors';
@@ -96,6 +99,7 @@ export function useNodeEdgeManager({
 
   const handleNodeUpdate = useCallback(
     async (nodeId: string, updates: NodeUpdatePayload) => {
+      if (isSyntheticNode(nodeId)) return;
       try {
         // Preserve position
         let currentPosition: { x: number; y: number } | undefined;
@@ -148,6 +152,7 @@ export function useNodeEdgeManager({
 
   const handleNodeDelete = useCallback(
     async (nodeId: string) => {
+      if (isSyntheticNode(nodeId)) return;
       try {
         await nodeApi.delete(nodeId);
         if (graph.hasNode(nodeId)) {
@@ -164,6 +169,7 @@ export function useNodeEdgeManager({
 
   const handleNodeDuplicate = useCallback(
     async (nodeId: string, nodeData: GraphNodeData) => {
+      if (isSyntheticNode(nodeId)) return;
       try {
         await templateApi.get(nodeData.templateId);
         const properties = { ...nodeData.content };
@@ -192,6 +198,7 @@ export function useNodeEdgeManager({
 
   const handleEdgeCreate = useCallback(
     async (sourceId: string, targetId: string, edgeTemplateId: string, label?: string) => {
+      if (isSyntheticNode(sourceId) || isSyntheticNode(targetId)) return undefined;
       try {
         const newEdge = await edgeApi.create({
           source_node_id: sourceId,
@@ -214,6 +221,7 @@ export function useNodeEdgeManager({
 
   const handleEdgeDelete = useCallback(
     async (edgeId: string) => {
+      if (isSyntheticEdge(edgeId)) return;
       try {
         await edgeApi.delete(edgeId);
         if (graph.hasEdge(edgeId)) {

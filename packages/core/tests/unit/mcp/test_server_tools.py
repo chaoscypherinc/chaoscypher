@@ -25,6 +25,7 @@ from chaoscypher_core.mcp.server import (
     _handle_wait_for_document,
 )
 from chaoscypher_core.models import ReleasedRows, SourceDeletion
+from chaoscypher_core.utils.tool_failure import TOOL_FAILURES
 
 
 # ------------------------------------------------------------------ #
@@ -588,7 +589,7 @@ class TestHandleRemoveDocument:
         assert result["source_id"] == "src_123"
         assert "error" not in result
         mock_sms.delete_source.assert_called_once_with(
-            "src_123", search_repo=mock_engine.search_repository
+            "src_123", search_repo=mock_engine.search_repository, commit_with=None
         )
 
     @pytest.mark.asyncio
@@ -615,7 +616,7 @@ class TestHandleRemoveDocument:
 
     @pytest.mark.asyncio
     async def test_exception_returns_operation_failed(self, mock_engine):
-        """When SourceService raises, error is 'Operation failed'."""
+        """When SourceService raises, error is the fixed OPERATION_FAILED line."""
         with patch(
             "chaoscypher_core.services.graph.management.source.SourceService"
         ) as mock_sms_cls:
@@ -626,11 +627,11 @@ class TestHandleRemoveDocument:
             )
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
     @pytest.mark.asyncio
     async def test_delete_source_exception_returns_operation_failed(self, mock_engine):
-        """When delete_source itself raises, error is 'Operation failed'."""
+        """When delete_source itself raises, error is the fixed OPERATION_FAILED line."""
         with patch(
             "chaoscypher_core.services.graph.management.source.SourceService"
         ) as mock_sms_cls:
@@ -643,7 +644,7 @@ class TestHandleRemoveDocument:
             )
 
         assert result["success"] is False
-        assert result["error"] == "Operation failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
     @pytest.mark.asyncio
     async def test_service_constructed_with_engine_params(self, mock_engine):
@@ -1021,7 +1022,7 @@ class TestHandleExtractionTool:
 
     @pytest.mark.asyncio
     async def test_value_error_returns_tool_execution_failed(self):
-        """ValueError from method yields 'Tool execution failed'."""
+        """ValueError from method yields the fixed OPERATION_FAILED line."""
         orchestrator = MagicMock()
         method = AsyncMock(side_effect=ValueError("bad source"))
 
@@ -1030,18 +1031,18 @@ class TestHandleExtractionTool:
         )
 
         assert result["success"] is False
-        assert result["error"] == "Tool execution failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
     @pytest.mark.asyncio
     async def test_key_error_returns_tool_execution_failed(self):
-        """KeyError from method yields 'Tool execution failed'."""
+        """KeyError from method yields the fixed OPERATION_FAILED line."""
         orchestrator = MagicMock()
         method = AsyncMock(side_effect=KeyError("missing_field"))
 
         result = _parse_result(await _handle_extraction_tool(orchestrator, method, {}))
 
         assert result["success"] is False
-        assert result["error"] == "Tool execution failed"
+        assert result["error"] == TOOL_FAILURES["OPERATION_FAILED"]
 
     @pytest.mark.asyncio
     async def test_method_receives_all_args(self):
@@ -1725,7 +1726,7 @@ class TestHandleAddDocumentSandboxWithContent:
 # ------------------------------------------------------------------ #
 
 
-def _engine(mode: str = "write", *, embedding_service: Any = None, vector_search: bool = True):
+def _engine(mode: str = "write", *, embedding_service: Any = None):
     engine = MagicMock()
     engine.settings.mcp.mode = mode
     engine.settings.mcp.profile = "full"
@@ -1733,7 +1734,6 @@ def _engine(mode: str = "write", *, embedding_service: Any = None, vector_search
     engine.settings.mcp.auto_extract = False
     engine.settings.mcp.completed_history_limit = 20
     engine.settings.current_database = "default"
-    engine.settings.search.enable_vector_search = vector_search
     engine.embedding_service = embedding_service
     return engine
 
@@ -1796,14 +1796,15 @@ class TestNoEmbedderWhenVectorSearchIsOff:
     closed port, about 3 s per search).
     """
 
-    @pytest.mark.parametrize(("vector_search", "wired"), [(True, True), (False, False)])
-    def test_the_embedding_callback_follows_the_setting(
-        self, vector_search: bool, wired: bool
+    @pytest.mark.parametrize("embedding_service", [MagicMock(), None], ids=["on", "off"])
+    def test_the_embedding_callback_follows_the_engines_provider(
+        self, embedding_service: Any
     ) -> None:
         from chaoscypher_core.mcp.server import create_mcp_server
 
-        engine = _engine(embedding_service=MagicMock(), vector_search=vector_search)
+        engine = _engine(embedding_service=embedding_service)
         with patch("chaoscypher_core.mcp.server.ToolExecutorService") as executor:
             create_mcp_server(engine)
-        callback = executor.call_args.kwargs["embedding_callback"]
-        assert (callback is not None) is wired
+        kwargs = executor.call_args.kwargs
+        assert (kwargs["embedding_callback"] is not None) is (embedding_service is not None)
+        assert kwargs["embedding_provider"] is embedding_service

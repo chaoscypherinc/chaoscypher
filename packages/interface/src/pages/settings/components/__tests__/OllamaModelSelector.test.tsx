@@ -646,6 +646,9 @@ describe('OllamaModelSelector — model info dialog', () => {
     // Microtask flush so the rejected promise propagates through the catch.
     await Promise.resolve();
     await Promise.resolve();
+    // The click reached the hook (a test that passed with the click unwired
+    // pinned nothing); only the rejection keeps the dialog closed.
+    expect(hook.showModel).toHaveBeenCalledTimes(1);
     expect(screen.queryByText(/Model Info:/)).not.toBeInTheDocument();
   });
 });

@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from chaoscypher_core.models import EdgeUpdate, NodeUpdate
+from chaoscypher_core.services.graph.memory.supersession import edge_valid_from
 from chaoscypher_core.services.graph.resolution.apply import (
     ResolutionReport,
     distinct_readings,
@@ -156,7 +157,8 @@ def _rebuild_node(
     reading's own edges are not kept apart once merged, so degree plays no part.
     """
     node = repo.get_node(node_id, include_embedding=False)
-    if node is None:
+    if node is None or node.person_made:
+        # a node a person made keeps its own text and home, whoever attests it
         return _NodeRebuild(changed=False, home=None, entity_type=None)
     readings = distinct_readings(member_readings(repo.node_members(node_id)), prefer=node.source_id)
     if not readings:
@@ -185,7 +187,7 @@ def _rebuild_node(
 def _rebuild_edge(repo: GraphRepositoryProtocol, edge_id: str) -> tuple[str, str, str] | None:
     """Rebuild one surviving edge from its remaining readings: its new home and its endpoints."""
     edge = repo.get_edge(edge_id)
-    if edge is None:
+    if edge is None or edge.person_made:  # an edge a person made keeps its own text
         return None
     readings = distinct_readings(member_readings(repo.edge_members(edge_id)), prefer=edge.source_id)
     if not readings:
@@ -195,10 +197,7 @@ def _rebuild_edge(repo: GraphRepositoryProtocol, edge_id: str) -> tuple[str, str
         props = merge_edge_properties(props, dict(record.get("properties") or {}))
     if props != dict(edge.properties or {}):
         repo.update_edge(edge_id, EdgeUpdate(properties=props))
-    # the validity window's start is its members' earliest date (a memory's valid_from);
-    # a timeless member (a document) changes nothing, no dated member leaves it unset
-    dates = [d for d in repo.source_valid_from(repo.edge_members(edge_id)).values() if d]
-    valid_from = min(dates) if dates else None
+    valid_from = edge_valid_from(repo, edge_id)
     if valid_from != edge.valid_from:
         repo.set_edge_validity(
             edge_id,
@@ -345,18 +344,46 @@ async def reembed_nodes(
     return len(nodes)
 
 
+async def refresh_node_search(
+    repo: GraphRepositoryProtocol,
+    node_ids: Iterable[str],
+    provider: EmbeddingProviderProtocol | None,
+    *,
+    search: SearchRepositoryProtocol | None,
+) -> int:
+    """Bring each node's vector and search rows up to date with the node as it reads now; the number re-embedded.
+
+    The one step the post-commit identity pass and :func:`refresh_released_graph`
+    share after they change nodes. With a provider it is :func:`reembed_nodes`.
+    With None (vector search off) nothing is embedded: each node's search rows
+    are rewritten from the node as it reads now (``index_nodes_batch``), so the
+    keyword index follows, and 0 is returned. Keyword-only is a configured mode,
+    so it logs at info.
+    """
+    if provider is not None:
+        return await reembed_nodes(repo, node_ids, provider, search=search)
+    ids = list(dict.fromkeys(node_ids))
+    if search is not None and ids:
+        search.index_nodes_batch(
+            [n for n in (repo.get_node(i, include_embedding=True) for i in ids) if n]
+        )
+    logger.info("nodes_reindexed_for_keywords_only", nodes=len(ids))
+    return 0
+
+
 @dataclasses.dataclass(frozen=True)
 class LazyEmbedder:
     """An embedding provider the post-release refresh builds only when something went stale.
 
-    ``build`` makes (or hands over) the provider; a failure there (a cloud
+    ``build`` makes (or hands over) the provider, or answers None when vector
+    search is off (the keyword-only refresh); a failure there (a cloud
     provider with no API key) is the refresh's logged, non-fatal failure,
     never the caller's. ``owned`` says the provider was built for this
     refresh alone: it is closed (``aclose``) once the refresh is done. A
     caller lending its long-lived provider (the CLI's) passes ``owned=False``.
     """
 
-    build: Callable[[], EmbeddingProviderProtocol]
+    build: Callable[[], EmbeddingProviderProtocol | None]
     owned: bool
 
 
@@ -437,11 +464,11 @@ async def refresh_released_graph(
       resolution's own index step (``apply_resolution(search=)``) takes the
       rows of the nodes it merged away and rewrites the full-text rows of the
       nodes it changed, and no other row;
-    * every stale node is re-embedded (:func:`reembed_nodes`) and its search
-      rows rewritten from the node as it reads now, or, with no embedding
-      provider (none given, or a :class:`LazyEmbedder` that fails to build),
-      its full-text row rewritten and the ids logged
-      (``released_graph_not_reembedded``) for a later re-embed.
+    * every stale node goes through :func:`refresh_node_search`: re-embedded
+      and its search rows rewritten from the node as it reads now, or, with
+      no embedding provider (none given, a :class:`LazyEmbedder` that builds
+      None because vector search is off, or one that fails to build), its
+      search rows rewritten for keywords only.
 
     A :class:`LazyEmbedder` is built only when a node went stale, and closed
     after when it is ``owned``. Only the rows named in ``released`` (and the
@@ -468,14 +495,7 @@ async def refresh_released_graph(
     else:
         provider = embedder
     try:
-        if provider is not None:
-            await reembed_nodes(repo, stale, provider, search=search)
-            return
-        logger.warning("released_graph_not_reembedded", node_ids=stale)
-        if search is not None:
-            search.index_nodes_batch(
-                [n for n in (repo.get_node(i, include_embedding=True) for i in stale) if n]
-            )
+        await refresh_node_search(repo, stale, provider, search=search)
     except Exception:
         logger.exception("released_graph_refresh_failed_non_fatal", nodes=len(stale))
     finally:
@@ -551,6 +571,7 @@ __all__ = [
     "reembed_nodes",
     "refresh_after_release",
     "refresh_after_release_sync",
+    "refresh_node_search",
     "refresh_released_graph",
     "release_source_graph",
 ]

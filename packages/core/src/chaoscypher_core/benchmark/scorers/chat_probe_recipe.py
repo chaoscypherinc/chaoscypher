@@ -46,7 +46,13 @@ the Ollama docs answer review: a unit spaced from its number, a version
 without its 'v', a size in k in binary and in decimal thousands, 'No.' ending
 a sentence, computing acronyms, keys and a placeholder, English openers (a
 comma, a determiner, an imperative, 'to'), a hyphenated compound, and a list
-answer's set with a member the gold excludes and with one holder's own list.
+answer's set with a member the gold excludes and with one holder's own list;
+(scorer v9) one per rule of the Book One answer review: a phrase term written
+with hyphens, an out-of-scope decline that offers a candidate and one that
+concludes an answer, the context's 'Entity' label and English openers, a wrong
+fact inside a quotation of the context, the Russian form of a given name, a
+description that counts only where the context names no one, and a name from
+memory grounded only by a description.
 """
 
 from __future__ import annotations
@@ -148,6 +154,26 @@ _BOTH_KNEW = {
     "holders": [("Kahn", "Robert Kahn"), ("Cerf", "Vinton Cerf")],
 }
 """A "which do both have" question with a member only one holder has (scorer v8)."""
+
+_VISIT = (
+    "[CHUNK C0 | visit.txt]\n"
+    "[S1] Andrew Sávin, the steward's son, kept the accounts at Zavídovo. "
+    "[S2] The steward's son married Márfa lately and keeps the mill ledger for her uncle.\n"
+)
+"""An estate visit: a given name in English and a man named and unnamed (scorer v9)."""
+
+_THE_SON = {
+    "band": "factual_single_hop",
+    "question": "Who keeps the mill ledger?",
+    "gold_entities": ["Andrew Sávin"],
+    "gold_answer": "The steward's son, Andrew Sávin.",
+    "answer_terms": [("Andrew", "Sávin", "married Márfa")],
+    "alias_evidence": {
+        "Andrew": ["Andrew Sávin, the steward's son"],
+        "married Márfa": ["!Andrew Sávin"],
+    },
+}
+"""A man the context names in one chunk and only describes in another (scorer v9)."""
 
 RECIPE_SAMPLES: tuple[RecipeSample, ...] = (
     RecipeSample(
@@ -564,6 +590,64 @@ RECIPE_SAMPLES: tuple[RecipeSample, ...] = (
         _BOTH_KNEW,
         "Both knew UCLA and Stanford; Kahn also knew BBN.",
         _NET,
+    ),
+    # scorer v9: one sample per rule of the Book One answer review (2026-10-23)
+    RecipeSample(
+        "s62_a_phrase_term_with_hyphens",
+        {
+            "band": "factual_single_hop",
+            "question": "How long was the log?",
+            "gold_entities": ["Stanford Research Institute"],
+            "gold_answer": "Forty thousand words.",
+            "answer_terms": [("forty thousand",)],
+        },
+        "The log ran to forty\u2011thousand words.",
+        _NET,
+    ),
+    RecipeSample(
+        "s63_out_of_scope_offers_a_candidate",
+        _OUT_OF_SCOPE,
+        "The context does not say who bought BBN, but UCLA is a candidate.",
+        _NET,
+    ),
+    RecipeSample(
+        "s64_out_of_scope_concludes_an_answer",
+        _OUT_OF_SCOPE,
+        "The context does not say who bought BBN. Therefore, the answer is: UCLA.",
+        _NET,
+    ),
+    RecipeSample(
+        "s65_the_entity_label_and_english_openers",
+        _BUILT,
+        "BBN built it (Entity description). Another passage names Robert Kahn.",
+        _NET,
+    ),
+    RecipeSample(
+        "s66_a_wrong_fact_inside_a_quotation_of_the_context",
+        {**_KEPT_BY_THE_CLERK, "must_not_contain": ["clerk Yákov copied"]},
+        "Tíkhon: \u201cHer cousin Tíkhon, the steward, kept the accounts; the clerk Yákov "
+        "copied them.\u201d",
+        _LEDGER,
+    ),
+    RecipeSample(
+        "s67_the_russian_form_of_a_given_name",
+        _THE_SON,
+        "Andrei keeps it; Sávin is his name.",
+        _VISIT,
+    ),
+    RecipeSample(
+        "s68_a_description_where_the_context_names_no_one",
+        _THE_SON,
+        "The steward's son, who married Márfa lately, keeps it.",
+        "[CHUNK C0 | visit.txt]\n[S1] The steward's son married Márfa lately and keeps the "
+        "mill ledger for her uncle.\n",
+    ),
+    RecipeSample(
+        "s69_a_name_from_memory_grounded_by_a_description",
+        _THE_SON,
+        "It is Andrew, who married Márfa lately.",
+        "[CHUNK C0 | visit.txt]\n[S1] The steward's son married Márfa lately and keeps the "
+        "mill ledger for her uncle. [S2] Andrew rode past.\n",
     ),
 )
 """The fixed samples :func:`scorer_recipe` scores; the golden test pins each verdict."""

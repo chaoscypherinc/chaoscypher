@@ -735,7 +735,7 @@ chaoscypher graph workflow get wf_abc123 --format json
 
 ## Packages
 
-Export and import knowledge graph packages in CCX (Chaos Cypher eXchange) format. Packages are portable ZIP archives containing templates, nodes, edges, lenses, and workflows in JSON-LD format (optionally with embedding vectors).
+Export and import knowledge graph packages in CCX (Chaos Cypher eXchange) format. Packages are portable ZIP archives containing templates, nodes, edges, lenses and workflow trigger rows in JSON-LD format (workflow definitions do not round-trip through CCX — see [CCX format § 10](../ccx-format.md#10-producer-notes-chaoscypher)) (optionally with embedding vectors).
 
 ### Export
 
@@ -817,6 +817,8 @@ chaoscypher graph package load PACKAGE [OPTIONS]
 | `--workflows/--no-workflows` | | `--workflows` | Import workflows |
 | `--sources/--no-sources` | | `--sources` | Import sources, chunks and citations, then index them for search |
 | `--database` | `-d` | current database | Database name |
+
+A package whose declared ed25519 signature does not verify against its manifest bytes is refused; a package with no signature loads as before, and a signature kind this install cannot verify is logged and skipped.
 
 **Examples:**
 

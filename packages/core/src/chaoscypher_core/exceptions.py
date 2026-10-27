@@ -295,6 +295,63 @@ class InvalidStateError(ChaosCypherException):
         super().__init__(message=message, code="INVALID_STATE", details=details or {})
 
 
+class VectorSearchOff(InvalidStateError):
+    """An action that only works with vectors, asked for while vector search is off.
+
+    Raised when ``search.enable_vector_search`` is false and a caller wants an
+    embedding, a semantic search or anything else that cannot run on the
+    keyword index alone. Maps to HTTP 409 Conflict like every
+    :class:`InvalidStateError`.
+
+    Example:
+        raise VectorSearchOff("Semantic search")
+        # → "Semantic search needs vectors, and vector search is off (...)."
+
+    """
+
+    def __init__(self, action: str):
+        """Initialize the instance.
+
+        Args:
+            action: What needed vectors, as the start of a sentence
+                (``"Semantic search"``, ``"Embedding"``).
+
+        """
+        super().__init__(
+            f"{action} needs vectors, and vector search is off "
+            "(search.enable_vector_search is false). Keyword search still works.",
+            details={"action": action},
+        )
+        self.action = action
+
+
+class ExtractionIncomplete(ChaosCypherException):
+    """A strict extraction in which the model failed on some of the text's groups.
+
+    The extraction swallows a group's failure (the group yields nothing) so one bad
+    group does not cost a document its other groups. A memory's link asks for
+    ``strict`` instead: a model that raised on its groups must read as a failed link,
+    not as a memory that holds no facts. The message names the counts only, never
+    the text or the model's error (which may quote the text).
+    """
+
+    def __init__(self, failed_groups: int, groups: int):
+        """Initialize the instance.
+
+        Args:
+            failed_groups: How many groups the model failed on.
+            groups: How many groups the extraction had.
+
+        """
+        super().__init__(
+            f"The extraction model failed on {failed_groups} of {groups} groups.",
+            code="EXTRACTION_INCOMPLETE",
+            details={"failed_groups": failed_groups, "groups": groups},
+        )
+        self.failed_groups = failed_groups
+        self.groups = groups
+
+
 class LLMNotVerifiedError(ChaosCypherException):
     """User-initiated action refused because the LLM provider has not been verified.
 

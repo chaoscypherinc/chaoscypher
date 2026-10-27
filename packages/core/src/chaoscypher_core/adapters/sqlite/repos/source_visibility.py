@@ -127,7 +127,8 @@ def attested_visible_sql(table: str, row: str | None = None) -> str:
     """A SQL condition true when the ``table`` row may answer: a member source not switched off.
 
     A row with no member reads its ``source_id`` as :func:`source_visible_sql`
-    does. The SQL form of :func:`chaoscypher_core.ports.search.item_visible`.
+    does; a row a person made is always visible. The SQL form of
+    :func:`chaoscypher_core.ports.search.item_visible`.
 
     Written for the planner, not per row: when no source is switched off
     (:data:`ANY_SOURCE_HIDDEN_SQL`, evaluated once) every row passes without a
@@ -144,7 +145,8 @@ def attested_visible_sql(table: str, row: str | None = None) -> str:
         f"WHERE hid.source_id IN {off} AND NOT EXISTS (SELECT 1 FROM {members} lit "
         f"WHERE lit.{key} = hid.item_id AND lit.source_id NOT IN {off})"
     )
-    return f"(NOT ({ANY_SOURCE_HIDDEN_SQL}) OR {row}.id NOT IN ({hidden}))"
+    # a row a person made (person_made, migration 0025) is the person's: always shown
+    return f"(NOT ({ANY_SOURCE_HIDDEN_SQL}) OR {row}.person_made = 1 OR {row}.id NOT IN ({hidden}))"
 
 
 def template_visible_sql(row: str | None = None) -> str:
@@ -181,11 +183,13 @@ def attested_by_sql(table: str, in_list: str, row: str | None = None) -> str:
 
 
 def in_source_scope_sql(table: str, in_list: str, row: str | None = None) -> str:
-    """A SQL condition true when the row is in a source scope: unattested, or attested by it.
+    """A SQL condition true when the row is in a source scope: a person made it, unattested, or attested by it.
 
-    The SQL form of :func:`chaoscypher_core.ports.search.item_in_source_scope`.
+    A row a person made (``person_made``, migration 0025) is in every lens and source
+    scope. The SQL form of :func:`chaoscypher_core.ports.search.item_in_source_scope`.
     """
-    return f"({unattested_sql(table, row)} OR {attested_by_sql(table, in_list, row)})"
+    person = f"{row or table}.person_made = 1"
+    return f"({person} OR {unattested_sql(table, row)} OR {attested_by_sql(table, in_list, row)})"
 
 
 def attestations_sql(table: str) -> str:

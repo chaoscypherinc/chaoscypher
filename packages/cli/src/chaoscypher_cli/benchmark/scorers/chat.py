@@ -47,10 +47,22 @@ class GraphRAGChatScorer:
             lambda: {"f": [], "c": [], "r": []}
         )
         head_terms: list[float] = []
+        judged = 0
+        errored = 0
 
         for entry in per_query:
             band = entry.get("band", "unknown")
             judge = entry.get("judge_scores") or {}
+            if not judge:
+                if entry.get("error"):
+                    # A question the candidate (or its judge) failed on is a 0,
+                    # not a question that never happened: dropping it let a
+                    # model that errors on its hard questions outscore one that
+                    # answered them (2026-10-19 audit).
+                    errored += 1
+                    head_terms.append(0.0)
+                continue
+            judged += 1
             f = judge.get("faithfulness")
             c = judge.get("correctness")
             r = judge.get("refusal_correct")
@@ -96,7 +108,8 @@ class GraphRAGChatScorer:
                 "correctness_avg": _avg(c_vals),
                 "refusal_correct_rate": _avg(r_vals),
                 "queries_total": len(fixture.queries),
-                "queries_scored": len(per_query),
+                "queries_scored": judged,
+                "queries_errored": errored,
                 "judge_provider": output.extras.get("judge_provider"),
                 "judge_model": output.extras.get("judge_model"),
                 "by_band": by_band_out,

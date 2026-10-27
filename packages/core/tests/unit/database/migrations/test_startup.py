@@ -68,9 +68,7 @@ file_template = %%(rev)s_%%(slug)s
 """
 
 
-def _migration_module(
-    *, revision: str, down_revision: str | None, tier: str, table: str
-) -> str:
+def _migration_module(*, revision: str, down_revision: str | None, tier: str, table: str) -> str:
     down = repr(down_revision)
     return textwrap.dedent(
         f'''\
@@ -126,9 +124,7 @@ def _synthetic_chain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     ]
     for revision, down, tier, table in chain:
         (versions / f"{revision}_synthetic.py").write_text(
-            _migration_module(
-                revision=revision, down_revision=down, tier=tier, table=table
-            ),
+            _migration_module(revision=revision, down_revision=down, tier=tier, table=table),
             encoding="utf-8",
         )
 
@@ -482,7 +478,7 @@ def test_upgrade_lock_file_survives_the_run(tmp_path: Path) -> None:
     db_path.touch()
 
     with (
-        patch.object(startup_mod, "_is_fresh_install", return_value=False),
+        patch.object(startup_mod, "build_if_new", return_value=False),
         patch.object(startup_mod, "ensure_stamped"),
         patch.object(startup_mod, "pending_revisions", return_value=["abc123"]),
         patch.object(startup_mod, "_run_locked") as run_locked,
@@ -491,6 +487,51 @@ def test_upgrade_lock_file_survives_the_run(tmp_path: Path) -> None:
 
     run_locked.assert_called_once()
     lock_path = db_path.with_suffix(db_path.suffix + ".upgrade.lock")
-    assert lock_path.exists(), (
-        ".upgrade.lock was unlinked — the inode-recycling race is back"
-    )
+    assert lock_path.exists(), ".upgrade.lock was unlinked — the inode-recycling race is back"
+
+
+def test_a_fresh_install_builds_its_schema_under_the_upgrade_lock(tmp_path: Path) -> None:
+    """Two processes opening a new database at once must not both build its schema.
+
+    The fresh path once skipped the lock: two first opens each ran the baseline and the
+    second failed on ``table alembic_version already exists`` (several memory servers
+    started at once on a database that does not exist yet). ``flock`` locks one open file
+    description, so a second open of the lock file in this process contends like another
+    process would.
+    """
+    from chaoscypher_core.database.migrations import startup as startup_mod
+    from chaoscypher_core.utils.filelock import lock_file, unlock_file
+
+    db = tmp_path / "app.db"
+    lock_path = db.with_suffix(db.suffix + ".upgrade.lock")
+    held: list[bool] = []
+    real_upgrade = startup_mod.upgrade_to_head
+
+    def upgrade_seeing_the_lock(path: Path) -> None:
+        with open(lock_path, "w", encoding="utf-8") as other:
+            try:
+                lock_file(other, blocking=False)
+            except BlockingIOError:
+                held.append(True)
+            else:
+                unlock_file(other)
+                held.append(False)
+        real_upgrade(path)
+
+    with patch.object(startup_mod, "upgrade_to_head", upgrade_seeing_the_lock):
+        run_startup_migrations(db)
+
+    assert held == [True]
+    assert current_revision(db) == head_revision()
+
+
+def test_a_database_whose_folder_does_not_exist_yet_is_built(tmp_path: Path) -> None:
+    """The upgrade lock sits beside the database: its folder is made before the lock is taken.
+
+    ``chaoscypher mcp --database NEW`` runs the startup migration before any engine makes
+    the database's folder.
+    """
+    db = tmp_path / "databases" / "fresh1" / "app.db"
+    run_startup_migrations(db)
+    assert current_revision(db) == head_revision()
+    assert get_upgrade_state(db).ready is True

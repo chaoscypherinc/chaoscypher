@@ -85,8 +85,13 @@ class SearchService:
             SearchService with all dependencies injected.
 
         """
-        # Use Engine's embedding callback if available
-        callback = getattr(engine, "_default_embed_callback", None)
+        # The Engine's embedding callback, only when the engine has a provider
+        # (none with vector search off: semantic and hybrid run keyword-only)
+        callback = (
+            getattr(engine, "_default_embed_callback", None)
+            if getattr(engine, "embedding_service", None) is not None
+            else None
+        )
         return cls(
             search_repository=engine.search_repository,
             graph_repository=engine.graph_repository,
@@ -454,11 +459,13 @@ class SearchService:
         min_similarity: float = 0.55,
         include_disabled_sources: bool = False,
     ) -> dict[str, Any]:
-        """Perform hybrid search: keyword and semantic merged, higher score wins.
+        """Perform hybrid search: keyword and semantic rankings fused by reciprocal rank.
 
-        Both arms run and their results are merged by result id, keeping each
-        result's higher score. Queries under 3 characters, and any search
-        error, fall back to keyword-only.
+        A keyword arm runs over nodes and over chunks, and a semantic arm keeps
+        hits of at least ``min_similarity``; the repository fuses the rankings
+        by reciprocal rank, scaled so a result ranked first in every arm scores
+        1.0 (rank, not score, is merged). Queries under 3 characters, and any search error,
+        fall back to keyword-only.
 
         Args:
             query: Search query
@@ -732,6 +739,10 @@ class SearchService:
         """
         if not self.sources_repository:
             logger.warning("rebuild_chunks_skipped_no_sources_repository")
+            return 0
+        if not getattr(self.search_repository, "vectors", True):
+            # keyword-only: another process's chunk vectors stay as they are
+            logger.info("rebuild_chunks_skipped_keyword_only")
             return 0
 
         # Get all committed sources

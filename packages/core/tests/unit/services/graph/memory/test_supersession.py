@@ -9,10 +9,14 @@ date and is never closed; the same fact twice closes nothing; an older arrival c
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
+from sqlalchemy import event
 from sqlmodel import SQLModel
 
 from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
@@ -24,6 +28,7 @@ from chaoscypher_core.services.graph.management.release import rebuild_from_memb
 from chaoscypher_core.services.graph.memory.supersession import (
     MEMORY_SINGLE_VALUED,
     Superseded,
+    recompute_single_valued,
     supersede_memory_edges,
 )
 from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
@@ -230,8 +235,6 @@ def test_recompute_after_a_release_closes_what_the_reopened_fact_contradicts(
     repo: GraphRepository,
 ) -> None:
     """Moscow, Paris, Lyon; releasing Paris leaves Moscow closed by Lyon, not reopened for good."""
-    from chaoscypher_core.services.graph.memory.supersession import recompute_single_valued
-
     _fact(repo, "pierre", "located_in", "paris", "m_old", "e_moscow")  # 2026-01-01, "Moscow" role
     _supersede(repo, "m_old")
     _fact(repo, "pierre", "located_in", "lyon", "m_paris", "e_middle")  # 2026-03-02
@@ -244,3 +247,55 @@ def test_recompute_after_a_release_closes_what_the_reopened_fact_contradicts(
     assert first is not None and last is not None
     assert (first.valid_to, first.closed_by_source_id) == (date(2026, 10, 20), "m_lyon")
     assert last.valid_to is None
+
+
+@contextmanager
+def _statements(repo: GraphRepository) -> Iterator[list[tuple[str, bool]]]:
+    """Every SQL statement run while the block is open, with the driver's in_transaction."""
+    seen: list[tuple[str, bool]] = []
+
+    def record(conn: Any, _cursor: Any, statement: str, *_rest: Any) -> None:
+        seen.append((statement.strip(), conn.connection.driver_connection.in_transaction))
+
+    bind = repo.session.get_bind()
+    event.listen(bind, "before_cursor_execute", record)
+    try:
+        yield seen
+    finally:
+        event.remove(bind, "before_cursor_execute", record)
+
+
+def test_supersession_recompute_runs_under_the_writer_lock(repo: GraphRepository) -> None:
+    """The recompute is a read-modify-write: its first read already holds the writer lock."""
+    _fact(repo, "pierre", "located_in", "paris", "m_paris", "e_paris")
+    _fact(repo, "pierre", "located_in", "lyon", "m_lyon", "e_lyon")
+    with _statements(repo) as seen:
+        recompute_single_valued(repo, "pierre", "located_in")
+    assert seen[0][0] == "BEGIN IMMEDIATE"
+    assert all(in_tx for _, in_tx in seen[1:])
+
+
+def test_a_memorys_supersession_is_one_locked_unit(repo: GraphRepository) -> None:
+    """Pair discovery, every recompute and the report share one ``BEGIN IMMEDIATE``."""
+    _fact(repo, "pierre", "located_in", "lyon", "m_lyon", "e_lyon")
+    _fact(repo, "pierre", "works_for", "anna", "m_lyon", "e_work")  # a second single-valued pair
+    with _statements(repo) as seen:
+        _supersede(repo, "m_lyon")
+    assert [s for s, _ in seen].count("BEGIN IMMEDIATE") == 1
+    assert seen[0][0] == "BEGIN IMMEDIATE"
+    assert all(in_tx for _, in_tx in seen[1:])
+
+
+def test_a_merge_on_facts_no_memory_dates_writes_nothing(repo: GraphRepository) -> None:
+    """A merge's settle step (``apply._settle_single_valued``) on documents' facts only reads."""
+    from chaoscypher_core.services.graph.resolution.apply import _settle_single_valued
+
+    _fact(repo, "pierre", "located_in", "paris", "doc", "e_paris")
+    _fact(repo, "pierre", "located_in", "lyon", "doc", "e_lyon")
+    with _statements(repo) as seen, repo.write_locked():
+        _settle_single_valued(repo, "pierre")
+    assert [s for s, _ in seen if not s.startswith(("SELECT", "BEGIN"))] == []
+    for eid in ("e_paris", "e_lyon"):
+        edge = repo.get_edge(eid)
+        assert edge is not None
+        assert (edge.valid_from, edge.valid_to, edge.closed_by_source_id) == (None, None, None)

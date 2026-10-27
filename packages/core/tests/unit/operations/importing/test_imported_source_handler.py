@@ -114,6 +114,39 @@ async def test_handle_index_imported_source_embeds_then_indexes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_an_import_with_no_provider_leaves_the_chunks_for_embed_missing() -> None:
+    """Vector search off: the real IndexingService has no provider, so no chunk is embedded."""
+    from chaoscypher_core.services.search.engine.index import IndexingService
+    from chaoscypher_core.settings import EngineSettings
+
+    adapter, graph_repo, _, search_repo = _service_with(nodes=[], vectors=[])
+    indexing_service = IndexingService(
+        repository=adapter, settings=EngineSettings(), embedding_service=None
+    )
+
+    result = await handle_index_imported_source(
+        data={"source_id": "src1"},
+        source_repository=adapter,
+        graph_repository=graph_repo,
+        indexing_service=indexing_service,
+        search_repository=search_repo,
+        metadata={"database_name": "default"},
+    )
+
+    assert result["success"] is True
+    assert result["chunks_embedded"] == 0
+    adapter.update_chunk_embeddings_batch.assert_not_called()
+    assert adapter.update_source_columns.called  # still finalized
+    (updates,) = [
+        c.kwargs["updates"]
+        for c in adapter.update_source_columns.call_args_list
+        if "indexing_complete" in c.kwargs.get("updates", {})
+    ]
+    assert updates["embedding_model"] == "none"  # as the CLI's keyword-only index records
+    assert updates["embedding_dimensions"] == 0
+
+
+@pytest.mark.asyncio
 async def test_nodes_with_valid_vectors_are_not_reembedded() -> None:
     """Idempotent re-run: a node that already has a right-dim vector is skipped."""
     dim = get_settings().search.vector_dimensions

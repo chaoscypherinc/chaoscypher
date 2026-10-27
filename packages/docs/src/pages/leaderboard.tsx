@@ -1105,7 +1105,8 @@ function GraphAdvantage({
         <>
           <p className={styles.chatNote}>
             Worked examples: the graph questions with the largest lift over
-            plain vector RAG, for the best local model and the best Claude row. Each
+            plain vector RAG, for the best local model (and the best Claude row once one
+            has all three rungs). Each
             rung's retrieved context is trimmed to the lines that hold an answer
             term and two lines around them; nothing is hand-edited.
           </p>
@@ -1179,7 +1180,7 @@ function ValueBlock({ value }: { value: Value }) {
               : "no local pair yet"}
             <small>
               {best
-                ? `${Math.round(best.small_graphrag_pct)}% vs ${Math.round(best.big_naive_pct)}% over every scored question, a ${best.ratio}× VRAM gap`
+                ? `${Math.round(best.small_graphrag_pct)}% vs ${Math.round(best.big_naive_pct)}% on the ordinary questions, a ${best.ratio}× VRAM gap`
                 : "needs two local models of different size with all three rungs"}
             </small>
           </dd>

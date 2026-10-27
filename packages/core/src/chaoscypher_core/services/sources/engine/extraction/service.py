@@ -512,26 +512,21 @@ class ExtractionService:
         visuals = getattr(self._resolve_domain(stack_name), "subtype_visuals", None)
         subtype_visuals = visuals() if callable(visuals) else None
 
-        loop = asyncio.get_event_loop()
-
         # Wrap sync template suggestion calls for concurrent execution
         async def _suggest_templates() -> tuple[list, list, dict]:
             """Off-thread node/edge template suggestions plus inverse-rel lookup."""
-            node_suggestions = await loop.run_in_executor(
-                None,
-                lambda: TemplateExtractor.generate_suggestions_from_entities(
-                    entities=normalized,
-                    domain_templates=domain_node_templates,
-                    subtype_visuals=subtype_visuals,
-                ),
+            # to_thread carries the caller's context (a memory's private_text) into the thread
+            node_suggestions = await asyncio.to_thread(
+                TemplateExtractor.generate_suggestions_from_entities,
+                entities=normalized,
+                domain_templates=domain_node_templates,
+                subtype_visuals=subtype_visuals,
             )
-            edge_suggestions = await loop.run_in_executor(
-                None,
-                lambda: suggest_edge_templates(
-                    relationships,
-                    detected_domain=effective_domain,
-                    get_domain_edge_templates=self._get_domain_edge_templates,
-                ),
+            edge_suggestions = await asyncio.to_thread(
+                suggest_edge_templates,
+                relationships,
+                detected_domain=effective_domain,
+                get_domain_edge_templates=self._get_domain_edge_templates,
             )
             inverse_rels = self._get_domain_inverse_relationships(effective_domain)
             return node_suggestions, edge_suggestions, inverse_rels

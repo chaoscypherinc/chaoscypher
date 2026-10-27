@@ -8,6 +8,11 @@ open fact with the old one is closed (``valid_to`` = the new memory's ``valid_fr
 ``closed_by_source_id`` = the new memory) and both are kept. The set of such relations is
 :data:`MEMORY_SINGLE_VALUED` plus what a domain's vocabulary flags; the universal vocabulary
 is not edited (the extraction recipe hashes it).
+
+The recompute is a read-modify-write: it reads a subject's facts and writes their windows, so
+it holds the writer lock from its first read (``write_locked``), as a merge does. Two processes
+remembering "lives in Lyon" and "lives in Kyiv" at once then settle as if they had taken turns:
+the later one reads the earlier one's fact (spec 2026-10-24 § 3, G3).
 """
 
 from __future__ import annotations
@@ -95,7 +100,13 @@ def _created(fields: dict[str, Any]) -> str:
 
 
 def _dated(repo: GraphRepositoryProtocol, edge: Edge) -> _Dated | None:
-    """The edge with its members' dates, or None when no memory member dates it."""
+    """The edge with its members' dates, or None when no memory member dates it.
+
+    A person's edge (``person_made``, migration 0025) is None too, whatever attests it:
+    it holds always, so it is never dated or closed and never closes another fact.
+    """
+    if edge.person_made:
+        return None
     members = list(repo.edge_members(edge.id))
     fields = repo.memory_source_fields(members)
     dated = [(m, fields[m]) for m in members if m in fields and fields[m].get("valid_from")]
@@ -123,7 +134,7 @@ def recompute_single_valued(
     closed by the first fact after it (``valid_to`` = that fact's date,
     ``closed_by_source_id`` = its memory). A fact restated later than its
     replacement is current again, and the replacement closes. A timeless fact
-    (a document's) is never closed and never closes. Returns one record per
+    (a document's, or any a person made) is never closed and never closes. Returns one record per
     window that closed or changed its closer.
     """
     labels: dict[str, str] = {}
@@ -134,44 +145,46 @@ def recompute_single_valued(
             labels[node_id] = node.label if node is not None else node_id
         return labels[node_id]
 
-    dated = [d for d in (_dated(repo, e) for e in repo.edges_from(subject_id, label)) if d]
-    dated.sort(key=lambda d: (d.newest, d.created))
-    closures: list[Superseded] = []
-    for i, fact in enumerate(dated):
-        closer = dated[i + 1] if i + 1 < len(dated) else None
-        valid_to = closer.newest if closer else None
-        closed_by = closer.newest_source if closer else None
-        edge = fact.edge
-        if (edge.valid_from, edge.valid_to, edge.closed_by_source_id) == (
-            fact.earliest,
-            valid_to,
-            closed_by,
-        ):
-            continue
-        repo.set_edge_validity(
-            edge.id, valid_from=fact.earliest, valid_to=valid_to, closed_by_source_id=closed_by
-        )
-        if closer is not None and edge.closed_by_source_id != closed_by:
-            record = Superseded(
-                subject=label_of(subject_id),
-                label=label,
-                old_object=label_of(edge.target_node_id),
-                old_by=fact.newest_by,
-                old_from=fact.newest,
-                new_object=label_of(closer.edge.target_node_id),
-                new_by=closer.newest_by,
-                new_from=closer.newest,
-                self_closed=False,
+    with repo.write_locked():
+        dated = [d for d in (_dated(repo, e) for e in repo.edges_from(subject_id, label)) if d]
+        dated.sort(key=lambda d: (d.newest, d.created))
+        closures: list[Superseded] = []
+        for i, fact in enumerate(dated):
+            closer = dated[i + 1] if i + 1 < len(dated) else None
+            valid_to = closer.newest if closer else None
+            closed_by = closer.newest_source if closer else None
+            edge = fact.edge
+            if (edge.valid_from, edge.valid_to, edge.closed_by_source_id) == (
+                fact.earliest,
+                valid_to,
+                closed_by,
+            ):
+                continue
+            repo.set_edge_validity(
+                edge.id, valid_from=fact.earliest, valid_to=valid_to, closed_by_source_id=closed_by
             )
-            closures.append(record)
-            logger.info(
-                "memory_fact_superseded",
-                subject=record.subject,
-                label=record.label,
-                old=record.old_object,
-                new=record.new_object,
-            )
-    return closures
+            if closer is not None and edge.closed_by_source_id != closed_by:
+                record = Superseded(
+                    subject=label_of(subject_id),
+                    label=label,
+                    old_object=label_of(edge.target_node_id),
+                    old_by=fact.newest_by,
+                    old_from=fact.newest,
+                    new_object=label_of(closer.edge.target_node_id),
+                    new_by=closer.newest_by,
+                    new_from=closer.newest,
+                    self_closed=False,
+                )
+                closures.append(record)
+                # ids, never labels: a node's label is a memory's words
+                logger.info(
+                    "memory_fact_superseded",
+                    subject_id=subject_id,
+                    closed_edge_id=edge.id,
+                    closer_edge_id=closer.edge.id,
+                    closer_source_id=closed_by,
+                )
+        return closures
 
 
 def supersede_memory_edges(
@@ -182,27 +195,35 @@ def supersede_memory_edges(
     One record per closure the recompute made (:func:`recompute_single_valued`); a
     record whose closer is another memory than ``source_id`` is one the arriving
     fact lost to (``self_closed``).
+
+    One locked unit (``write_locked``): the pair discovery, every recompute (they join
+    it) and the report read and write as of one lock.
     """
-    pairs: list[tuple[str, str]] = []
-    for edge_id in repo.member_edge_ids(source_id):
-        edge = repo.get_edge(edge_id)
-        if edge is None or edge.label not in single_valued:
-            continue
-        pair = (edge.source_node_id, edge.label)
-        if pair not in pairs:
-            pairs.append(pair)
-    closures: list[Superseded] = []
-    for subject_id, label in pairs:
-        for record in recompute_single_valued(repo, subject_id, label):
-            closed = next(
-                (e for e in repo.edges_from(subject_id, label) if label_matches(repo, e, record)),
-                None,
-            )
-            mine = closed is not None and source_id in repo.edge_members(closed.id)
-            closures.append(
-                Superseded(**{**record.__dict__, "self_closed": True}) if mine else record
-            )
-    return closures
+    with repo.write_locked():
+        pairs: list[tuple[str, str]] = []
+        for edge_id in repo.member_edge_ids(source_id):
+            edge = repo.get_edge(edge_id)
+            if edge is None or edge.label not in single_valued:
+                continue
+            pair = (edge.source_node_id, edge.label)
+            if pair not in pairs:
+                pairs.append(pair)
+        closures: list[Superseded] = []
+        for subject_id, label in pairs:
+            for record in recompute_single_valued(repo, subject_id, label):
+                closed = next(
+                    (
+                        e
+                        for e in repo.edges_from(subject_id, label)
+                        if label_matches(repo, e, record)
+                    ),
+                    None,
+                )
+                mine = closed is not None and source_id in repo.edge_members(closed.id)
+                closures.append(
+                    Superseded(**{**record.__dict__, "self_closed": True}) if mine else record
+                )
+        return closures
 
 
 def label_matches(repo: GraphRepositoryProtocol, edge: Edge, record: Superseded) -> bool:

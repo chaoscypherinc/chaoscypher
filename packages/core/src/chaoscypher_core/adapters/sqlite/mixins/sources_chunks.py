@@ -388,9 +388,11 @@ class SourceChunksMixin(SqliteMixinBase, ChunkStorageProtocol):
         *,
         embedding_model: str,
         embedding_dimensions: int,
-        status: str,
+        status: str | None,
     ) -> list[str]:
         """Batch form of update_chunk_embedding — one UPDATE, one commit.
+
+        ``status`` None leaves each chunk's status as it is.
 
         An embedding wave is up to ``batching.embedding_wave_size`` (default
         2,000) chunks; the single-row method costs one full-row SELECT (the
@@ -422,19 +424,71 @@ class SourceChunksMixin(SqliteMixinBase, ChunkStorageProtocol):
             # by primary key", which forbids a custom WHERE. Identity-map
             # staleness is acceptable here exactly as in mark_chunks_embedded.
             chunk_table = DocumentChunk.__table__
+            values: dict[str, Any] = {
+                "embedding": bindparam("b_embedding"),
+                "embedding_model": embedding_model,
+                "embedding_dimensions": embedding_dimensions,
+            }
+            if status is not None:
+                values["status"] = status
             statement = (
-                update(chunk_table)
-                .where(chunk_table.c.id == bindparam("b_id"))
-                .values(
-                    embedding=bindparam("b_embedding"),
-                    embedding_model=embedding_model,
-                    embedding_dimensions=embedding_dimensions,
-                    status=status,
-                )
+                update(chunk_table).where(chunk_table.c.id == bindparam("b_id")).values(**values)
             )
             self.session.execute(statement, params)
         self._maybe_commit()
         return [chunk_id for chunk_id in ids if chunk_id not in existing]
+
+    def list_chunks_without_embedding(
+        self,
+        *,
+        database_name: str,
+        after_id: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """List chunks of any source that have no vector yet (``embedding IS NULL``), by id.
+
+        Backs ``rebuild-search --embed-missing``: chunks written while vector
+        search was off. Selects on the vector itself, not ``embedded_at``,
+        which only the queue's embedding stage stamps. Keyset-paginated on
+        ``id`` (``id > after_id``) so a caller advancing the cursor never
+        reads a row twice in one run, whether or not the row got its vector.
+
+        Args:
+            database_name: Active database name.
+            after_id: Keyset cursor: only ids after it; None starts at the beginning.
+            limit: Maximum rows to return.
+
+        Returns:
+            Chunk dicts with ``id``, ``source_id``, ``chunk_index`` and ``content``.
+        """
+        self._ensure_connected()
+        statement = (
+            select(DocumentChunk)
+            .options(
+                load_only(
+                    DocumentChunk.id,
+                    DocumentChunk.source_id,
+                    DocumentChunk.chunk_index,
+                    DocumentChunk.content,
+                )
+            )
+            .where(
+                DocumentChunk.database_name == database_name,
+                col(DocumentChunk.embedding).is_(None),
+            )
+        )
+        if after_id is not None:
+            statement = statement.where(col(DocumentChunk.id) > after_id)
+        statement = statement.order_by(col(DocumentChunk.id)).limit(limit)
+        return [
+            {
+                "id": c.id,
+                "source_id": c.source_id,
+                "chunk_index": c.chunk_index,
+                "content": c.content,
+            }
+            for c in self.session.scalars(statement).all()
+        ]
 
     def list_unembedded_chunks(
         self,

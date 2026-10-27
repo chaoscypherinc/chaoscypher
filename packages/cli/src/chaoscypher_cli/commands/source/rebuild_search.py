@@ -5,15 +5,19 @@
 
 Auto-detects whether the embedding model or dimensions have changed
 and regenerates embeddings if needed, then rebuilds the vector index.
+``--embed-missing`` instead embeds only the chunks and nodes written while
+vector search was off (templates made then are not covered).
 """
 
 import asyncio
 import sys
+from typing import Any
 
 import click
 from rich.console import Console
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_core.exceptions import VectorSearchOff
 
 
 console = Console()
@@ -21,7 +25,15 @@ console = Console()
 
 @click.command("rebuild-search")
 @click.option("--database", "-d", default="default", help="Database name")
-def rebuild_search(database: str) -> None:
+@click.option(
+    "--embed-missing",
+    is_flag=True,
+    help=(
+        "Embed only the chunks and nodes with no vector yet (written while vector search "
+        "was off); templates are not covered."
+    ),
+)
+def rebuild_search(database: str, embed_missing: bool) -> None:
     """Rebuild search indexes.
 
     Auto-detects whether embeddings need regeneration:
@@ -29,15 +41,26 @@ def rebuild_search(database: str) -> None:
     \b
     - If model/dimensions changed: regenerates all embeddings (slower)
     - Otherwise: rebuilds indexes from stored embeddings (fast)
+    - With --embed-missing: embeds only the chunks and nodes with no vector
 
     \b
     Example:
         chaoscypher source rebuild-search
         chaoscypher source rebuild-search --database my-project
+        chaoscypher source rebuild-search --embed-missing
     """  # noqa: D301  -- Click \x08 paragraph escape, intentional non-raw docstring.
     ctx = get_context(database_name=database)
 
+    if embed_missing:
+        _embed_missing(ctx)
+        return
+
     needs_regeneration = ctx.search_repository.needs_full_reindex
+
+    if needs_regeneration and ctx.embedding_service is None:
+        # create_index with no provider would clear the reindex flag without re-embedding
+        console.print(f"[red]Error:[/red] {VectorSearchOff('Re-embedding').message}")
+        sys.exit(1)
 
     if needs_regeneration:
         console.print(
@@ -94,3 +117,33 @@ def rebuild_search(database: str) -> None:
     else:
         console.print(f"[red]Rebuild failed:[/red] {result.get('message', 'Unknown error')}")
         sys.exit(1)
+
+
+def _embed_missing(ctx: Any) -> None:
+    """``--embed-missing``: give the rows written keyword-only their vectors, and nothing else."""
+    from chaoscypher_core.services.search.engine.embed_missing import embed_missing
+
+    provider = ctx.embedding_service
+    if provider is None:
+        message = VectorSearchOff("rebuild-search --embed-missing").message
+        console.print(f"[red]Error:[/red] {message}")
+        sys.exit(1)
+    if ctx.search_repository.needs_full_reindex:
+        console.print(
+            "[yellow]Embedding mismatch detected:[/yellow] the stored vectors come from another "
+            "model. Run 'chaoscypher source rebuild-search' first; it re-embeds everything."
+        )
+        sys.exit(1)
+
+    console.print("Embedding what has no vector yet...")
+    counts = asyncio.run(
+        embed_missing(
+            storage=ctx.storage_adapter,
+            graph=ctx.graph_repository,
+            search=ctx.search_repository,
+            provider=provider,
+            settings=ctx.settings,
+        )
+    )
+    console.print(f"  Chunks embedded: {counts.chunks}")
+    console.print(f"  Nodes embedded: {counts.nodes}")

@@ -53,6 +53,27 @@ describe('PostUpgradeNotice', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('hidden for a first install, whose schema build is not an upgrade', () => {
+    // A brand-new database: nothing applied as an upgrade, no backup to roll back to.
+    setPending({
+      ready: true,
+      blocked_on: [],
+      message: '',
+      last_backup: null,
+      last_applied: [],
+      data_changing: false,
+    });
+    const { container } = render(<PostUpgradeNotice />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('hidden when there is no backup to roll back to, whatever was dismissed before', () => {
+    localStorage.setItem(DISMISS_KEY, '/old/backup.db');
+    setPending({ ...SILENT, last_backup: null });
+    const { container } = render(<PostUpgradeNotice />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it('hidden when already dismissed for this backup', () => {
     localStorage.setItem(DISMISS_KEY, SILENT.last_backup);
     setPending(SILENT);

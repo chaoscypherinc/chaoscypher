@@ -27,6 +27,7 @@ from chaoscypher_core.services.sources.engine.extraction.utils.relation_vocabula
     canonical_edge_label,
 )
 from chaoscypher_core.settings import GraphSettings
+from chaoscypher_core.templates.restore import restore_shipped_template
 from chaoscypher_core.templates.visuals import (
     resolve_edge_visuals,
 )
@@ -542,6 +543,9 @@ class RelationshipCommitHandler:
                 template_count=len(templates_to_create),
                 source_id=source_id,
             )
+            # the fallback below names the default, a shipped template: made sure of
+            # before the attempt, since after a failed flush the session takes nothing more
+            restore_shipped_template(self.graph_repository, _DEFAULT_EDGE_TEMPLATE)
             try:
                 # Idempotent UPSERT: re-running commit for the same
                 # source reuses existing edge-template rows instead of
@@ -606,6 +610,9 @@ class RelationshipCommitHandler:
         """
         descriptions = edge_descriptions or {}
         logger.info("creating_edge_template", edge_type=edge_type, source_id=source_id)
+        # the fallback below names the default, a shipped template: made sure of before the
+        # attempt, since after a failed flush the session takes nothing more
+        restore_shipped_template(self.graph_repository, _DEFAULT_EDGE_TEMPLATE)
         try:
             visuals = resolve_edge_visuals(edge_type)
             edge_template = self.graph_repository.create_template(

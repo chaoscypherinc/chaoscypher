@@ -32,6 +32,11 @@ from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
 
+from chaoscypher_core.adapters.embedding.registry import (
+    CURATED_EMBEDDING_MODELS,
+    get_curated_dimensions,
+    get_default_model,
+)
 from chaoscypher_core.app_config import Settings, get_config_manager, get_settings
 from chaoscypher_core.settings import EmbeddingSettings
 from chaoscypher_core.settings import LLMSettings as _CoreLLMSettings
@@ -86,6 +91,10 @@ class WizardState(BaseModel):
 
     llm: WizardLLMState = Field(default_factory=WizardLLMState)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
+    # What a completed earlier setup left configured (None on a first setup):
+    # the index's dimensions change only with the embedding model.
+    configured_embedding_model: str | None = None
+    configured_vector_dimensions: int | None = None
 
 
 def _seed_wizard_state(settings: Settings) -> WizardState:
@@ -117,6 +126,9 @@ def _seed_wizard_state(settings: Settings) -> WizardState:
             if value is not None:
                 setattr(s, f"{provider}_{suffix}", value)
     state.embedding = settings.embedding.model_copy(deep=True)
+    if settings.setup_completed:
+        state.configured_embedding_model = settings.embedding.model
+        state.configured_vector_dimensions = settings.search.vector_dimensions
     return state
 
 
@@ -155,16 +167,55 @@ def _wizard_updates(state: WizardState) -> dict[str, Any]:
     if state.embedding.api_base:
         embedding_updates["api_base"] = state.embedding.api_base
 
-    return {
+    updates: dict[str, Any] = {
         "llm": llm_updates,
         "embedding": embedding_updates,
         "setup_completed": True,
     }
+    # The index stores vectors at search.vector_dimensions: a registry model is
+    # indexed at its native size, as the web wizard does (2026-10-19 audit — the
+    # default 1024 made a 768-dimension model fail every embed and cut a 2560
+    # one silently). A custom model keeps whatever the setting holds, and so
+    # does a re-run that keeps the model: a new size drops every vector table
+    # on the next start (_dimensions_note says how to move on purpose).
+    dimensions = get_curated_dimensions(state.embedding.model)
+    if dimensions is not None and _embedding_model_changed(state):
+        updates["search"] = {"vector_dimensions": dimensions}
+    return updates
+
+
+def _embedding_model_changed(state: WizardState) -> bool:
+    """Whether this is a first setup or the embedding model differs from the configured one."""
+    configured = state.configured_embedding_model
+    return configured is None or configured != state.embedding.model
+
+
+def _dimensions_note(state: WizardState) -> str | None:
+    """One line when a kept model is indexed at a size other than its registry one, else None."""
+    native = get_curated_dimensions(state.embedding.model)
+    configured = state.configured_vector_dimensions
+    if native is None or configured is None or configured == native:
+        return None
+    if _embedding_model_changed(state):
+        return None
+    return (
+        f"Kept search.vector_dimensions {configured} ({state.embedding.model} is {native} "
+        f"natively); to use {native}: chaoscypher config set search.vector_dimensions "
+        f"{native}, then chaoscypher source rebuild-search, which re-embeds everything."
+    )
+
+
+def _default_curated_choice() -> str:
+    """The 1-based menu number of the registry's default model (``default=True``)."""
+    return str(CURATED_EMBEDDING_MODELS.index(get_default_model()) + 1)
 
 
 def _persist_wizard_state(state: WizardState) -> None:
     """Validate + write the wizard answers into data_dir/settings.yaml."""
     get_config_manager().update_settings(_wizard_updates(state))
+    note = _dimensions_note(state)
+    if note:
+        console.print(f"[yellow]{note}[/yellow]")
 
 
 # Provider information
@@ -803,7 +854,7 @@ def _configure_embedding_interactive(state: WizardState) -> None:
             model_choice = Prompt.ask(
                 "Select model",
                 choices=[str(i) for i in range(1, custom_idx + 1)],
-                default="1",
+                default=_default_curated_choice(),
             )
             model_idx = int(model_choice) - 1
             if model_idx < len(CURATED_EMBEDDING_MODELS):
@@ -1098,13 +1149,7 @@ def setup(
             _configure_embedding_interactive(state)
         elif not state.embedding.is_configured and state.llm.provider == "ollama":
             # Auto-configure Ollama embeddings when LLM is Ollama
-            from chaoscypher_core.adapters.embedding.registry import (
-                CURATED_EMBEDDING_MODELS,
-            )
-
-            default_model = next(
-                (m for m in CURATED_EMBEDDING_MODELS if m.default), CURATED_EMBEDDING_MODELS[0]
-            )
+            default_model = get_default_model()
             state.embedding.provider = "ollama"
             state.embedding.model = default_model.ollama
             state.embedding.is_configured = True
