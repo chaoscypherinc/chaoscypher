@@ -351,33 +351,10 @@ coverage-diff-interface:
 # ==========================================================================
 
 security:
-	@echo "=== Python Dependency Audit ==="
-	# PYSEC-2022-42969: ReDoS in `py.path.svnwc`. `py` is a transitive dev
-	# dep via `interrogate` (docstring coverage). Neither interrogate nor
-	# this project use svnwc, so the affected code path is unreachable and
-	# the package has no upstream fix. Re-evaluate when interrogate drops
-	# its `py` dependency.
-	# PYSEC-2026-3740 (GHSA-8mgp-746c-j5xp): nltk's model save/load helpers
-	# (TransitionParser, AveragedPerceptron, PerceptronTagger, maxent) open
-	# caller-controlled paths outside its path sandbox. nltk is a transitive
-	# dep of llama-index-core, the CLI's benchmark extra (the naive rung only),
-	# which uses its tokenizer and stopwords, never those helpers; no patched
-	# nltk is published. Re-evaluate when a fix ships.
-	uv run pip-audit --ignore-vuln PYSEC-2022-42969 --ignore-vuln PYSEC-2026-3740
-	@echo ""
-	@echo "=== Frontend Dependency Audit ==="
-	# Mirrors the `security` step in scripts/run_ci.py (the authoritative
-	# list — update both together): shipped interface deps stay strict via
-	# --omit=dev; the full trees (incl. devDependencies-only tooling) run
-	# through the actionability gate, which blocks on *fixable* high+
-	# findings and reports the rest.
-	cd packages/interface && npm audit --omit=dev --audit-level=high
-	uv run python scripts/npm_audit_gate.py packages/interface
-	@echo ""
-	@echo "=== Docs Dependency Audit ==="
-	uv run python scripts/npm_audit_gate.py packages/docs
-	@echo ""
-	@echo "Security scan complete"
+	# One list of audits and ignored advisories: the `security` step of
+	# scripts/run_ci.py (rationale for each ignore lives there). This target
+	# used to restate it and was kept in step by hand (#902 item 2).
+	uv run python scripts/run_ci.py --steps security
 
 # ==========================================================================
 # License Scan (AGPL deny-list — protects dual-license model)

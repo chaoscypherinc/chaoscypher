@@ -238,3 +238,14 @@ def test_each_run_gets_a_private_tmpdir_every_step_sees_and_it_is_removed(monkey
     assert not Path(seen[0]).exists(), "removed when the run ends"
     assert _RUN_CI._RUN_TMP is None
     assert "TMPDIR" not in _RUN_CI.step_env({"PATH": "/bin"}), "outside a run, nothing is forced"
+
+
+def test_make_security_runs_the_security_step_instead_of_restating_it():
+    """One list of audits and ignored advisories (#902 item 2: two hand-synced copies drifted)."""
+    makefile = (Path(__file__).resolve().parents[5] / "Makefile").read_text(encoding="utf-8")
+    recipe = makefile.split("\nsecurity:\n", 1)[1].split("\n\n", 1)[0]
+    assert "scripts/run_ci.py --steps security" in recipe
+    assert (
+        "pip-audit" not in recipe and "npm audit" not in recipe and "npm_audit_gate" not in recipe
+    )
+    assert any("pip-audit" in cmd for cmd, _ in _RUN_CI._STEPS["security"])

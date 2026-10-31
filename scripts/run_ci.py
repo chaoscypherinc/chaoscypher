@@ -186,10 +186,18 @@ _STEPS: dict[str, list[Command] | str] = {
         ),
     ],
     "security": [
-        # PYSEC-2022-42969 (py.path.svnwc) and PYSEC-2026-3740 (nltk model
-        # save/load path sandbox bypass, via llama-index-core in the CLI's
-        # benchmark extra, never called): unreachable, no upstream fix. The
-        # rationale for each lives beside the Makefile `security` target.
+        # The one list of ignored Python advisories (`make security` runs this
+        # step rather than restating it, #902 item 2):
+        # PYSEC-2022-42969: ReDoS in `py.path.svnwc`. `py` is a transitive dev
+        # dep via `interrogate` (docstring coverage). Neither interrogate nor
+        # this project use svnwc, so the affected code path is unreachable and
+        # the package has no upstream fix. Re-evaluate when interrogate drops
+        # its `py` dependency.
+        # PYSEC-2026-3740 (GHSA-8mgp-746c-j5xp): nltk's model save/load helpers
+        # open caller-controlled paths outside its path sandbox. nltk is a
+        # transitive dep of llama-index-core, the CLI's benchmark extra, which
+        # never calls those helpers. nltk 3.10.4 fixes it: drop this ignore
+        # once that bump (#894) is on main.
         (
             "uv run pip-audit --ignore-vuln PYSEC-2022-42969 --ignore-vuln PYSEC-2026-3740",
             None,
