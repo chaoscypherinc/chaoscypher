@@ -25,6 +25,8 @@ import click
 from rich.console import Console
 from rich.panel import Panel
 
+from chaoscypher_cli.utils.console import print_caught_error
+
 
 console = Console()
 error_console = Console(stderr=True)
@@ -88,7 +90,7 @@ def _generate_completion_script(shell: str) -> str | None:
         return completion.source()
 
     except Exception as e:
-        error_console.print(f"[red]Error generating completions:[/red] {e}")
+        print_caught_error(e, label="Error generating completions", console=error_console)
         return None
 
 

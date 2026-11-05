@@ -13,7 +13,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
-from chaoscypher_cli.utils.console import print_json
+from chaoscypher_cli.utils.console import print_caught_error, print_json
 
 
 console = Console()
@@ -145,5 +145,5 @@ def get(workflow_id: str, output_format: str, database: str) -> None:
                 console.print(f"  Failed: {stats.get('failed_runs', 0)}")
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)

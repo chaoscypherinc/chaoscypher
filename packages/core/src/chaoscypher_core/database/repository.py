@@ -7,7 +7,6 @@ Handles data access for multi-database operations (file/directory management).
 """
 
 import os
-import shutil
 from pathlib import Path
 
 import structlog
@@ -151,8 +150,10 @@ class DatabaseRepository:
             msg = f"Database '{name}' does not exist"
             raise ValidationError(msg, field="name")
 
-        # Delete the entire directory
-        shutil.rmtree(db_path)
+        # Delete the entire directory, its cached engines evicted first.
+        from chaoscypher_core.database.engine import remove_database_dir
+
+        remove_database_dir(db_path)
 
         logger.info("database_deleted", database_name=name)
         return True

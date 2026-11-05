@@ -24,7 +24,7 @@ POST   /api/v1/settings/reset/workflows - Reset workflow system
 POST   /api/v1/settings/reset/chats - Reset chats
 POST   /api/v1/settings/reset/queue - Reset queue stats
 POST   /api/v1/settings/reset/knowledge - Reset knowledge base
-POST   /api/v1/settings/reset/source_processing - Reset source_processing history
+POST   /api/v1/settings/reset/source_processing - Delete every source and its processing history
 POST   /api/v1/settings/reset/all - Nuclear reset (requires CONFIRM)
 POST   /api/v1/settings/cleanup/orphans - Clean up orphaned graph items
 POST   /api/v1/settings/seed/templates - Re-seed default templates
@@ -894,20 +894,21 @@ async def reset_source_processing(
     _: CurrentUsername,
     settings_service: Annotated[SettingsService, Depends(get_settings_service)],
 ) -> ResetResponse:
-    """Reset source_processing history (imports, chunks, extraction jobs).
+    """Delete every source and its processing history (imports, chunks, extraction jobs).
 
-    **WARNING:** This operation cannot be undone!
+    **WARNING:** This operation cannot be undone! It releases every source
+    from the knowledge graph, so the extracted graph goes with them.
 
     **Deletes:**
-    - All source_processing file records
+    - Every source, committed ones included, with its chunks and citations
+    - Nodes and edges that only sources attest (the membership release)
     - All staged document chunks (not yet committed to sources)
-    - All entity embeddings from source_processing
+    - All entity embeddings
     - All chunk extraction jobs and tasks
     - Uploaded import files directory
 
     **Preserves:**
-    - Committed sources and their chunks
-    - Knowledge graph (nodes, edges)
+    - Person-made nodes and edges
     - Workflows, tools, triggers
     - Conversations
 

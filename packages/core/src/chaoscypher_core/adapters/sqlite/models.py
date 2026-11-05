@@ -455,6 +455,10 @@ class SourceRow(SQLModel, table=True):
     # by migration 0004. Nullable: not yet populated for legacy rows.
     full_text: str | None = Field(default=None, sa_column=Column(Text))
 
+    # One-line, model-written summary of the document (migration 0026). NULL
+    # until written; never filled with fallback text.
+    summary: str | None = Field(default=None, sa_column=Column(Text))
+
     # Versioning (for future re-import support)
     version: int = Field(default=1)
     parent_id: str | None = Field(foreign_key="sources.id", default=None)
@@ -1326,9 +1330,16 @@ class ChunkExtractionAttempt(SQLModel, table=True):
 
 
 class SourceTag(SQLModel, table=True):
-    """Tags for organizing sources."""
+    """Tags for organizing sources.
+
+    ``name`` follows the tag rule (``services.sources.tags``) and is unique
+    within its database (migration 0026).
+    """
 
     __tablename__ = "source_tags"
+    __table_args__ = (
+        Index("uq_source_tags_database_name_name", "database_name", "name", unique=True),
+    )
 
     id: str = Field(primary_key=True)
     database_name: str = Field(index=True)
@@ -1345,7 +1356,12 @@ class SourceTagAssignment(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("source_id", "tag_id", name="uq_source_tag_assignment"),)
 
     id: str = Field(primary_key=True)
-    source_id: str = Field(foreign_key="sources.id", index=True)
+    # CASCADE: deleting a source deletes its tag assignments (migration 0026).
+    source_id: str = Field(
+        sa_column=Column(
+            String, ForeignKey("sources.id", ondelete="CASCADE"), index=True, nullable=False
+        )
+    )
     tag_id: str = Field(foreign_key="source_tags.id", index=True)
     database_name: str = Field(index=True)
     assigned_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

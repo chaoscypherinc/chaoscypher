@@ -184,12 +184,12 @@ class CLIContext:
         if self._connected:
             return
 
-        from chaoscypher_core.utils.logging import configure_logging
+        from chaoscypher_cli.log_setup import configure_cli_logging
 
         # Route structlog through stdlib logging so log level filtering works.
         # Default to WARNING for CLI — keeps output clean for end users.
         # Override with LOG_LEVEL=INFO or LOG_LEVEL=DEBUG for troubleshooting.
-        configure_logging(log_level=os.getenv("LOG_LEVEL", "WARNING"))
+        configure_cli_logging()
 
         # Initialize settings from settings.yaml via the app_config pipeline.
         from chaoscypher_core.exceptions import ConfigError

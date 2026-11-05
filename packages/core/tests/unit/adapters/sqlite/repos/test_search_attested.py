@@ -135,13 +135,36 @@ def test_the_sql_forms_read_as_the_python_ones(
     home, members = _MEMBERS[nid]
     row = SimpleNamespace(source_id=home, member_source_ids=members)
     with get_engine(str(db)).connect() as conn:
-        visible, in_a = conn.execute(
+        visible, in_a, attested_a = conn.execute(
             text(
                 f"SELECT {attested_visible_sql('graph_nodes', 'n')}, "
-                f"{in_source_scope_sql('graph_nodes', '(:a)', 'n')} "
+                f"{in_source_scope_sql('graph_nodes', '(:a)', 'n')}, "
+                f"{in_source_scope_sql('graph_nodes', '(:a)', 'n', attested_only=True)} "
                 "FROM graph_nodes n WHERE n.id = :id"
             ),
             {"id": nid, "a": "a"},
         ).one()
     assert bool(visible) is item_visible(row, disabled)
     assert bool(in_a) is item_in_source_scope(row, ["a"])
+    assert bool(attested_a) is item_in_source_scope(row, ["a"], attested_only=True)
+
+
+@pytest.mark.parametrize("scope", [["a"], ["b"]], ids=_ids)
+def test_an_attested_only_scope_reads_alike_in_every_reader(
+    merged: tuple[Path, Any], scope: list[str]
+) -> None:
+    """A scope from tags: the searches and the minimal listing keep only attested nodes, as the Python form does."""
+    db, repo = merged
+    graph = GraphRepository(SafeSession(get_engine(str(db))), "db")
+    rows = {
+        nid: SimpleNamespace(source_id=home, member_source_ids=members)
+        for nid, (home, members) in _MEMBERS.items()
+    }
+    expected = {
+        nid for nid, row in rows.items() if item_in_source_scope(row, scope, attested_only=True)
+    }
+    assert "unsourced" not in expected
+    keyword = repo.keyword_search("Kessel", 20, "node", scope, attested_only=True)
+    vector = repo.vector_search([1.0, 0.0, 0.0, 0.0], 20, "node", scope, attested_only=True)
+    listed = graph.list_nodes_minimal(limit=100, source_ids=scope, attested_only=True)
+    assert {i for i, _ in keyword} == {i for i, _ in vector} == {n.id for n in listed} == expected

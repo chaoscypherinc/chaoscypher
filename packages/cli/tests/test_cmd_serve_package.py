@@ -29,6 +29,8 @@ from chaoscypher_cli.mcp.command import mcp
 # Helpers
 # ---------------------------------------------------------------------------
 
+_LOCAL = "http://localhost"  # the fallback refuses TestClient's default host, "testserver"
+
 
 def _make_mock_ctx(database_name: str = "default", data_dir: Path | None = None) -> MagicMock:
     """Return a minimal mock CLIContext."""
@@ -351,7 +353,7 @@ class TestServeFallbackServer:
             _run_builtin_server("default", "localhost", 8000, False)
 
         assert captured_app, "uvicorn.run was not called with an app"
-        client = TestClient(captured_app[0], raise_server_exceptions=True)
+        client = TestClient(captured_app[0], base_url=_LOCAL, raise_server_exceptions=True)
 
         # /health
         resp = client.get("/health")
@@ -406,7 +408,7 @@ class TestServeFallbackServer:
             _run_builtin_server("default", "localhost", 8000, False)
 
         assert captured_app
-        client = TestClient(captured_app[0], raise_server_exceptions=False)
+        client = TestClient(captured_app[0], base_url=_LOCAL, raise_server_exceptions=False)
         resp = client.get("/api/v1/nodes/nonexistent")
         assert resp.status_code == 404
 
@@ -434,7 +436,7 @@ class TestServeFallbackServer:
             _run_builtin_server("default", "localhost", 8000, False)
 
         assert captured_app
-        client = TestClient(captured_app[0], raise_server_exceptions=False)
+        client = TestClient(captured_app[0], base_url=_LOCAL, raise_server_exceptions=False)
         resp = client.get("/api/v1/templates/nonexistent")
         assert resp.status_code == 404
 

@@ -121,6 +121,7 @@ def text_is_private() -> bool:
 
 
 def _safe_key(key: str) -> bool:
+    """Whether a log field with this key may carry its value unredacted."""
     return key in SAFE_KEYS or key.startswith("_") or key.endswith(SAFE_SUFFIXES)
 
 

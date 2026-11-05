@@ -34,7 +34,7 @@ from chaoscypher_cli.commands.source.search import (
     _hydrate_results,
     search,
 )
-from chaoscypher_core.models import ReleasedRows, SourceDeletion
+from chaoscypher_core.models import ReleasedRows, SourceDeletion, TagMatch
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +169,9 @@ class TestSearchCommand:
             result = runner.invoke(search, ["test", "--mode", "keyword", "--limit", "5"])
 
         assert result.exit_code == 0, result.output
-        ctx.search_repository.keyword_search.assert_called_once_with("test", limit=5)
+        ctx.search_repository.keyword_search.assert_called_once_with(
+            "test", limit=5, tags=[], tag_match=TagMatch.ANY
+        )
 
     def test_exception_causes_exit_1(self) -> None:
         runner = CliRunner()

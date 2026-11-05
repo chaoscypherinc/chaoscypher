@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING, Any, get_args
 import click
 
 from chaoscypher_cli.sources.domains import ADD_DOMAIN_CHOICES, chosen_packs, pack_option
+from chaoscypher_cli.sources.tag_options import tag_option
+from chaoscypher_cli.utils.console import print_caught_error, print_error
 from chaoscypher_core.exceptions import ChaosCypherException
 from chaoscypher_core.models import SourceStatus
 from chaoscypher_core.ports.types import FilteringMode
@@ -40,6 +42,13 @@ if TYPE_CHECKING:
 
     from chaoscypher_cli.context import CLIContext
     from chaoscypher_cli.sources.pipeline import PipelineResult
+
+
+SITE_SUMMARY_REFUSAL = "a site's pages do not share one summary"
+RESUME_LABELS_REFUSAL = (
+    "--tag and --summary label a new upload; "
+    "'chaoscypher source tag' changes an existing document's tags."
+)
 
 
 def _is_file_id(value: str) -> bool:
@@ -270,6 +279,22 @@ def _add_site(
         sys.exit(code)
 
 
+def _check_labels(ctx: CLIContext, tags: tuple[str, ...], summary: str | None) -> None:
+    """Refuse a bad ``--tag`` or ``--summary`` once, before any input is processed.
+
+    Raises:
+        TagRuleError: a tag breaks the tag rule, or there are more than the cap.
+        ValidationError: the summary is too long.
+    """
+    from chaoscypher_core.services.sources.labels import validate_source_labels
+
+    validate_source_labels(
+        tags=tags or None,
+        summary=summary,
+        max_summary_chars=ctx.settings.source_processing.summary_max_chars,
+    )
+
+
 def _result_to_dict(result: PipelineResult) -> dict[str, Any]:
     """Convert a PipelineResult to a JSON-serializable dict.
 
@@ -444,6 +469,15 @@ def _show_batch_summary(
     is_flag=True,
     help="With --site: import without asking, once it has shown what it found.",
 )
+@tag_option(
+    "Tag the document (repeatable: --tag alpha --tag beta); on a re-add the tags "
+    "are added to its own. With --site every page gets them, a refresh's new pages too."
+)
+@click.option(
+    "--summary",
+    default=None,
+    help="The document's one-line summary (replaces the old one on a re-add; not with --site).",
+)
 def add(
     files_or_ids: tuple[str, ...],
     resume: bool,
@@ -467,6 +501,8 @@ def add(
     no_confirm: bool,
     as_site: bool,
     yes: bool,
+    tags: tuple[str, ...],
+    summary: str | None,
 ) -> None:
     """Add and process sources through the processing pipeline.
 
@@ -496,6 +532,7 @@ def add(
         chaoscypher source add if_abc123def456                     # Resume by ID
         chaoscypher source add --resume                            # Interactive
         chaoscypher source add https://docs.example.com --site     # A whole docs site
+        chaoscypher source add notes.pdf --tag alpha --summary "Field notes"
     """  # noqa: D301
     # Defer heavy imports to runtime (not completion time)
     import sys
@@ -508,10 +545,21 @@ def add(
     # One name for the pipeline: a pack, the packs' label, generic or auto.
     domain = chosen_packs(packs) or "auto"
 
+    # The site path has no JSON output, no live log and no resume picker: refuse these
+    # rather than accept and drop them (a script asking for --json parsed Rich text).
+    site_ignores = {"--json": output_json, "--verbose": verbose, "--resume": resume}
+    if as_site and (refused := [flag for flag, on in site_ignores.items() if on]):
+        msg = f"{', '.join(refused)} cannot be used with --site."
+        raise click.UsageError(msg)
+
     console = Console()
+    if as_site and summary is not None:
+        print_error(SITE_SUMMARY_REFUSAL, console=console)
+        sys.exit(1)
 
     try:
         ctx = get_context(database_name=database)
+        _check_labels(ctx, tags, summary)
 
         if as_site:
             from chaoscypher_cli.sources.sites import SitePageOptions
@@ -530,12 +578,19 @@ def add(
                 enable_vision=vision,
                 content_filtering=content_filtering,
                 skip_duplicates=skip_duplicates,
+                tags=tags,
             )
             _add_site(ctx, files_or_ids, site_options, yes=yes, quiet=quiet, console=console)
             return
 
         # Build items list from any input mode
         items: list[dict[str, Any]] = []
+
+        if (tags or summary is not None) and (
+            resume or any(_is_file_id(value) for value in files_or_ids)
+        ):
+            print_error(RESUME_LABELS_REFUSAL, console=console)
+            sys.exit(1)
 
         if resume:
             # Interactive resume picker
@@ -638,6 +693,8 @@ def add(
                     verbose=verbose,
                     skip_duplicates=skip_duplicates,
                     no_confirm=no_confirm,
+                    tags=tags,
+                    summary=summary,
                 )
                 results.append(result)
 
@@ -697,8 +754,9 @@ def add(
         console.print(f"[red]Error:[/red] Permission denied: {e.filename or e}")
         sys.exit(1)
     except ChaosCypherException as e:
-        console.print(f"[red]Error:[/red] {e.message}")
+        # Escaped: the message can quote a user's value (a tag like "[/x]").
+        print_caught_error(e, console=console)
         sys.exit(1)
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)

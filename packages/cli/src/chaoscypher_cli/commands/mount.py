@@ -34,6 +34,8 @@ from typing import TYPE_CHECKING, Any
 
 import click
 
+from chaoscypher_cli.utils.console import print_caught_error
+
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -240,7 +242,13 @@ def _index_for_search(ctx: Any, stats: ImportStats, console: Console) -> bool:
         # without vectors, so a missing embedding model must not fail the mount.
         # The marker is NOT written in this case, so the next launch retries
         # (the import is an upsert by IRI and repeats cheaply).
-        console.print(f"[yellow]⚠ Search indexing skipped: {e} — will retry next launch[/yellow]")
+        print_caught_error(
+            e,
+            label="⚠ Search indexing skipped",
+            style="yellow",
+            suffix=" — will retry next launch",
+            console=console,
+        )
         return False
     return True
 
@@ -303,9 +311,9 @@ def mount(
     """
     # Route ALL logging to stderr before anything else runs — the import
     # step logs through structlog, and stdout belongs to the MCP protocol.
-    from chaoscypher_core.utils.logging import configure_logging
+    from chaoscypher_cli.log_setup import configure_cli_logging
 
-    configure_logging(log_level="WARNING", stream=sys.stderr)
+    configure_cli_logging(log_level="WARNING", stream=sys.stderr)
 
     console = _stderr_console()
 

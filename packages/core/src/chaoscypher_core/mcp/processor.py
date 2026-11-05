@@ -9,7 +9,7 @@ extracted (entity recognition + graph commit) in the background.
 """
 
 import asyncio
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -47,6 +47,11 @@ class QueuedFile:
     # fire-and-forget behaviour for the index-only pipeline (no gate) and lets
     # the full pipeline extract immediately unless a caller opts into the gate.
     auto_confirm: bool = True
+    # The caller's labels: ``tags`` added (``None`` leaves them alone; with
+    # ``replace_tags`` the whole set), ``summary`` replaces (``""`` clears).
+    tags: Sequence[str] | None = None
+    replace_tags: bool = False
+    summary: str | None = None
 
 
 @dataclass
@@ -120,6 +125,9 @@ class DocumentProcessor:
         content: str | None = None,
         enable_vision: bool | None = None,
         auto_confirm: bool = True,
+        tags: Sequence[str] | None = None,
+        replace_tags: bool = False,
+        summary: str | None = None,
     ) -> dict[str, Any]:
         """Add a document to the processing queue.
 
@@ -136,6 +144,9 @@ class DocumentProcessor:
             wait_timeout: Maximum seconds to wait (only used when wait=True).
             content: Pre-processed text content. Skips loader pipeline when provided.
             enable_vision: Enable vision processing. None=auto, True=force, False=skip.
+            tags: Tags added to the document (``None`` leaves them alone).
+            replace_tags: Make ``tags`` the document's whole set.
+            summary: The document's summary (``""`` clears it; ``None`` keeps it).
 
         Returns:
             Dict with status ('processing' or 'queued'), file_id, and position.
@@ -165,6 +176,9 @@ class DocumentProcessor:
             content=content,
             enable_vision=enable_vision,
             auto_confirm=auto_confirm,
+            tags=tags,
+            replace_tags=replace_tags,
+            summary=summary,
         )
 
         self._queue.append(queued)
@@ -368,6 +382,9 @@ class DocumentProcessor:
                     skip_duplicates=queued.skip_duplicates,
                     is_url=queued.is_url,
                     auto_confirm=queued.auto_confirm,
+                    tags=queued.tags,
+                    replace_tags=queued.replace_tags,
+                    summary=queued.summary,
                 )
                 if asyncio.iscoroutine(result):
                     result = await result

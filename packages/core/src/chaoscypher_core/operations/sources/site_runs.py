@@ -23,6 +23,9 @@ a docs site, refresh it and delete it. What they must agree on lives here:
   imports one site twice.
 - :func:`create_site_row` / :func:`begin_site_refresh`: how every surface
   starts a site's import and a check for updates.
+- :func:`retag_site`: a site's tags changed after its import (``add_site``
+  again with tags, ``source add URL --site --tag``): the site's stored
+  ``options["tags"]``, which a later refresh's new pages get, and every page it has.
 - :func:`exclusion_keys` / :func:`leave_out_deleted_page`: the pages a site
   leaves out (``source_sites.excluded_pages``). The import stores the pages
   the user unticked; a refresh with no list of its own keeps them out, and a
@@ -49,7 +52,13 @@ from chaoscypher_core.utils.id import generate_id
 
 
 if TYPE_CHECKING:
+    from typing import Protocol
+
     from chaoscypher_core.ports.storage_sites import SiteStorageProtocol, SourceSiteRecord
+    from chaoscypher_core.services.sources.tags import SourceAndTagStorage
+
+    class SiteAndTagStorage(SiteStorageProtocol, SourceAndTagStorage, Protocol):
+        """A storage holding sites, sources and their tags, with a transaction (the SQLite adapter)."""
 
 
 logger = structlog.get_logger(__name__)
@@ -69,14 +78,17 @@ def site_page_options(options: Mapping[str, Any] | None) -> dict[str, Any]:
       source is still imported as the site's own page. Attaching the
       existing source to the site instead would let "delete the site and its
       pages" delete the user's own source, and a refresh re-import it.
+    - ``summary`` is dropped: a site's pages do not share one. Its ``tags``
+      stay, so every page (a later refresh's new ones too) carries them.
 
     Args:
         options: The stored or requested upload options (``url_upload_options``).
 
     Returns:
-        A copy with the two site rules applied.
+        A copy with the site rules applied.
     """
-    return {**dict(options or {}), "auto_confirm": True, "skip_duplicates": False}
+    kept = {key: value for key, value in dict(options or {}).items() if key != "summary"}
+    return {**kept, "auto_confirm": True, "skip_duplicates": False}
 
 
 def run_stale_after_seconds() -> int:
@@ -394,6 +406,66 @@ def begin_site_refresh(
     return back
 
 
+def retag_site(
+    storage: SiteAndTagStorage,
+    site_id: str,
+    database_name: str,
+    *,
+    tags: Sequence[str],
+    replace_tags: bool,
+) -> list[str]:
+    """Give an imported site, and every page it has, more tags (or, with ``replace_tags``, these).
+
+    The site's stored ``options["tags"]`` become their union with ``tags`` (or
+    ``tags`` alone), so a page a later refresh adds gets them too; each page
+    from :meth:`~SiteStorageProtocol.list_site_pages` gets the same change
+    through :func:`~chaoscypher_core.services.sources.tags.edit_source_tags`
+    (``add=tags``, or ``replace=tags``). One writer-locked transaction: a page
+    the change would put over the tag cap refuses the whole change, and so
+    does a live run of the site (it read the site's options when it started,
+    so the pages it still adds would miss the change).
+
+    Args:
+        storage: The site, source and tag storage.
+        site_id: The site.
+        database_name: Its database.
+        tags: The tags, checked by the tag rule.
+        replace_tags: Make ``tags`` the whole set instead of adding them.
+
+    Returns:
+        The site's tags after, sorted.
+
+    Raises:
+        NotFoundError: No such site in ``database_name``.
+        ConflictError: A run of the site is queued or under way (not stale).
+        TagRuleError: A tag breaks the rule, or a page (or the site) would
+            carry more than the cap; nothing is changed.
+    """
+    from chaoscypher_core.exceptions import NotFoundError
+    from chaoscypher_core.services.sources.tags import edit_source_tags, validate_tags
+
+    wanted = validate_tags(tags)
+    with storage.write_locked():
+        site = storage.get_site(site_id, database_name)
+        if site is None:
+            raise NotFoundError("Site", site_id)
+        # A live run read the site's options when it started (``site_page_options``):
+        # the pages it still adds would miss the change. Checked under the lock, so
+        # a run another process starts cannot slip in between.
+        refuse_while_running(site, "adding tags")
+        options = dict(site["options"] or {})
+        current = [] if replace_tags else list(options.get("tags") or [])
+        site_tags = sorted(validate_tags([*current, *wanted]))
+        for page in storage.list_site_pages(site_id, database_name):
+            if replace_tags:
+                edit_source_tags(storage, database_name, page["id"], replace=wanted)
+            else:
+                edit_source_tags(storage, database_name, page["id"], add=wanted)
+        storage.update_site(site_id, database_name, {"options": {**options, "tags": site_tags}})
+    logger.info("site_retagged", site_id=site_id, tag_count=len(site_tags), replaced=replace_tags)
+    return site_tags
+
+
 def leave_out_deleted_page(
     storage: SiteStorageProtocol, source: Mapping[str, Any], database_name: str
 ) -> None:
@@ -436,6 +508,7 @@ __all__ = [
     "name_pages",
     "page_key",
     "refuse_while_running",
+    "retag_site",
     "run_stale_after_seconds",
     "site_leaves_out",
     "site_page_key",

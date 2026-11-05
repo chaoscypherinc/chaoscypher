@@ -22,6 +22,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 import { ChaosCypherPalette, ChaosCypherBackground, ChaosCypherNeutrals } from '../theme/palette';
 import { ghostInputSx, ghostErrorAlertSx } from '../theme/ghostStyles';
 import { getApiErrorMessage } from '../utils/errors';
+import { safeNextPath } from '../utils/safeNextPath';
 
 // ── Constellation background ──────────────────────────────────────────────
 
@@ -185,13 +186,6 @@ function ConstellationBackground() {
 }
 
 // ── LoginPage ─────────────────────────────────────────────────────────────
-
-/** Only allow relative in-app paths as `next` — never open redirects. */
-function safeNextPath(raw: string | null): string {
-  if (!raw) return '/';
-  if (!raw.startsWith('/') || raw.startsWith('//')) return '/';
-  return raw;
-}
 
 export default function LoginPage() {
   const { login } = useAuth();

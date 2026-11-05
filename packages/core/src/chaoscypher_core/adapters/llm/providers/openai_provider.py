@@ -154,6 +154,11 @@ class OpenAIProvider(BaseLLMProvider):
         if timeout is not None:
             kwargs["timeout"] = timeout
 
+        # Retries inside one call; None keeps the library's default.
+        max_retries = self.config.get("client_max_retries")
+        if max_retries is not None:
+            kwargs["max_retries"] = max_retries
+
         logger.info(
             "openai_initialized", provider="openai", model=self.chat_model, base_url=self.base_url
         )

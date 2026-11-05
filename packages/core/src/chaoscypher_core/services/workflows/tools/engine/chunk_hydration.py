@@ -102,18 +102,16 @@ def assign_chunk_aliases(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return chunks
 
 
-def chunk_source_filenames(
+def _by_database_lookup(
     rows: Iterable[Mapping[str, Any]],
     lookup: Callable[[list[str], str], Mapping[str, str]] | None,
 ) -> dict[str, str]:
-    """Each source id the chunk ``rows`` name, mapped to its filename: one read per database.
+    """Each source id the chunk ``rows`` name, mapped to what ``lookup`` gives it: one read per database.
 
-    ``lookup`` is a repository's ``get_source_filenames_by_ids(ids, database_name)``, or None
-    when the repository has none (every name is then ``""``). A source id is read under the
-    first database a row names it with (a retrieval's rows share one), and a source the
-    lookup does not find is ``""``. The graph and node handlers read a ~160-column source row
-    (and its stage progress) per source for this filename: 36% of a retrieval sample run once
-    its edge listings were batched (2026-10-16).
+    ``lookup(ids, database_name)`` is a narrow by-ids read of the sources, or
+    None when the repository has none (every value is then ``""``). A source
+    id is read under the first database a row names it with (a retrieval's
+    rows share one), and a source the lookup does not find is ``""``.
     """
     database_of: dict[str, str] = {}
     for row in rows:
@@ -125,11 +123,39 @@ def chunk_source_filenames(
     by_database: dict[str, list[str]] = {}
     for source_id, database in database_of.items():
         by_database.setdefault(database, []).append(source_id)
-    names: dict[str, str] = {}
+    found_by_id: dict[str, str] = {}
     for database, source_ids in by_database.items():
         found = lookup(source_ids, database)
-        names.update({source_id: found.get(source_id, "") for source_id in source_ids})
-    return names
+        found_by_id.update({source_id: found.get(source_id, "") for source_id in source_ids})
+    return found_by_id
+
+
+def chunk_source_filenames(
+    rows: Iterable[Mapping[str, Any]],
+    lookup: Callable[[list[str], str], Mapping[str, str]] | None,
+) -> dict[str, str]:
+    """Each source id the chunk ``rows`` name, mapped to its filename: one read per database.
+
+    ``lookup`` is a repository's ``get_source_filenames_by_ids(ids, database_name)``, or None
+    when the repository has none (every name is then ``""``); see :func:`_by_database_lookup`.
+    The graph and node handlers read a ~160-column source row (and its stage progress) per
+    source for this filename: 36% of a retrieval sample run once its edge listings were
+    batched (2026-10-16).
+    """
+    return _by_database_lookup(rows, lookup)
+
+
+def chunk_source_titles(
+    rows: Iterable[Mapping[str, Any]],
+    lookup: Callable[[list[str], str], Mapping[str, str]] | None,
+) -> dict[str, str]:
+    """Each source id the chunk ``rows`` name, mapped to its title (else its filename).
+
+    ``lookup`` is a repository's ``get_source_titles_by_ids(ids, database_name)``, which
+    gives the title, or the filename for a source without one; None when the repository
+    has none (every title is then ``""``). One read per database (:func:`_by_database_lookup`).
+    """
+    return _by_database_lookup(rows, lookup)
 
 
 def clean_chunk_metadata(chunk_metadata: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -166,6 +192,7 @@ __all__: list[str] = [
     "UNTRUSTED_FENCE_OPEN",
     "assign_chunk_aliases",
     "chunk_source_filenames",
+    "chunk_source_titles",
     "clean_chunk_metadata",
     "format_chunk_content",
     "neutralize_untrusted_fence",

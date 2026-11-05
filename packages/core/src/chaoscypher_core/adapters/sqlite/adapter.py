@@ -32,7 +32,7 @@ Usage:
 """
 
 from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AbstractContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 
@@ -64,6 +64,7 @@ from chaoscypher_core.adapters.sqlite.mixins import (
     WorkflowsMixin,
 )
 from chaoscypher_core.adapters.sqlite.safe_session import SafeSession
+from chaoscypher_core.exceptions import InvalidStateError
 
 
 logger = structlog.get_logger(__name__)
@@ -344,6 +345,20 @@ class SqliteAdapter(
             raise
         finally:
             self.session._transaction_depth -= 1  # noqa: SLF001 — coordinated transaction depth with SafeSession
+
+    def write_locked(self) -> AbstractContextManager[None]:
+        """A ``transaction()`` that holds SQLite's writer lock from its first read.
+
+        For a read-then-write whose read must still hold when it writes (a tag
+        edit's cap check, say): ``BEGIN IMMEDIATE`` before the first statement,
+        so no other writer commits in between. The one implementation is
+        :meth:`SafeSession.write_locked`; the graph repository's opens it too.
+        """
+        self._ensure_connected()
+        if self.session is None:
+            msg = "write_locked called before connect()"
+            raise InvalidStateError(msg)
+        return self.session.write_locked()
 
     def _maybe_commit(self) -> None:
         """Commit the session, or flush if inside a ``transaction()`` context.

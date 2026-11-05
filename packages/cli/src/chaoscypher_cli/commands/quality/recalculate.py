@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_caught_error
 
 
 console = Console()
@@ -147,7 +148,7 @@ def recalculate(
             except Exception as e:
                 error_count += 1
                 errors.append({"source_id": source_id_str, "error": str(e)})
-                console.print(f"[red]Error processing {source_id_str}: {e}[/red]")
+                print_caught_error(e, label=f"Error processing {source_id_str}", console=console)
 
             progress.advance(task)
 

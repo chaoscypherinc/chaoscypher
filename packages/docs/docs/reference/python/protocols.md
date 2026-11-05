@@ -1107,7 +1107,7 @@ Returns:
 | `minimal` | `bool` |  |
 | `with_nodes` | `bool` |  |
 
-#### `list_edges_by_node(node_ids: Sequence[str], *, outgoing: bool, limit_per_node: int, include_disabled_sources: bool = False) -> dict[str, list[Edge]]`
+#### `list_edges_by_node(node_ids: Sequence[str], *, outgoing: bool, limit_per_node: int, include_disabled_sources: bool = False, with_members: bool = False) -> dict[str, list[Edge]]`
 
 Each node's edges out of it (`outgoing`) or into it, as `list_edges` lists them.
 
@@ -1116,7 +1116,8 @@ with `limit=limit_per_node` and the id as `source_node_id` (as
 `target_node_id` when not `outgoing`), in its order. Every id is a
 key; a node with no edges maps to `[]`. An adapter answers in as few
 queries as it can: the graph context reads every seed's edges in both
-directions.
+directions. `with_members` fills each edge's `member_source_ids` (a
+tag scope's filter reads them); without it they may stay `[]`.
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1124,6 +1125,7 @@ directions.
 | `outgoing` | `bool` |  |
 | `limit_per_node` | `int` |  |
 | `include_disabled_sources` | `bool` |  |
+| `with_members` | `bool` |  |
 
 #### `list_nodes(template_id: str | None = None, source_ids: list[str] | None = None, skip: int = 0, limit: int = 100, include_disabled_sources: bool = False, minimal: bool = False, include_embedding: bool = True) -> list[Node]`
 
@@ -1939,7 +1941,7 @@ Search methods:
 
 **Methods:**
 
-#### `count_in_scope(item_type: str, source_ids: Iterable[str] | None = None) -> int`
+#### `count_in_scope(item_type: str, source_ids: Iterable[str] | None = None, tags: Sequence[str] = (), tag_match: TagMatch = TagMatch.ANY) -> int`
 
 How many items of `item_type` (`"chunk"`, `"node"`) a source scope holds that may answer.
 
@@ -1948,6 +1950,11 @@ A switched-off source's items are never counted (`source_visible`).
 Args:
     item_type: `"chunk"` or `"node"`.
     source_ids: The scope; None counts every item.
+    tags: A tag scope (normalised names): only the sources carrying
+        them, intersected with `source_ids`, applied in the same
+        place; a tag set no document carries matches nothing. Empty:
+        no tag scope.
+    tag_match: `ANY` or `ALL` of `tags`.
 
 Returns:
     The number of items a search in that scope could return.
@@ -1956,6 +1963,8 @@ Returns:
 |---|---|---|
 | `item_type` | `str` |  |
 | `source_ids` | `Iterable[str] \| None` |  |
+| `tags` | `Sequence[str]` |  |
+| `tag_match` | `TagMatch` |  |
 
 #### `delete_node(node_id: str, *, session: TransactionalSession | None = None) -> None`
 
@@ -2038,7 +2047,7 @@ Get statistics about the search indexes.
 Returns:
     Dict with index statistics
 
-#### `hybrid_search(query_text: str, k: int = 10, embedding_provider_callback: Callable[[str], Any] | None = None, min_similarity: float = 0.55, item_type: str | None = None, source_ids: Iterable[str] | None = None) -> SearchHits`
+#### `hybrid_search(query_text: str, k: int = 10, embedding_provider_callback: Callable[[str], Any] | None = None, min_similarity: float = 0.55, item_type: str | None = None, source_ids: Iterable[str] | None = None, tags: Sequence[str] = (), tag_match: TagMatch = TagMatch.ANY) -> SearchHits`
 
 Perform hybrid search: keyword and vector rankings fused by reciprocal rank.
 
@@ -2054,6 +2063,11 @@ Args:
     item_type: "node", "chunk", or None for both.
     source_ids: A source scope applied inside both arms, before their cut;
         None for every source.
+    tags: A tag scope (normalised names): only the sources carrying
+        them, intersected with `source_ids`, applied in the same
+        place; a tag set no document carries matches nothing. Empty:
+        no tag scope.
+    tag_match: `ANY` or `ALL` of `tags`.
 
 Returns:
     The (node_id, score) hits, best first, with how many candidates
@@ -2067,6 +2081,8 @@ Returns:
 | `min_similarity` | `float` |  |
 | `item_type` | `str \| None` |  |
 | `source_ids` | `Iterable[str] \| None` |  |
+| `tags` | `Sequence[str]` |  |
+| `tag_match` | `TagMatch` |  |
 
 #### `index_embeddings_batch(embeddings: list[tuple[str, list[float]]], item_type: str = 'node', text_lookup: dict[str, str] | None = None, *, session: TransactionalSession | None = None) -> int`
 
@@ -2159,7 +2175,7 @@ Args:
 | `embedding` | `list[float]` |  |
 | `session` | `TransactionalSession \| None` |  |
 
-#### `keyword_search(query: str, limit: int = 10, item_type: str | None = 'node', source_ids: Iterable[str] | None = None) -> list[tuple[str, float]]`
+#### `keyword_search(query: str, limit: int = 10, item_type: str | None = 'node', source_ids: Iterable[str] | None = None, tags: Sequence[str] = (), tag_match: TagMatch = TagMatch.ANY, attested_only: bool = False) -> list[tuple[str, float]]`
 
 Perform full-text keyword search (any significant word or quoted phrase matches).
 
@@ -2169,6 +2185,15 @@ Args:
     item_type: "node" (default), "chunk", or None for both.
     source_ids: A source scope applied before the `limit`; None for every source.
         A switched-off source's items never match (`source_visible`).
+    tags: A tag scope (normalised names): only the sources carrying
+        them, intersected with `source_ids`, applied in the same
+        place; a tag set no document carries matches nothing. Empty:
+        no tag scope.
+    tag_match: `ANY` or `ALL` of `tags`.
+    attested_only: A node is in `source_ids` only when one of them
+        attests it, never for being person-made or unattested: a
+        source scope that came from document tags (a tag scope is
+        always read so). Chunks are unaffected.
 
 Returns:
     List of (node_id, score) tuples, sorted by relevance descending.
@@ -2179,6 +2204,9 @@ Returns:
 | `limit` | `int` |  |
 | `item_type` | `str \| None` |  |
 | `source_ids` | `Iterable[str] \| None` |  |
+| `tags` | `Sequence[str]` |  |
+| `tag_match` | `TagMatch` |  |
+| `attested_only` | `bool` |  |
 
 #### `rebuild_node_fulltext(nodes: Iterable[Node | Mapping[str, Any]] | None = None, *, session: TransactionalSession | None = None) -> int`
 
@@ -2274,7 +2302,7 @@ Args:
 | `text` | `str` |  |
 | `item_type` | `str` |  |
 
-#### `semantic_search(query_text: str, k: int = 10, embedding_provider_callback: Callable[[str], Any] | None = None, item_type: str | None = None) -> list[tuple[str, float]]`
+#### `semantic_search(query_text: str, k: int = 10, embedding_provider_callback: Callable[[str], Any] | None = None, item_type: str | None = None, tags: Sequence[str] = (), tag_match: TagMatch = TagMatch.ANY) -> list[tuple[str, float]]`
 
 Perform semantic search using query text.
 
@@ -2288,6 +2316,10 @@ Args:
         Example: async def(text: str) -> \{"embedding": [...]\}
     item_type: Optional filter ("node", "chunk", "template"); None
         searches nodes and chunks.
+    tags: A tag scope (normalised names), applied before the `k`
+        cut; a tag set no document carries matches nothing. Empty: no
+        tag scope.
+    tag_match: `ANY` or `ALL` of `tags`.
 
 Returns:
     List of (node_id, similarity_score) tuples
@@ -2298,6 +2330,20 @@ Returns:
 | `k` | `int` |  |
 | `embedding_provider_callback` | `Callable[[str], Any] \| None` |  |
 | `item_type` | `str \| None` |  |
+| `tags` | `Sequence[str]` |  |
+| `tag_match` | `TagMatch` |  |
+
+#### `tagged_source_ids(tags: Sequence[str], match: TagMatch) -> list[str]`
+
+The ids of the sources carrying `tags` (`match`: ANY or ALL of them).
+
+The tag scope as a source list, for a caller that scopes by source
+(GraphRAG). Empty `tags` names no source.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `tags` | `Sequence[str]` |  |
+| `match` | `TagMatch` |  |
 
 #### `template_semantic_search(query_embedding: list[float], k: int = 10, min_similarity: float = 0.5) -> list[tuple[str, float]]`
 
@@ -2317,7 +2363,7 @@ Returns:
 | `k` | `int` |  |
 | `min_similarity` | `float` |  |
 
-#### `vector_search(query_embedding: list[float], k: int = 10, item_type: str | None = None, source_ids: Iterable[str] | None = None) -> list[tuple[str, float]]`
+#### `vector_search(query_embedding: list[float], k: int = 10, item_type: str | None = None, source_ids: Iterable[str] | None = None, tags: Sequence[str] = (), tag_match: TagMatch = TagMatch.ANY, attested_only: bool = False) -> list[tuple[str, float]]`
 
 Find k nearest neighbors to query embedding.
 
@@ -2330,6 +2376,15 @@ Args:
     source_ids: A source scope applied before the `k` cut (chunks
         and nodes; templates come from no source); None for every source.
         A switched-off source's items never match (`source_visible`).
+    tags: A tag scope (normalised names): only the sources carrying
+        them, intersected with `source_ids`, applied in the same
+        place; a tag set no document carries matches nothing. Empty:
+        no tag scope.
+    tag_match: `ANY` or `ALL` of `tags`.
+    attested_only: A node is in `source_ids` only when one of them
+        attests it, never for being person-made or unattested: a
+        source scope that came from document tags (a tag scope is
+        always read so). Chunks are unaffected.
 
 Returns:
     List of (node_id, similarity_score) tuples,
@@ -2349,6 +2404,9 @@ Notes:
 | `k` | `int` |  |
 | `item_type` | `str \| None` |  |
 | `source_ids` | `Iterable[str] \| None` |  |
+| `tags` | `Sequence[str]` |  |
+| `tag_match` | `TagMatch` |  |
+| `attested_only` | `bool` |  |
 
 **Attributes:**
 
@@ -2394,14 +2452,19 @@ a test pins the two alike.
 |---|---|---|
 | `source_id` | `str \| None` |  |
 
-### `item_in_source_scope(item: object, scope: Container[str]) -> bool`
+### `item_in_source_scope(item: object, scope: Container[str], *, attested_only: bool = False) -> bool`
 
 Whether a graph row is in a source scope: a person made it, it names no source, or a source in the scope attests it.
+
+With `attested_only` (a scope that came from document tags) only a
+source in the scope attesting it counts: a person-made or unattested row
+is out (owner decision 2026-11-05).
 
 | Parameter | Type | Description |
 |---|---|---|
 | `item` | `object` |  |
 | `scope` | `Container[str]` |  |
+| `attested_only` | `bool` |  |
 
 ### `item_visible(item: object, disabled: Container[str]) -> bool`
 
@@ -3279,6 +3342,28 @@ Args:
 | `column` | `str` |  |
 | `n` | `int` |  |
 
+#### `list_documents(database_name: str, *, tags: Sequence[str] = (), match: TagMatch = TagMatch.ANY, limit: int, offset: int) -> tuple[list[DocumentListing], int]`
+
+List the documents (every source but memories), newest first, then by id.
+
+Args:
+    database_name: Database to list.
+    tags: Normalised tag names; empty lists every document.
+    match: `ANY` or `ALL` of `tags`.
+    limit: Page size (applied in SQL).
+    offset: Rows to skip (applied in SQL).
+
+Returns:
+    The page and the total number of matching documents.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `database_name` | `str` |  |
+| `tags` | `Sequence[str]` |  |
+| `match` | `TagMatch` |  |
+| `limit` | `int` |  |
+| `offset` | `int` |  |
+
 #### `list_enabled_source_ids() -> set[str]`
 
 Return the ids of all enabled sources in the active database.
@@ -3287,7 +3372,7 @@ Single-column projection for hot per-request filters (the search
 engine calls this on every keyword/semantic/hybrid search). Must
 not hydrate stage progress or any wide columns.
 
-#### `list_sources(page: int = 1, page_size: int = 50, source_type: str | None = None, status: str | None = None, enabled: str | None = None, search: str | None = None, tag_id: str | None = None, site_id: str | None = None, in_site: bool | None = None) -> tuple[list[dict[str, Any]], int]`
+#### `list_sources(page: int = 1, page_size: int = 50, source_type: str | None = None, status: str | None = None, enabled: str | None = None, search: str | None = None, tag_id: str | None = None, site_id: str | None = None, in_site: bool | None = None, tags: Sequence[str] = (), match: TagMatch = TagMatch.ANY) -> tuple[list[dict[str, Any]], int]`
 
 List sources with filtering and pagination.
 
@@ -3302,6 +3387,9 @@ Args:
     site_id: Only the pages of this imported site
     in_site: True: only pages of imported sites; False: only sources
         outside any site
+    tags: Normalised tag names; when given, only sources carrying
+        them (filtered in SQL, before the page is cut)
+    match: `ANY` or `ALL` of `tags`
 
 Returns:
     Tuple of (sources list, total count).  Each source dict
@@ -3320,6 +3408,8 @@ Returns:
 | `tag_id` | `str \| None` |  |
 | `site_id` | `str \| None` |  |
 | `in_site` | `bool \| None` |  |
+| `tags` | `Sequence[str]` |  |
+| `match` | `TagMatch` |  |
 
 #### `settle_imported_memory_links(source_ids: list[str], database_name: str) -> int`
 
@@ -3333,6 +3423,23 @@ A memory that attests a node is `linked`, one that attests none
 |---|---|---|
 | `source_ids` | `list[str]` |  |
 | `database_name` | `str` |  |
+
+#### `source_ids_for_summary(database_name: str, *, missing_only: bool) -> list[str]`
+
+The ids of the documents a summary run visits, oldest first.
+
+Args:
+    database_name: Database to read.
+    missing_only: Only the documents with no summary yet.
+
+Returns:
+    The ids of the sources with chunks (`chunk_count > 0`) that are
+    not memories, oldest first.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `database_name` | `str` |  |
+| `missing_only` | `bool` |  |
 
 #### `start_commit(source_id: str) -> None`
 

@@ -25,6 +25,7 @@ from chaoscypher_core.exceptions import NotFoundError, ValidationError
 from chaoscypher_core.database.migrations.runner import (
     current_revision,
     ensure_stamped,
+    is_first_build,
     pending_revisions,
     upgrade_to_head,
 )
@@ -39,7 +40,11 @@ from chaoscypher_core.database.migrations.state import (
     record_successful_upgrade,
     set_upgrade_state,
 )
-from chaoscypher_core.database.migrations.tiers import MigrationTier, read_migration_info
+from chaoscypher_core.database.migrations.tiers import (
+    MigrationTier,
+    hold_lines,
+    read_migration_info,
+)
 
 
 logger = structlog.get_logger(__name__)
@@ -51,6 +56,13 @@ class PendingMigration(BaseModel):
     revision: str = Field(description="Alembic revision id.")
     tier: MigrationTier = Field(description="Risk classification.")
     description: str = Field(description="Plain-language summary for the UI.")
+    hold: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The changes this migration would make to your data; non-empty means it "
+            "waits for confirmation."
+        ),
+    )
 
 
 class PendingMigrationsResponse(BaseModel):
@@ -77,6 +89,13 @@ class PendingMigrationsResponse(BaseModel):
     data_changing: bool = Field(
         default=False,
         description="True if a silently auto-applied migration changed data.",
+    )
+    first_build: bool = Field(
+        default=False,
+        description=(
+            "True when the database has no schema yet: applying builds it to head, "
+            "with no backup and nothing to confirm."
+        ),
     )
 
 
@@ -113,6 +132,7 @@ class UpgradeService:
         state = get_upgrade_state(self.db_path)
         revisions = pending_revisions(self.db_path)
         infos = [read_migration_info(r) for r in revisions]
+        first_build = bool(revisions) and is_first_build(self.db_path)
         return PendingMigrationsResponse(
             ready=state.ready,
             blocked_on=[
@@ -120,6 +140,7 @@ class UpgradeService:
                     revision=info.revision,
                     tier=info.tier,
                     description=info.description,
+                    hold=[] if first_build else hold_lines(info, self.db_path),
                 )
                 for info in infos
             ],
@@ -127,6 +148,7 @@ class UpgradeService:
             last_backup=state.last_backup,
             last_applied=state.last_applied,
             data_changing=state.data_changing,
+            first_build=first_build,
         )
 
     def apply(self) -> ApplyResponse:

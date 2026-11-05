@@ -533,6 +533,8 @@ class NodeOperationsMixin(MembershipOperationsMixin):
         limit: int = 10000,
         include_disabled_sources: bool = False,
         source_ids: list[str] | None = None,
+        attested_only: bool = False,
+        template_id: str | None = None,
     ) -> list[SimpleNamespace]:
         """List nodes with minimal fields for analytics (fast).
 
@@ -549,6 +551,11 @@ class NodeOperationsMixin(MembershipOperationsMixin):
                 the WHERE runs BEFORE ``limit`` — a Python post-filter on an
                 already-limited slice silently drops in-scope rows once the
                 graph exceeds the cap.
+            template_id: When set, restricts to nodes of this template (in SQL,
+                before ``limit``, like ``source_ids``).
+            attested_only: With ``source_ids``, only what a listed source attests
+                (a person-made or source-less node is out): a source scope
+                that came from document tags (owner decision 2026-11-05).
 
         Returns:
             List of SimpleNamespace objects with minimal node data (id, label,
@@ -570,7 +577,12 @@ class NodeOperationsMixin(MembershipOperationsMixin):
             statement = statement.where(_NODE_VISIBLE)
 
         if source_ids is not None:
-            statement = statement.where(in_source_scope(GraphNode, source_ids))
+            statement = statement.where(
+                in_source_scope(GraphNode, source_ids, attested_only=attested_only)
+            )
+
+        if template_id is not None:
+            statement = statement.where(GraphNode.template_id == template_id)
 
         # Ordered by id like list_nodes: a LIMIT with no ORDER BY hands the query
         # planner the choice of which rows to keep (audit wave 4).

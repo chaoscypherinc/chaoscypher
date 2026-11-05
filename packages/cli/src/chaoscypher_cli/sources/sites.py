@@ -17,7 +17,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from chaoscypher_core.exceptions import ValidationError
+from chaoscypher_cli.sources.tag_options import tag_list
+from chaoscypher_cli.utils.console import print_caught_error
+from chaoscypher_core.exceptions import ChaosCypherException, ValidationError
 from chaoscypher_core.models import SourceStatus
 from chaoscypher_core.operations.sources.site_in_process import (
     find_site,
@@ -28,6 +30,7 @@ from chaoscypher_core.operations.sources.site_runs import (
     create_site_row,
     find_site_by_scope,
     name_pages,
+    retag_site,
     site_run_live,
 )
 from chaoscypher_core.operations.sources.url_import_options import url_upload_options
@@ -71,6 +74,7 @@ class SitePageOptions:
     enable_vision: bool = True
     content_filtering: bool = True
     skip_duplicates: bool = False
+    tags: tuple[str, ...] = ()
 
     @classmethod
     def stored(cls, options: Mapping[str, Any] | None) -> SitePageOptions:
@@ -89,6 +93,7 @@ class SitePageOptions:
             enable_normalization=stored.get("enable_normalization"),
             enable_vision=bool(stored.get("enable_vision", True)),
             content_filtering=bool(stored.get("content_filtering", True)),
+            tags=tuple(stored.get("tags") or ()),
         )
 
     def upload_options(self) -> dict[str, Any]:
@@ -97,7 +102,8 @@ class SitePageOptions:
         A site's pages are never parked one by one for domain confirmation:
         each extracts with the packs detected for it (or ``--pack``'s); and
         ``--skip-duplicates`` does not apply to them (Core's site rules,
-        ``site_page_options``).
+        ``site_page_options``). The ``tags`` are stored with the site, so a
+        page a later refresh finds gets them too; a site has no summary.
         """
         return url_upload_options(
             extract_entities=not (self.skip_extract or self.index_only),
@@ -109,6 +115,7 @@ class SitePageOptions:
             content_filtering=self.content_filtering,
             filtering_mode=self.filtering_mode,
             auto_confirm=True,
+            tags=self.tags,
         )
 
     def pipeline_kwargs(self) -> dict[str, Any]:
@@ -230,6 +237,8 @@ def add_site(
         url,
         page_size=ctx.settings.pagination.default_page_size,
     )
+    if existing is not None and options.tags:
+        return _retag(ctx, console, existing, options.tags)
     if existing is not None:
         console.print(
             f"[yellow]{existing['title']} ({existing['url']}) is already imported.[/yellow]"
@@ -243,7 +252,7 @@ def add_site(
     try:
         manifest = preview(service, url)
     except ValidationError as exc:
-        console.print(f"[red]Error:[/red] {exc.message}")
+        print_caught_error(exc, console=console)
         return 1
     if not manifest.pages:
         console.print(f"[yellow]No pages found at {manifest.url}.[/yellow]")
@@ -260,6 +269,36 @@ def add_site(
         options=options.upload_options(),
     )
     return run_site(service, console, site, options, refresh=False)
+
+
+def _retag(ctx: CLIContext, console: Console, site: SourceSiteRecord, tags: tuple[str, ...]) -> int:
+    """``source add URL --site --tag T`` on an imported site: add the tags to it and every page.
+
+    Core's ``retag_site`` stores them on the site (a refresh's new pages get
+    them) and adds them to each page, in one writer-locked step; it refuses
+    while a run of the site is live, and refuses a page the tags would put
+    over the cap, changing nothing.
+
+    Returns:
+        The exit code: 0 once retagged, 1 when refused.
+    """
+    try:
+        after = retag_site(
+            ctx.storage_adapter, site["id"], ctx.database_name, tags=tags, replace_tags=False
+        )
+    except ChaosCypherException as exc:
+        print_caught_error(exc, console=console)
+        return 1
+    console.print(
+        f"{site['title']} ({site['url']}) is already imported; "
+        f"its pages now carry the tags {tag_list(after)}.",
+        soft_wrap=True,
+        markup=False,
+    )
+    console.print(
+        f"Check it for updates: chaoscypher source site refresh {site['id']}", soft_wrap=True
+    )
+    return 0
 
 
 def run_site(

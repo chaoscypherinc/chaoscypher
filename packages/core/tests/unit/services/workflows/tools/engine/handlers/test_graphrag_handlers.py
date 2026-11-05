@@ -147,6 +147,7 @@ def indexing_repo() -> MagicMock:
     repo = MagicMock()
     repo.get_chunks_by_ids_batch.return_value = []
     repo.get_source_filenames_by_ids.return_value = {}
+    repo.get_source_titles_by_ids.return_value = {}
     return repo
 
 

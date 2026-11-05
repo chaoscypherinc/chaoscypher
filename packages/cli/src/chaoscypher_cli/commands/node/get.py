@@ -13,7 +13,7 @@ from rich.table import Table
 
 from chaoscypher_cli.commands.node._edges import list_connected_edges
 from chaoscypher_cli.context import get_context
-from chaoscypher_cli.utils.console import print_json
+from chaoscypher_cli.utils.console import print_caught_error, print_json
 from chaoscypher_core.app_config import get_settings
 
 
@@ -156,5 +156,5 @@ def get(node_id: str, output_format: str, include_links: bool, database: str) ->
                 console.print("\n[dim]No connected links found.[/dim]")
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)

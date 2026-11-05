@@ -31,10 +31,12 @@ from typing import Any
 import click
 import structlog
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Prompt
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_caught_error
 from chaoscypher_cli.utils.event_loops import cancel_pending_tasks, run_to_completion
 
 
@@ -157,7 +159,7 @@ def chat(
     except KeyboardInterrupt:
         console.print("\n[dim]Chat ended.[/dim]")
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)
 
 
@@ -209,8 +211,10 @@ def _resolve_source_scope(
 def _resolve_tag_ids(ctx: Any, tags: tuple[str, ...]) -> list[str]:
     """Resolve --tag values (names, or raw IDs) to tag IDs.
 
-    Exits with an error listing the available tags when a value matches
-    neither a tag name (case-insensitive) nor a tag ID.
+    Names go through the tag rule's lookup (``find_tags``), so ``Research``
+    finds ``research``. A value that names no tag, or that the rule refuses,
+    is tried as a raw tag ID. Exits with an error listing the available tags
+    when a value is neither.
 
     Args:
         ctx: CLI context
@@ -219,29 +223,31 @@ def _resolve_tag_ids(ctx: Any, tags: tuple[str, ...]) -> list[str]:
     Returns:
         List of tag IDs
     """
-    available = ctx.storage_adapter.list_tags(ctx.database_name)
-    by_name = {tag["name"].lower(): tag["id"] for tag in available}
-    known_ids = {tag["id"] for tag in available}
+    from chaoscypher_core.services.sources.tags import find_tags
 
-    resolved: list[str] = []
+    storage = ctx.storage_adapter
+    found, not_named = find_tags(storage, ctx.database_name, list(tags))
+    resolved = [tag["id"] for tag in found]
     unknown: list[str] = []
-    for value in tags:
-        tag_id = by_name.get(value.lower())
-        if tag_id is None and value in known_ids:
-            tag_id = value
-        if tag_id is None:
-            unknown.append(value)
+    for value in not_named:
+        if storage.get_tag(value, ctx.database_name) is not None:
+            resolved.append(value)
         else:
-            resolved.append(tag_id)
+            unknown.append(value)
 
     if unknown:
-        console.print(f"[red]Error:[/red] Unknown tag(s): {', '.join(unknown)}")
-        if by_name:
-            console.print(f"[dim]Available tags: {', '.join(sorted(by_name))}[/dim]")
-        else:
-            console.print("[dim]No tags exist in this database.[/dim]")
+        console.print(f"[red]Error:[/red] Unknown tag(s): {escape(', '.join(unknown))}")
+        console.print(f"[dim]{_available_tags_hint(ctx)}[/dim]")
         sys.exit(1)
     return resolved
+
+
+def _available_tags_hint(ctx: Any) -> str:
+    """The line listing the database's tags, shown after an unknown ``--tag``."""
+    names = sorted(tag["name"] for tag in ctx.storage_adapter.list_tags(ctx.database_name))
+    if not names:
+        return "No tags exist in this database."
+    return f"Available tags: {', '.join(names)}"
 
 
 def _get_source_names(ctx: Any, source_ids: list[str]) -> list[str]:
@@ -898,5 +904,5 @@ def _interactive_chat(
             console.print("\n[dim]Chat ended.[/dim]")
             break
         except Exception as e:
-            console.print(f"[red]Error:[/red] {e}")
+            print_caught_error(e, console=console)
             continue

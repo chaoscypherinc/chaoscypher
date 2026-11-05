@@ -686,7 +686,7 @@ def _reverse_scores(original: Any) -> Any:
         (
             _HANDLERS,
             "GraphRAGToolHandlers._add_keyword_seeds",
-            lambda f: lambda self, query, seeds, limit, source_ids=None: seeds,
+            lambda f: lambda self, query, seeds, limit, source_ids=None, **_: seeds,
         ),
         # a name of titles alone matching as a phrase (the rule before wave 3)
         (

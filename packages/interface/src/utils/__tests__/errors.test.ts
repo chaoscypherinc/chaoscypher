@@ -82,4 +82,31 @@ describe('getApiErrorMessage (envelope precedence)', () => {
       'Template cannot be deleted because it is in use',
     );
   });
+
+  it("shows a 422's first field message over the generic top message", () => {
+    const rule = 'tag "Work Docs" is not allowed: use a-z, 0-9, \':\', \'_\' or \'-\', starting with a letter or digit, at most 64 characters';
+    expect(
+      getApiErrorMessage({
+        response: {
+          status: 422,
+          data: {
+            error: 'VALIDATION_FAILED',
+            message: 'Request body failed validation',
+            details: { errors: [{ loc: ['body', 'name'], msg: rule }] },
+          },
+        },
+      }),
+    ).toBe(rule);
+  });
+
+  it('keeps the top message when a 422 carries no field message', () => {
+    expect(
+      getApiErrorMessage({
+        response: {
+          status: 422,
+          data: { error: 'VALIDATION_FAILED', message: 'Request body failed validation', details: { errors: [] } },
+        },
+      }),
+    ).toBe('Request body failed validation');
+  });
 });

@@ -49,3 +49,11 @@ class TransactionalAdapterProtocol(Protocol):
     def transaction(self) -> AbstractContextManager[None]:
         """Context manager that commits on clean exit, rolls back on exception."""
         ...
+
+    def write_locked(self) -> AbstractContextManager[None]:
+        """A ``transaction()`` holding the store's writer lock from its first read.
+
+        For a read-then-write whose read must still hold when it writes: no
+        other writer commits between the two.
+        """
+        ...

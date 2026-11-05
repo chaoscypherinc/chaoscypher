@@ -247,6 +247,19 @@ def schema_start(db_path: Path) -> SchemaStart:
     return SchemaStart.UNFINISHED
 
 
+FIRST_BUILD_STARTS = frozenset({SchemaStart.NEW, SchemaStart.UNFINISHED})
+"""Starts with no schema to upgrade: the database is built to head, not upgraded."""
+
+
+def is_first_build(db_path: Path) -> bool:
+    """True when the database at ``db_path`` has no schema yet: applying builds it, quietly.
+
+    Such a database holds no data, so it takes no backup, records no upgrade, and has
+    nothing for a migration's preview to hold (``build_if_new``, ``hold_preview``).
+    """
+    return schema_start(db_path) in FIRST_BUILD_STARTS
+
+
 def drop_unfinished_schema(db_path: Path) -> bool:
     """Drop the migrations' tables of an :attr:`SchemaStart.UNFINISHED` database.
 
@@ -384,12 +397,14 @@ def ensure_stamped(db_path: Path) -> None:
 
 
 __all__ = [
+    "FIRST_BUILD_STARTS",
     "SchemaStart",
     "current_revision",
     "downgrade_to",
     "drop_unfinished_schema",
     "ensure_stamped",
     "head_revision",
+    "is_first_build",
     "pending_revisions",
     "schema_start",
     "upgrade_to",

@@ -5,6 +5,13 @@
 
 Provides SQLite database engine creation and management.
 
+Engines are cached per database path *and file*: each cached engine remembers
+the identity (device and inode) of the file its first connection opened, and a
+path whose file was since deleted or replaced gets a fresh engine. Without
+that, the pooled connections of the cached engine kept writing into the old,
+unlinked file while the file on disk stayed empty (a clean ``compose build``
+deletes the database folder the CLI's upgrade gate had just opened).
+
 NOTE: This is the engine version (framework-agnostic).
 For backend-specific initialization and migrations, see backend/shared/database/init.py
 """
@@ -30,6 +37,9 @@ logger = structlog.get_logger(__name__)
 
 # Engine cache (one database path → one engine)
 _engines: dict[str, Engine] = {}
+# Resolved path → ``(st_dev, st_ino)`` of the file the cached engine connected to.
+# Recorded on the engine's first connection; guarded by ``_engines_lock``.
+_identities: dict[str, tuple[int, int]] = {}
 _engines_lock = threading.Lock()
 
 # Mirror ``DatabaseRepository.create_database``'s unicode-aware name rule exactly
@@ -105,8 +115,12 @@ def get_engine(
 ) -> Engine:
     """Get or create SQLAlchemy engine for the specified database path.
 
-    Engines are cached per database path for connection pooling.
-    Settings parameters are only used on first call for a given path.
+    Engines are cached per database path *and file* for connection pooling.
+    Settings parameters are only used on first call for a given path. A cached
+    engine whose file was deleted or replaced since it first connected (a
+    different device/inode, or no file at all) is disposed and a fresh engine
+    is created, so writes never land in a file that is no longer on disk. An
+    engine that never connected has no recorded file and is kept.
 
     Args:
         db_path: Path to SQLite database file
@@ -133,6 +147,7 @@ def get_engine(
     db_path_str = str(db_path)
 
     with _engines_lock:
+        stale = _pop_engine_if_file_changed(db_path_str)
         if db_path_str not in _engines:
             # Ensure parent directory exists
             db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -188,11 +203,83 @@ def get_engine(
                     _optimize_on_open(cursor)
                 finally:
                     cursor.close()
+                _record_file_identity(db_path_str, engine)
 
             _engines[db_path_str] = engine
             logger.info("database_engine_created", db_path=db_path_str, wal_mode=True)
 
-        return _engines[db_path_str]
+        cached = _engines[db_path_str]
+    # Disposed outside the lock, as ``evict_engine`` does: a slow pool teardown
+    # must not hold up every other caller of the cache.
+    if stale is not None:
+        _dispose_quietly(stale, db_path_str)
+    return cached
+
+
+# ``_file_identity`` result when the file's identity cannot be read (an unreadable
+# folder): not known to have changed, so the cached engine is kept.
+_UNKNOWN_IDENTITY = "unknown"
+
+
+def _file_identity(db_path_str: str) -> tuple[int, int] | None | str:
+    """``(st_dev, st_ino)`` of the file at the path, None when there is none.
+
+    ``_UNKNOWN_IDENTITY`` when the stat fails for any other reason (a permission
+    error): that is logged at debug with its errno and never read as "changed".
+    """
+    try:
+        stat = Path(db_path_str).stat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        logger.debug("database_engine_identity_unknown", db_path=db_path_str, errno=exc.errno)
+        return _UNKNOWN_IDENTITY
+    return (stat.st_dev, stat.st_ino)
+
+
+def _record_file_identity(db_path_str: str, engine: Engine) -> None:
+    """Remember which file the cached engine for this path opened (first connection only).
+
+    Only the engine the cache currently holds for the path records: a connection
+    opened late by an engine already replaced must not vouch for the new file.
+    """
+    identity = _file_identity(db_path_str)
+    if not isinstance(identity, tuple):
+        return
+    with _engines_lock:
+        if _engines.get(db_path_str) is engine:
+            _identities.setdefault(db_path_str, identity)
+
+
+def _pop_engine_if_file_changed(db_path_str: str) -> Engine | None:
+    """Uncache the engine whose file was deleted or replaced; the caller disposes it.
+
+    Caller holds the lock. An engine with no recorded identity never connected,
+    so it holds no handle on any file and is kept; so is one whose file's
+    identity cannot be read right now.
+    """
+    recorded = _identities.get(db_path_str)
+    if recorded is None or db_path_str not in _engines:
+        return None
+    current = _file_identity(db_path_str)
+    if current in (recorded, _UNKNOWN_IDENTITY):
+        return None
+    engine = _engines.pop(db_path_str)
+    _identities.pop(db_path_str, None)
+    logger.info(
+        "database_engine_file_changed",
+        db_path=db_path_str,
+        reason="missing" if current is None else "replaced",
+    )
+    return engine
+
+
+def _dispose_quietly(engine: Engine, db_path_str: str) -> None:
+    """Dispose an engine already uncached: a failure must not stop the caller."""
+    try:
+        engine.dispose()
+    except Exception:
+        logger.exception("database_engine_dispose_failed", db_path=db_path_str)
 
 
 def _optimize_on_open(cursor: Any) -> None:
@@ -223,9 +310,36 @@ def evict_engine(db_path: Path) -> None:
     db_path_str = str(Path(db_path).resolve())
     with _engines_lock:
         engine = _engines.pop(db_path_str, None)
+        _identities.pop(db_path_str, None)
     if engine is not None:
         engine.dispose()
         logger.info("database_engine_evicted", db_path=db_path_str)
+
+
+def evict_engines_under(directory: Path) -> int:
+    """Dispose and uncache every engine whose database file lies inside ``directory``.
+
+    Called before a database folder is deleted (``remove_database_dir``), so no
+    pooled connection is left open on a file that is about to go: on Windows an
+    open file cannot be deleted, and elsewhere its handles would linger on the
+    deleted inode. Engines are popped under the lock and disposed after it.
+
+    Returns:
+        How many engines were evicted.
+    """
+    root = Path(directory).resolve()
+    with _engines_lock:
+        doomed = [
+            (db_path_str, _engines.pop(db_path_str))
+            for db_path_str in list(_engines)
+            if Path(db_path_str).is_relative_to(root)
+        ]
+        for db_path_str, _engine in doomed:
+            _identities.pop(db_path_str, None)
+    for db_path_str, engine in doomed:
+        _dispose_quietly(engine, db_path_str)
+        logger.info("database_engine_evicted", db_path=db_path_str)
+    return len(doomed)
 
 
 def dispose_all_engines() -> None:
@@ -246,6 +360,7 @@ def dispose_all_engines() -> None:
             except Exception:
                 logger.exception("database_engine_dispose_failed", db_path=db_path_str)
         _engines.clear()
+        _identities.clear()
 
 
 def initialize_database(

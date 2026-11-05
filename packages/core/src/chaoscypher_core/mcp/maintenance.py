@@ -32,7 +32,11 @@ from chaoscypher_core.database.migrations.state import (
     describe_apply_failure,
     get_upgrade_state,
 )
-from chaoscypher_core.database.migrations.tiers import MigrationTier, read_migration_info
+from chaoscypher_core.database.migrations.tiers import (
+    MigrationTier,
+    hold_lines,
+    read_migration_info,
+)
 from chaoscypher_core.database.migrations.upgrade import UpgradeService
 from chaoscypher_core.mcp.tools import get_maintenance_tools
 
@@ -66,6 +70,7 @@ def _handle_upgrade_status(database_name: str) -> dict[str, Any]:
                 "revision": migration.revision,
                 "tier": migration.tier.value,
                 "description": migration.description,
+                "hold": migration.hold,
             }
             for migration in pending.blocked_on
         ],
@@ -76,10 +81,15 @@ def _handle_upgrade_status(database_name: str) -> dict[str, Any]:
 
 
 def _handle_apply_upgrade(database_name: str, *, confirm_destructive: bool) -> dict[str, Any]:
-    """Apply pending migrations, gating destructive (manual) ones on confirm.
+    """Apply pending migrations, gating destructive (manual) and held ones on confirm.
 
     ``UpgradeService.apply`` applies ALL pending revisions (it is the explicit
-    human path), so the destructive gate is enforced HERE before we call it.
+    human path), so the gate is enforced HERE before we call it. A held
+    migration (its preview lists changes to the data) asks first, listing every
+    change, as a destructive one does; ``confirm_destructive=true`` confirms both.
+    A preview that fails is listed as a line and still asks. The previews are read
+    here, outside the upgrade lock ``UpgradeService.apply`` takes, so another
+    process may apply in between; the apply then finds nothing pending.
     On success we instruct the client to reconnect — the running process keeps
     its degraded toolset; reconnecting rebuilds the server with normal tools
     against the now-healed schema.
@@ -96,9 +106,11 @@ def _handle_apply_upgrade(database_name: str, *, confirm_destructive: bool) -> d
             ),
         }
 
-    destructive = [
-        rev for rev in revisions if read_migration_info(rev).tier is MigrationTier.MANUAL
-    ]
+    infos = [read_migration_info(rev) for rev in revisions]
+    destructive = [info.revision for info in infos if info.tier is MigrationTier.MANUAL]
+    holds = {info.revision: lines for info in infos if (lines := hold_lines(info, db_path))}
+    if holds and not confirm_destructive:
+        return _confirm_required(holds, destructive)
     if destructive and not confirm_destructive:
         return {
             "success": False,
@@ -145,6 +157,31 @@ def _handle_apply_upgrade(database_name: str, *, confirm_destructive: bool) -> d
             "Upgrade applied successfully. Reconnect the MCP server to access "
             "the knowledge-graph tools."
         ),
+    }
+
+
+def _confirm_required(holds: dict[str, list[str]], destructive: list[str]) -> dict[str, Any]:
+    """The answer to an apply that must ask first: every change each held migration lists."""
+    listed = "\n".join(
+        f"Migration {revision} would make {len(lines)} change(s) to your data:\n"
+        + "\n".join(f"  - {line}" for line in lines)
+        for revision, lines in holds.items()
+    )
+    also = (
+        f"\nAlso pending, destructive (may drop data or force re-extraction): "
+        f"{', '.join(destructive)}."
+        if destructive
+        else ""
+    )
+    return {
+        "success": False,
+        "error_code": "CONFIRM_REQUIRED",
+        "error": (
+            f"{listed}{also}\nReview the changes, then re-call apply_upgrade with "
+            "confirm_destructive=true to apply them (a verified backup is taken first)."
+        ),
+        "hold": holds,
+        "destructive": destructive,
     }
 
 

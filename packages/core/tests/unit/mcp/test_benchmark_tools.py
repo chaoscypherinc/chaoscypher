@@ -81,7 +81,7 @@ def test_benchmark_tool_count_is_unchanged() -> None:
     """Suites are an argument, not new tools: five benchmark tools among the registry's."""
     names = [t.name for t in TOOL_DEFINITIONS]
     assert sum(1 for n in names if n in BENCHMARK_TOOLS) == 5
-    assert len(names) == 44
+    assert len(names) == 46
 
 
 def _engine(mode: str) -> MagicMock:

@@ -215,7 +215,7 @@ class TestConnectDisconnect:
             patch.object(CLIContext, "_create_engine_settings", return_value=MagicMock()),
         ):
             ctx.connect()
-        mock_log.assert_called_once_with(log_level="DEBUG")
+        mock_log.assert_called_once_with(log_level="DEBUG", stream=None, extra_processors=())
 
     def test_connect_is_idempotent(self, tmp_path: Path) -> None:
         ctx = CLIContext(database_name="proj", data_dir=tmp_path)

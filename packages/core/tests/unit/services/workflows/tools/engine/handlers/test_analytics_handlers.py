@@ -978,21 +978,21 @@ class TestFindSimilarNodes:
         """
         source_node = make_node("n1", "Alice", template_id="person", source_id="src1")
         in_scope = make_node("n2", "Bob", template_id="person", source_id="src1")
-        out_scope = make_node("n3", "Eve", template_id="person", source_id="src2")
 
         graph_repo.get_node.return_value = source_node
-        _configure_graph_repo(
-            graph_repo,
-            nodes=[source_node, in_scope, out_scope],
-            edges=[],
-        )
+        # The minimal listing applies scope and template in SQL (pinned against
+        # a real database in test_graph_minimal_source_scope.py).
+        graph_repo.list_nodes_minimal.return_value = [source_node, in_scope]
 
         handler = _make_handler(graph_repo, search_repo, analytics_service, settings)
-        result = await handler.find_similar_nodes("n1", source_ids=["src1"])
+        result = await handler.find_similar_nodes("n1", limit=10, source_ids=["src1"])
 
         assert result["success"] is True
         assert result["count"] == 1
         assert result["similar_nodes"][0]["id"] == "n2"
+        graph_repo.list_nodes_minimal.assert_called_once_with(
+            limit=11, source_ids=["src1"], template_id="person"
+        )
 
     @pytest.mark.asyncio
     async def test_source_node_without_source_id_passes_scope(

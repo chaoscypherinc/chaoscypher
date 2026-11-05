@@ -27,9 +27,32 @@ interface HttpLikeError {
 }
 
 /**
+ * The first field message of a 422 validation envelope, when there is one.
+ *
+ * The API's validation handler answers `{error: "VALIDATION_FAILED", message:
+ * "Request body failed validation", details: {errors: [{msg, loc, ...}]}}`:
+ * the top message is generic and the words the user needs (a tag rule's
+ * refusal, say) are in the first error's `msg`. Shared by the API client's
+ * error normaliser and {@link getApiErrorMessage} so both show the same text.
+ */
+export function firstValidationMessage(data: unknown): string | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const details = (data as { details?: unknown }).details;
+  if (!details || typeof details !== 'object') return undefined;
+  const errors = (details as { errors?: unknown }).errors;
+  if (!Array.isArray(errors) || errors.length === 0) return undefined;
+  const first: unknown = errors[0];
+  if (!first || typeof first !== 'object') return undefined;
+  const msg = (first as { msg?: unknown }).msg;
+  return typeof msg === 'string' && msg.trim() ? msg : undefined;
+}
+
+/**
  * Best-effort extraction of a user-facing message from a caught error.
  *
  * Order of preference:
+ *   0. the first field message of a 422 validation envelope
+ *      (`details.errors[0].msg`, see {@link firstValidationMessage})
  *   1. `error.response.data.message` (unified envelope, primary)
  *   2. `error.response.data.detail.message` (legacy nested ErrorDetail)
  *   3. `error.response.data.detail` when string (oldest FastAPI shape)
@@ -44,6 +67,8 @@ export function getApiErrorMessage(err: unknown): string {
   const extractBody = (body: HttpLikeError['response']): string | undefined => {
     if (!body?.data) return undefined;
     const data = body.data;
+    const fieldMessage = firstValidationMessage(data);
+    if (fieldMessage) return fieldMessage;
     if (typeof data.message === 'string') return data.message;
     if (data.detail && typeof data.detail === 'object' && typeof data.detail.message === 'string') {
       return data.detail.message;

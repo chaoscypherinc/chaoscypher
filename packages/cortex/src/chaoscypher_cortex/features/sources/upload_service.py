@@ -34,6 +34,7 @@ import structlog
 
 from chaoscypher_core.exceptions import ValidationError
 from chaoscypher_core.services.events import event_bus
+from chaoscypher_core.services.sources.labels import validate_source_labels
 from chaoscypher_core.utils.disk import check_disk_space
 
 
@@ -173,8 +174,13 @@ class UploadService:
         protect_orphans: bool | None = None,
         enable_inverse_relationships: bool | None = None,
         max_entity_degree_override: int | None = None,
+        tags: Sequence[str] | None = None,
+        summary: str | None = None,
     ) -> dict[str, Any]:
         """Process a single upload: preflight → validate → stream → delegate → emit → cleanup.
+
+        ``tags`` and ``summary`` go to Core's ``upload_file``, which checks them
+        (tag rule, summary length) before the source row exists.
 
         Used by both the ``upload_file`` route (single file) and
         ``upload_batch`` (fan-out via ``asyncio.gather``).
@@ -212,6 +218,8 @@ class UploadService:
                 protect_orphans=protect_orphans,
                 enable_inverse_relationships=enable_inverse_relationships,
                 max_entity_degree_override=max_entity_degree_override,
+                tags=tags,
+                summary=summary,
                 staged_file_path=staged_path,
                 content_hash=content_hash,
                 file_size=file_size,
@@ -246,6 +254,7 @@ class UploadService:
         protect_orphans: bool | None = None,
         enable_inverse_relationships: bool | None = None,
         max_entity_degree_override: int | None = None,
+        tags: Sequence[str] | None = None,
     ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
         """Upload ``files`` concurrently; return (successes, errors).
 
@@ -259,14 +268,25 @@ class UploadService:
         was the legacy path and is intentionally removed so URL imports
         and CLI uploads share the same semantics as multipart uploads.
 
+        ``tags`` are given to every file's document; one summary does not
+        describe many files, so a batch takes none.
+
         Raises:
             ValidationError: If ``len(files) > max_upload_files``.
+            TagRuleError: a tag breaks the tag rule, or there are over the
+                cap (checked once, before any file is written, rather than
+                failing every file of the batch).
 
         """
         max_files = self._settings.batching.max_upload_files
         if len(files) > max_files:
             msg = f"Too many files: {len(files)} exceeds limit of {max_files}"
             raise ValidationError(msg, field="files")
+        validate_source_labels(
+            tags=tags,
+            summary=None,
+            max_summary_chars=self._settings.source_processing.summary_max_chars,
+        )
         # Upfront content-type + preflight so a bad batch fails fast.
         for f in files:
             self.validate_content_type(f)
@@ -304,6 +324,7 @@ class UploadService:
                 protect_orphans=protect_orphans,
                 enable_inverse_relationships=enable_inverse_relationships,
                 max_entity_degree_override=max_entity_degree_override,
+                tags=tags,
             )
 
         results = await asyncio.gather(*[_one(f) for f in files], return_exceptions=True)

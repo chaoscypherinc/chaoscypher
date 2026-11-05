@@ -27,6 +27,7 @@ from rich.console import Console
 from rich.tree import Tree
 
 from chaoscypher_cli import engine_config
+from chaoscypher_cli.utils.console import print_caught_error
 
 
 console = Console()
@@ -142,7 +143,7 @@ def show_config(output_format: str) -> None:
             _settings_file_footer()
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)
 
 
@@ -178,7 +179,7 @@ def get_value(key: str) -> None:
     except SystemExit:
         raise
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)
 
 
@@ -268,7 +269,7 @@ def edit_config() -> None:
         console.print("[yellow]Editor closed without saving[/yellow]")
         return
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)
 
     # Surface parse/validation errors introduced by the edit right away.
@@ -276,7 +277,7 @@ def edit_config() -> None:
         manager.invalidate_cache()
         manager.load_settings()
     except Exception as e:
-        console.print(f"[red]Saved, but the file no longer parses:[/red] {e}")
+        print_caught_error(e, label="Saved, but the file no longer parses", console=console)
         sys.exit(1)
 
     console.print("[green]Configuration saved.[/green]")
@@ -327,7 +328,7 @@ def reset_config(force: bool) -> None:
         # manager's own cache) so a later read in the same process isn't stale.
         reload_settings()
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)
 
     console.print("[green]Configuration reset to defaults.[/green]")

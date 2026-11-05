@@ -23,7 +23,7 @@ import type { ExtractionDomain } from './sources';
 import type { ConfirmExtractionOptions } from './sourceProcessing';
 import { settingsApi } from './settings';
 import { qualityApi } from './quality';
-import type { UnifiedSource, SourceQualityScore, SourceSummary } from '../../types';
+import type { UnifiedSource, SourceQualityScore, SourceSummary, SourceTagFilter } from '../../types';
 
 const SOURCES_QUERY_KEY = ['sources'] as const;
 const SOURCE_DOMAINS_QUERY_KEY = ['sources', 'domains'] as const;
@@ -34,7 +34,7 @@ function sourceSummariesQueryKey(pageSize: number) {
   return ['sources', 'summaries', { pageSize }] as const;
 }
 
-export interface SourcesListFilters {
+export interface SourcesListFilters extends SourceTagFilter {
   stage?: 'all' | 'queued' | 'processing' | 'active';
   status?: string;
   source_type?: string;
@@ -96,6 +96,8 @@ export function useSourcesList(
         source_type: filters.source_type || undefined,
         search: filters.search || undefined,
         in_site: filters.in_site,
+        tags: filters.tags,
+        match: filters.match,
       }),
     refetchInterval:
       pollInterval && shouldPoll

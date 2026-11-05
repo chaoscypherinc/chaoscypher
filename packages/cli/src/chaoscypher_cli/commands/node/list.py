@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
-from chaoscypher_cli.utils.console import print_json
+from chaoscypher_cli.utils.console import print_caught_error, print_json
 from chaoscypher_core.app_config import get_settings
 
 
@@ -143,5 +143,5 @@ def list_nodes(
                 )
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)

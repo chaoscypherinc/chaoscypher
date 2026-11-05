@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import os
 import shutil
 import zipfile
 from datetime import UTC, datetime
@@ -43,6 +44,8 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from chaoscypher_core.database.engine import remove_database_dir
+from chaoscypher_core.database.errors import describe_database_error
 from chaoscypher_core.exceptions import ChaosCypherException
 from chaoscypher_core.services.compose.models import (
     CompositionResult,
@@ -129,6 +132,24 @@ class NamespaceMerger:
         """Directory of the composed runtime database."""
         return self.output_dir / "databases" / COMPOSED_DATABASE_NAME
 
+    @property
+    def database_file(self) -> Path:
+        """The composed SQLite file (the ``app.db`` the build's Engine opens)."""
+        return self.database_dir / "app.db"
+
+    def package_failure_message(self, package_name: str, exc: BaseException) -> str:
+        """The one-line error a failed package import adds to the build result.
+
+        A database failure reads as a sentence naming the composed database and
+        the step (never SQLAlchemy's SQL text and link, whose last line was all a
+        caller keeping only the tail of the output ever saw); any other error
+        keeps its own message. The full exception goes to the log.
+        """
+        detail = describe_database_error(
+            exc, db_path=self.database_file, step=f"importing package {package_name}"
+        )
+        return f"Failed to merge {package_name}: {detail or exc}"
+
     async def merge(
         self,
         packages: list[ResolvedPackage],
@@ -174,7 +195,21 @@ class NamespaceMerger:
             # ago), the runtime settings, the pid record and the server log
             # all live in the same output directory and must survive.
             if clean:
-                self._remove_build_artefacts()
+                try:
+                    self._remove_build_artefacts()
+                except OSError as exc:
+                    # Nothing is built yet: the old composition is in the way, not a
+                    # half-built one, so there is nothing to discard either.
+                    path, reason = self._log_cleanup_failure(exc, None)
+                    return CompositionResult(
+                        success=False,
+                        output_dir=self.output_dir,
+                        errors=[
+                            f"could not remove the previous composition at {path} "
+                            f"before building: {reason}"
+                        ],
+                        warnings=warnings,
+                    )
             self.database_dir.mkdir(parents=True, exist_ok=True)
 
             # The Engine builds the schema through the Alembic runner (never a
@@ -188,7 +223,7 @@ class NamespaceMerger:
                     try:
                         stats = await self._merge_package(engine, pkg)
                     except Exception as e:
-                        errors.append(f"Failed to merge {pkg.name}: {e}")
+                        errors.append(self.package_failure_message(pkg.name, e))
                         logger.exception("merger_package_failed", package=pkg.name)
                         continue
 
@@ -228,7 +263,7 @@ class NamespaceMerger:
                 # Never leave a half-built database behind: `up` keys on the
                 # database directory's existence and would serve the partial
                 # composition without rebuilding.
-                self._discard_failed_build(snapshot)
+                self._discard_after_failure(snapshot, errors)
             else:
                 self._write_composition_manifest(
                     package_records, total_entities, total_relationships
@@ -255,22 +290,28 @@ class NamespaceMerger:
 
         except Exception as e:
             logger.exception("merger_failed")
-            self._discard_failed_build(snapshot)
+            described = describe_database_error(
+                e, db_path=self.database_file, step="building the composed database"
+            )
+            # The packages that failed before this keep their own lines, first.
+            failure = [*errors, f"Merge failed: {described or e}"]
+            self._discard_after_failure(snapshot, failure)
             return CompositionResult(
                 success=False,
                 output_dir=self.output_dir,
                 packages_included=packages_included,
                 total_entities=total_entities,
                 total_relationships=total_relationships,
-                errors=[f"Merge failed: {e}"],
+                errors=failure,
                 warnings=warnings,
             )
         except BaseException:
             # Ctrl+C, a cancelled task: put the composition back, then let the
-            # interruption through. Were this skipped, the partial database
-            # would stay live with the good copy beside it.
+            # interruption through (never a cleanup error raised over it). Were
+            # this skipped, the partial database would stay live with the good
+            # copy beside it.
             logger.warning("merger_interrupted")
-            self._discard_failed_build(snapshot)
+            self._discard_after_failure(snapshot, [])
             raise
 
     def _prepare_build(self, clean: bool, warnings: list[str]) -> tuple[Path | None, str | None]:
@@ -314,8 +355,7 @@ class NamespaceMerger:
 
     def _remove_build_artefacts(self) -> None:
         """Delete the composed database and manifest (and nothing else)."""
-        if self.database_dir.exists():
-            shutil.rmtree(self.database_dir)
+        remove_database_dir(self.database_dir)
         manifest = self.output_dir / COMPOSITION_MANIFEST_FILENAME
         if manifest.exists():
             manifest.unlink()
@@ -387,6 +427,52 @@ class NamespaceMerger:
             shutil.move(manifest, self.output_dir / COMPOSITION_MANIFEST_FILENAME)
         self._drop_snapshot()
         logger.info("merger_restored_pre_build_composition", database=str(self.database_dir))
+
+    def _discard_after_failure(self, snapshot: Path | None, errors: list[str]) -> None:
+        """Discard a failed build; a cleanup failure is reported, never raised over it.
+
+        Called only once the build has already failed. A read-only folder (or any
+        other ``OSError`` while removing the half-built database or putting the
+        pre-build copy back) used to escape ``merge()`` as a second traceback whose
+        last line, ``PermissionError: ...``, was all a caller keeping the tail of
+        the output saw: the build's own error was lost. The cleanup failure is
+        logged and added after the build's errors, so the first error still names
+        the real cause.
+        """
+        try:
+            self._discard_failed_build(snapshot)
+        except OSError as exc:
+            path, reason = self._log_cleanup_failure(exc, snapshot)
+            if snapshot is None:
+                errors.append(f"could not remove the half-built database at {path}: {reason}")
+            elif (snapshot / "database").exists():
+                errors.append(
+                    f"could not put back the composition from before the build ({path}: "
+                    f"{reason}); its copy is kept at {snapshot} and the next build restores it"
+                )
+            elif (snapshot / COMPOSITION_MANIFEST_FILENAME).exists():
+                errors.append(
+                    f"the database from before the build was put back, but not its manifest "
+                    f"({path}: {reason}); it is kept at {snapshot} and the next build puts it "
+                    "back"
+                )
+            else:
+                errors.append(
+                    f"the composition from before the build was put back, but its copy at "
+                    f"{snapshot} could not be removed ({path}: {reason})"
+                )
+
+    def _log_cleanup_failure(self, exc: OSError, snapshot: Path | None) -> tuple[str, str]:
+        """Log a cleanup ``OSError`` and return its path and plain reason for the message."""
+        path = str(exc.filename or self.database_dir)
+        reason = os.strerror(exc.errno).lower() if exc.errno else str(exc)
+        logger.warning(
+            "merger_cleanup_failed",
+            path=path,
+            errno=exc.errno,
+            snapshot=str(snapshot) if snapshot is not None else None,
+        )
+        return path, reason
 
     def _drop_snapshot(self) -> None:
         """Delete the pre-build copy, if any."""
@@ -496,7 +582,10 @@ class NamespaceMerger:
         except Exception as e:
             # The knowledge is in the database and FTS keyword search works
             # without vectors; a missing embedding model must not fail the build.
-            warnings.append(f"search indexing skipped: {e}")
+            described = describe_database_error(
+                e, db_path=self.database_file, step="indexing the composed database for search"
+            )
+            warnings.append(f"search indexing skipped: {described or e}")
             logger.warning("merger_index_skipped", error=str(e))
 
     def _write_composition_manifest(

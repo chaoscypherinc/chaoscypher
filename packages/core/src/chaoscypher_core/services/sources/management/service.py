@@ -6,7 +6,6 @@
 Business logic for source processing operations.
 """
 
-import asyncio
 import hashlib
 from collections.abc import Sequence
 from pathlib import Path
@@ -17,32 +16,17 @@ import structlog
 from chaoscypher_core.exceptions import ExternalServiceError, NotFoundError, ValidationError
 from chaoscypher_core.models import SourceStatus
 from chaoscypher_core.services.sources.engine.extraction.domains.packs import packs_of_name
+from chaoscypher_core.services.sources.labels import (
+    apply_source_labels,
+    clean_summary,
+    label_new_source,
+    validate_source_labels,
+)
+from chaoscypher_core.utils.file_hash import hash_file_async
 from chaoscypher_core.utils.id import generate_id
 
 
 logger = structlog.get_logger(__name__)
-
-
-async def _hash_file_async(path: Path) -> str:
-    """Hash a file's contents off the event loop.
-
-    Args:
-        path: Absolute path to the file to hash.
-
-    Returns:
-        Lowercase hex-encoded SHA-256 digest.
-
-    """
-
-    def _sync_hash() -> str:
-        """Stream-hash the file in 1 MiB chunks and return the hex digest."""
-        h = hashlib.sha256()
-        with path.open("rb") as f:
-            for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                h.update(chunk)
-        return h.hexdigest()
-
-    return await asyncio.to_thread(_sync_hash)
 
 
 async def _resolve_content_hash(
@@ -85,14 +69,14 @@ async def _resolve_content_hash(
         if file_content is not None:
             return hashlib.sha256(file_content).hexdigest()
         if staged_file_path is not None:
-            return await _hash_file_async(Path(staged_file_path))
+            return await hash_file_async(Path(staged_file_path))
         return None
 
     actual_hash: str | None = None
     if file_content is not None:
         actual_hash = hashlib.sha256(file_content).hexdigest()
     elif staged_file_path is not None:
-        actual_hash = await _hash_file_async(Path(staged_file_path))
+        actual_hash = await hash_file_async(Path(staged_file_path))
     if actual_hash is not None and actual_hash != content_hash:
         msg = (
             "Provided content_hash does not match file content: "
@@ -187,6 +171,9 @@ class SourceProcessingService:
         max_entity_degree_override: int | None = None,
         forced_packs: Sequence[str] | None = None,
         site_id: str | None = None,
+        tags: Sequence[str] | None = None,
+        replace_tags: bool = False,
+        summary: str | None = None,
     ) -> dict[str, Any]:
         """Upload a file to the source processing staging area.
 
@@ -240,9 +227,13 @@ class SourceProcessingService:
             file_size: Pre-computed file size in bytes.
             site_id: The imported site this page belongs to (a site import);
                 persisted on the row so the site counts it.
+            tags: Tags added to the document (``None`` leaves them alone),
+                also on a ``skip_duplicates`` hit to the existing document.
+            replace_tags: Make ``tags`` the document's whole set.
+            summary: The document's summary (``""`` clears it; ``None`` keeps it).
 
         Returns:
-            Dictionary with file info
+            Dictionary with file info, and ``tags``: the document's tags after.
 
         """
         self.validators.require_source_processing_service()
@@ -250,6 +241,30 @@ class SourceProcessingService:
         if file_content is None and staged_file_path is None:
             msg = "Provide either file_content (bytes) or staged_file_path (Path) — both were None"
             raise ValidationError(msg, field="file")
+
+        # Refuse bad labels before any row is written (apply_source_labels
+        # runs after the row exists and would leave it behind).
+        settings = self.config_manager.get_settings()
+        max_summary_chars = settings.source_processing.summary_max_chars
+        validate_source_labels(tags=tags, summary=summary, max_summary_chars=max_summary_chars)
+
+        def reported(response: dict[str, Any]) -> dict[str, Any]:
+            """``response`` carrying the summary the row now holds, when the caller gave one."""
+            if summary is not None:
+                response["summary"] = clean_summary(summary, max_chars=max_summary_chars)
+            return response
+
+        def label(source_id: str) -> list[str]:
+            """Apply the caller's tags and summary to ``source_id``; its tags after."""
+            return apply_source_labels(
+                self.source_manager,
+                settings.current_database,
+                source_id,
+                tags=tags,
+                replace_tags=replace_tags,
+                summary=summary,
+                max_summary_chars=max_summary_chars,
+            )
 
         # Resolve the content hash: compute when omitted, verify when
         # the caller provided one (F14 defense in depth — see helper for
@@ -282,7 +297,6 @@ class SourceProcessingService:
         # the race window is small (one find + one insert). See
         # ``SourceRow.content_hash`` field comment for full rationale.
         if skip_duplicates and content_hash:
-            settings = self.config_manager.get_settings()
             database_name = settings.current_database
             existing = self.source_manager.find_by_content_hash(database_name, content_hash)
             if existing:
@@ -296,7 +310,8 @@ class SourceProcessingService:
                 response = dict(existing)
                 response["skipped_duplicate"] = True
                 response["existing_status"] = existing.get("status")
-                return response
+                response["tags"] = label(existing["id"])
+                return reported(response)
 
         # Check file size against the unified upload cap. Both file uploads
         # and URL fetches use settings.batching.max_upload_bytes so the same
@@ -305,7 +320,6 @@ class SourceProcessingService:
         # field is deprecated (emits a warning at startup if explicitly set
         # in settings.yaml) and no longer consulted here — see F12 in
         # ``upload pipeline audit notes``.
-        settings = self.config_manager.get_settings()
         max_size = settings.batching.max_upload_bytes
 
         if file_size > max_size:
@@ -377,6 +391,19 @@ class SourceProcessingService:
             site_id=site_id,
         )
 
+        # The caller's tags and summary, before indexing is queued (the
+        # import's own summary step reads what the caller gave); a failure
+        # marks the row failed rather than leaving it pending.
+        tags_after = label_new_source(
+            self.source_manager,
+            database_name,
+            source_file["id"],
+            tags=tags,
+            replace_tags=replace_tags,
+            summary=summary,
+            max_summary_chars=max_summary_chars,
+        )
+
         # source_file is already a dict from storage adapter
         file_info = source_file
 
@@ -427,7 +454,8 @@ class SourceProcessingService:
                     reason="Failed to queue indexing task",
                 ) from exc
 
-        return source_file  # Already a dict from storage adapter
+        source_file["tags"] = tags_after
+        return reported(source_file)  # Already a dict from storage adapter
 
     def list_files(
         self, status_filter: str | None = None, limit: int = 100

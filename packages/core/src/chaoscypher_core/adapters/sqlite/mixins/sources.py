@@ -14,12 +14,13 @@ Related mixins (split for maintainability):
 
 import json
 import shutil
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
-from sqlalchemy import case, update
+from sqlalchemy import String, case, text, update
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import InstrumentedAttribute, aliased, load_only
 from sqlmodel import col, delete, func, select
@@ -32,10 +33,15 @@ from chaoscypher_core.adapters.sqlite.models import (
     SourceRow,
     SourceTagAssignment,
 )
+from chaoscypher_core.adapters.sqlite.repos.source_tag_scope import tagged_sources_sql
 from chaoscypher_core.exceptions import NotFoundError
-from chaoscypher_core.models import MEMORY_SOURCE_TYPE, MemoryLinkState
+from chaoscypher_core.models import MEMORY_SOURCE_TYPE, MemoryLinkState, TagMatch
 from chaoscypher_core.ports.storage_sources import SourceStorageProtocol
 from chaoscypher_core.services.sources.engine.extraction.domains.packs import pack_columns
+
+
+if TYPE_CHECKING:
+    from chaoscypher_core.ports.types import DocumentListing
 
 
 logger = structlog.get_logger(__name__)
@@ -65,6 +71,20 @@ def _light_source_columns() -> list[InstrumentedAttribute[Any]]:
         for attr in sa_inspect(SourceRow).column_attrs
         if attr.key not in _HEAVY_SOURCE_COLUMNS
     ]
+
+
+def carrying_tags(tags: Sequence[str], match: TagMatch, database_name: str) -> Any:
+    """``sources.id IN (<the sources carrying tags>)``, from the one tag-scope builder."""
+    sql, params = tagged_sources_sql(tags, match, database_name=database_name)
+    carrying = text(sql).bindparams(**params).columns(source_id=String)
+    return col(SourceRow.id).in_(carrying)
+
+
+def _utc_iso(moment: datetime) -> str:
+    """ISO-8601 UTC of a stored datetime (SQLite hands it back without its zone)."""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment.astimezone(UTC).isoformat()
 
 
 class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
@@ -811,6 +831,8 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
         tag_id: str | None = None,
         site_id: str | None = None,
         in_site: bool | None = None,
+        tags: Sequence[str] = (),
+        match: TagMatch = TagMatch.ANY,
     ) -> tuple[list[dict[str, Any]], int]:
         """List sources with filtering and pagination.
 
@@ -828,6 +850,9 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
             site_id: Only the pages of this imported site
             in_site: True: only pages of imported sites; False: only sources
                 outside any site (the web UI lists a site as one row)
+            tags: Normalised tag names: only sources carrying them
+                (``tagged_sources_sql``, inside the query before the page)
+            match: ``ANY`` or ``ALL`` of ``tags``
 
         Returns:
             Tuple of (sources list, total count)
@@ -851,6 +876,8 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
                     SourceRow.source_type,
                     SourceRow.title,
                     SourceRow.origin_url,
+                    # The one-line summary (migration 0026)
+                    SourceRow.summary,
                     # Site import (migration 0021): the page's site, and when a
                     # refresh first found it no longer listed
                     SourceRow.site_id,
@@ -945,6 +972,8 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
         if tag_id is not None:
             # Join with tag assignments to filter by tag
             stmt = stmt.join(SourceTagAssignment).where(SourceTagAssignment.tag_id == tag_id)
+        if tags:
+            stmt = stmt.where(carrying_tags(tags, match, self.database_name))
         if site_id is not None:
             stmt = stmt.where(SourceRow.site_id == site_id)
         if in_site is not None:
@@ -973,6 +1002,73 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
                 s["stage_progress"] = progress_by_source.get(s["id"], {})
 
         return sources, total
+
+    def list_documents(
+        self,
+        database_name: str,
+        *,
+        tags: Sequence[str] = (),
+        match: TagMatch = TagMatch.ANY,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[DocumentListing], int]:
+        """List the documents (every source but memories), newest first, then by id.
+
+        The tag filter, the order and the page all run in SQL; the page's tags
+        come in one more query.
+        """
+        self._ensure_connected()
+        stmt = (
+            select(SourceRow)
+            .options(
+                load_only(
+                    SourceRow.id,
+                    SourceRow.title,
+                    SourceRow.filename,
+                    SourceRow.summary,
+                    SourceRow.created_at,
+                )
+            )
+            .where(
+                SourceRow.database_name == database_name,
+                col(SourceRow.source_type).is_distinct_from(MEMORY_SOURCE_TYPE),
+            )
+        )
+        if tags:
+            stmt = stmt.where(carrying_tags(tags, match, database_name))
+        total = self.session.exec(select(func.count()).select_from(stmt.subquery())).one()
+        rows = self.session.exec(
+            stmt.order_by(col(SourceRow.created_at).desc(), col(SourceRow.id).asc())
+            .offset(offset)
+            .limit(limit)
+        ).all()
+        tags_by_source = self.get_source_tags_batch([row.id for row in rows]) if rows else {}
+        return [
+            {
+                "source_id": row.id,
+                "title": row.title or row.filename,
+                "summary": row.summary,
+                "tags": sorted(t["name"] for t in tags_by_source.get(row.id, [])),
+                "added": _utc_iso(row.created_at),
+            }
+            for row in rows
+        ], total
+
+    def source_ids_for_summary(self, database_name: str, *, missing_only: bool) -> list[str]:
+        """The documents a summary run visits: indexed (chunks), not memories, oldest first.
+
+        With ``missing_only`` only the ones with no summary yet.
+        """
+        self._ensure_connected()
+        stmt = select(SourceRow.id).where(
+            SourceRow.database_name == database_name,
+            col(SourceRow.source_type).is_distinct_from(MEMORY_SOURCE_TYPE),
+            SourceRow.chunk_count > 0,
+        )
+        if missing_only:
+            stmt = stmt.where(col(SourceRow.summary).is_(None))
+        stmt = stmt.order_by(col(SourceRow.created_at).asc(), col(SourceRow.id).asc())
+        return list(self.session.exec(stmt).all())
 
     def transition_source_status(
         self,

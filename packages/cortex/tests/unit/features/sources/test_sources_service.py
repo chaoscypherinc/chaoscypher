@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from chaoscypher_core.models import ReleasedRows, SourceDeletion
+from chaoscypher_core.models import ReleasedRows, SourceDeletion, TagMatch
 from chaoscypher_cortex.features.sources import service as service_module
 from chaoscypher_cortex.features.sources.service import SourceService
 
@@ -109,6 +109,8 @@ class TestSourceCrud:
             tag_id=None,
             site_id=None,
             in_site=None,
+            tags=(),
+            match=TagMatch.ANY,
         )
 
     def test_list_sources_forwards_all_filters(self) -> None:
@@ -127,6 +129,8 @@ class TestSourceCrud:
             tag_id="tag-1",
             site_id="site-1",
             in_site=True,
+            tags=["alpha"],
+            match=TagMatch.ALL,
         )
 
         engine.list_sources.assert_called_once_with(
@@ -139,6 +143,8 @@ class TestSourceCrud:
             tag_id="tag-1",
             site_id="site-1",
             in_site=True,
+            tags=["alpha"],
+            match=TagMatch.ALL,
         )
 
     def test_update_source_forwards_all_fields(self) -> None:

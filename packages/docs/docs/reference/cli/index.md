@@ -194,6 +194,9 @@ This is equivalent to running `alembic upgrade head` directly. Cortex runs the s
 | Option | Description |
 |--------|-------------|
 | `--database NAME` | Database to upgrade (defaults to the current database) |
+| `--yes`, `-y` | Skip the confirmation prompt |
+
+As `chaoscypher db migrate apply` does, it first lists any pending migration that needs confirmation (a tier above `safe_auto`, or one that would change your data, with each change listed) and asks before applying. A database with no schema yet is built without asking.
 
 ```bash
 # These are equivalent — pick whichever fits your workflow:

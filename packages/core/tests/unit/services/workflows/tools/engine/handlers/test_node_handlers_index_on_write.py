@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from sqlmodel import SQLModel
@@ -26,6 +27,10 @@ from chaoscypher_core.services.workflows.tools.engine.handlers.node_handlers imp
     NodeToolHandlers,
 )
 from chaoscypher_core.testing.embedding import FakeEmbeddingProvider
+
+
+if TYPE_CHECKING:
+    from chaoscypher_core.models import BatchEmbedResult
 
 
 VECTOR_DIM = 384
@@ -125,3 +130,36 @@ async def test_list_nodes_pages_a_template_by_name_and_lists_all_without_one(
         "error": "Unknown template: Rocket",
         "code": "UNKNOWN_TEMPLATE",
     }
+
+
+class _DownEmbedder(FakeEmbeddingProvider):
+    """An embedding provider that is unreachable: every embed raises."""
+
+    async def batch_embed(self, texts: list[str], batch_size: int = 64) -> BatchEmbedResult:
+        raise ConnectionError("embedder unreachable")
+
+
+async def test_a_failed_index_after_the_commit_still_answers_success_with_the_id(repos) -> None:
+    # the node commits before it is indexed; a failure answer made a retrying agent duplicate it
+    graph, search, person = repos
+    handlers = NodeToolHandlers(graph, search, embedding_provider=_DownEmbedder(VECTOR_DIM))
+
+    r = await handlers.create_node(template_id=person.id, label="Natasha", properties={})
+
+    assert r["success"] is True, r
+    assert r["indexed"] is False
+    assert "do not repeat this call" in r["message"]
+    assert graph.get_node(r["node_id"]) is not None
+    assert [n.label for n in graph.list_nodes()] == ["Natasha"]
+
+
+async def test_a_failed_index_after_an_update_still_answers_success(handlers, repos) -> None:
+    graph, search, person = repos
+    created = await handlers.create_node(template_id=person.id, label="Sonya", properties={})
+    assert created["indexed"] is True
+    down = NodeToolHandlers(graph, search, embedding_provider=_DownEmbedder(VECTOR_DIM))
+
+    r = await down.update_node(node_id=created["node_id"], label="Sonya Rostova")
+
+    assert r["success"] is True and r["indexed"] is False, r
+    assert graph.get_node(created["node_id"]).label == "Sonya Rostova"

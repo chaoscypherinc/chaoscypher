@@ -356,6 +356,146 @@ class TestPrintError:
 
         assert "Error" in buf.getvalue()
 
+    def test_long_message_stays_on_one_line(self) -> None:
+        """A caller keeping only the last line of output must get the whole message."""
+        from chaoscypher_cli.utils.console import print_error
+
+        buf = StringIO()
+        test_console = Console(file=buf, width=40, highlight=False, markup=True)
+        message = "the database at " + "/".join(["pack-a"] * 20) + " is read-only"
+
+        with patch("chaoscypher_cli.utils.console.get_console", return_value=test_console):
+            print_error(message)
+
+        assert buf.getvalue().strip() == f"Error: {message}"
+
+
+class TestErrorText:
+    """error_text: a caught database error prints as one plain sentence."""
+
+    def test_database_error_is_one_plain_line(self, tmp_path: Path) -> None:
+        from sqlalchemy import create_engine, text
+        from sqlalchemy.exc import OperationalError
+
+        from chaoscypher_cli.utils.console import error_text
+
+        engine = create_engine(f"sqlite:///{tmp_path / 'empty.db'}")
+        try:
+            with pytest.raises(OperationalError) as info, engine.connect() as conn:
+                conn.execute(text("SELECT id FROM sources"))
+        finally:
+            engine.dispose()
+
+        message = error_text(info.value)
+        assert message.startswith('the database has no "sources" table')
+        assert "\n" not in message
+        assert "[SQL:" not in message
+        assert "sqlalche.me" not in message
+
+    def test_database_error_keeps_the_whole_exception_in_the_debug_log(
+        self, tmp_path: Path
+    ) -> None:
+        """The printed line drops the SQL; the debug log must still carry it."""
+        import structlog
+        from sqlalchemy import create_engine, text
+        from sqlalchemy.exc import OperationalError
+
+        from chaoscypher_cli.utils.console import error_text
+
+        engine = create_engine(f"sqlite:///{tmp_path / 'empty.db'}")
+        try:
+            with pytest.raises(OperationalError) as info, engine.connect() as conn:
+                conn.execute(text("SELECT id FROM sources"))
+        finally:
+            engine.dispose()
+
+        with structlog.testing.capture_logs() as logs:
+            message = error_text(info.value)
+
+        records = [r for r in logs if r["event"] == "cli_caught_database_error"]
+        assert len(records) == 1, logs
+        assert records[0]["log_level"] == "debug"
+        assert records[0]["exc_info"] is info.value
+        assert "SELECT id FROM sources" in str(records[0]["exc_info"])
+        assert records[0]["error"] == message
+
+    def test_other_errors_are_not_logged(self) -> None:
+        import structlog
+
+        from chaoscypher_cli.utils.console import error_text
+
+        with structlog.testing.capture_logs() as logs:
+            error_text(ValueError("bad property spec"))
+
+        assert not [r for r in logs if r["event"] == "cli_caught_database_error"]
+
+    def test_other_errors_print_as_before(self) -> None:
+        from chaoscypher_cli.utils.console import error_text
+
+        assert error_text(ValueError("bad property spec")) == "bad property spec"
+
+
+class TestPrintCaughtError:
+    """print_caught_error: the one way a command prints an exception it caught."""
+
+    def test_long_database_error_stays_one_line_on_a_non_tty(self, tmp_path: Path) -> None:
+        from sqlalchemy import create_engine, text
+        from sqlalchemy.exc import OperationalError
+
+        from chaoscypher_cli.utils.console import print_caught_error
+
+        deep = tmp_path.joinpath(*(["pack-a"] * 12))
+        deep.mkdir(parents=True)
+        engine = create_engine(f"sqlite:///{deep / 'app.db'}")
+        try:
+            with pytest.raises(OperationalError) as info, engine.connect() as conn:
+                conn.execute(text("SELECT id FROM sources"))
+        finally:
+            engine.dispose()
+        buf = StringIO()
+        # What piped output gets: not a terminal, 80 columns.
+        piped = Console(file=buf, width=80, force_terminal=False)
+
+        print_caught_error(info.value, label="Migration failed", console=piped)
+
+        printed = buf.getvalue()
+        assert printed.count("\n") == 1, printed
+        assert printed.startswith('Migration failed: the database has no "sources" table')
+        assert "[SQL:" not in printed
+
+    def test_error_text_with_brackets_is_not_read_as_markup(self) -> None:
+        from chaoscypher_cli.utils.console import print_caught_error
+
+        buf = StringIO()
+        piped = Console(file=buf, width=80, force_terminal=False)
+
+        print_caught_error(
+            ValueError("bad value [bold]x[/bold]"),
+            label="Search skipped",
+            style="yellow",
+            suffix=" — will retry",
+            console=piped,
+        )
+
+        assert buf.getvalue() == "Search skipped: bad value [bold]x[/bold] — will retry\n"
+
+    def test_no_command_formats_its_own_error_line(self) -> None:
+        """Guard: a command prints a caught error through the helper, never by hand.
+
+        Thirty hand-written ``[red]Error:[/red] {...}`` lines printed without
+        ``soft_wrap``, so piped output split them at 80 columns and the last line
+        a caller kept was a fragment.
+        """
+        src = Path(__file__).resolve().parents[1] / "src" / "chaoscypher_cli"
+        offenders = [
+            f"{path.relative_to(src)}:{number}"
+            for path in sorted(src.rglob("*.py"))
+            if path.relative_to(src).as_posix() != "utils/console.py"
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+            if "[red]Error:[/red] {" in line
+        ]
+        assert offenders == [], offenders
+
 
 class TestPrintSuccess:
     """print_success formats message with [green]Success:[/green] prefix."""
@@ -381,6 +521,23 @@ class TestPrintSuccess:
             print_success("done")
 
         assert "Success" in buf.getvalue()
+
+
+class TestPrintFailure:
+    """print_failure lists each error as text, never as Rich markup."""
+
+    def test_markup_like_error_text_is_printed_verbatim(self) -> None:
+        from chaoscypher_cli.utils.console import print_failure
+
+        buf = StringIO()
+        test_console = Console(file=buf, highlight=False, markup=True, width=200)
+
+        with patch("chaoscypher_cli.utils.console.get_console", return_value=test_console):
+            print_failure("Build failed", ["pack [bold]alpha[/bold] is missing", "bad [/x] close"])
+
+        out = buf.getvalue()
+        assert "  ✗ pack [bold]alpha[/bold] is missing" in out
+        assert "  ✗ bad [/x] close" in out
 
 
 class TestPrintJson:

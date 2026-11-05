@@ -11,6 +11,7 @@ from rich.console import Console
 
 from chaoscypher_cli.commands.template.utils import parse_property
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_caught_error
 from chaoscypher_core.exceptions import NotFoundError
 
 
@@ -97,7 +98,7 @@ def update(
                         f"  [dim]Adding property:[/dim] {prop['name']} ({prop['property_type']})"
                     )
                 except ValueError as e:
-                    console.print(f"[red]Error:[/red] {e}")
+                    print_caught_error(e, console=console)
                     sys.exit(1)
 
             updates["properties"] = properties
@@ -145,5 +146,5 @@ def update(
         console.print(f"[red]Template not found:[/red] {template_id}")
         sys.exit(1)
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)

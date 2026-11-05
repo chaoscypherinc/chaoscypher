@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.prompt import Confirm
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_caught_error
 from chaoscypher_core.exceptions import NotFoundError
 
 
@@ -72,5 +73,5 @@ def delete(template_id: str, force: bool, database: str) -> None:
         console.print(f"[red]Template not found:[/red] {template_id}")
         sys.exit(1)
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)

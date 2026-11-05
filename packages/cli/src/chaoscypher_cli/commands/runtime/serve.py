@@ -9,13 +9,14 @@ Launches Cortex for local knowledge graph access.
 import os
 import subprocess
 import sys
-from typing import Any
+from typing import Any, cast
 
 import click
 from rich.console import Console
 from rich.panel import Panel
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_caught_error
 from chaoscypher_core.app_config import get_settings
 
 
@@ -142,8 +143,123 @@ def serve(
         console.print("\n[yellow]Server stopped.[/yellow]")
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)
+
+
+def _build_fallback_app(database: str) -> Any:
+    """The fallback's read-only FastAPI app (no auth: the Host check is its only guard).
+
+    The Host check blocks DNS rebinding: a page the user visits whose name re-resolves
+    to 127.0.0.1 reaches this server same-origin, so CORS is never consulted, and
+    without the check it could read the whole graph.
+    """
+    from fastapi import FastAPI, HTTPException, Query, Request, Response
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import JSONResponse
+
+    from chaoscypher_cli.context import get_context
+    from chaoscypher_core.utils.host_header import host_allowed
+
+    # Create minimal FastAPI app
+    app = FastAPI(
+        title="ChaosCypher Query API (Fallback)",
+        description="Lightweight local knowledge graph query API",
+        version="0.1.0",
+    )
+
+    # Add CORS middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(get_settings().cors.dev_fallback_origins),
+        allow_credentials=True,
+        allow_methods=["GET", "OPTIONS", "HEAD"],  # Read-only
+        allow_headers=["Content-Type", "Authorization"],
+    )
+
+    # Added last, so it runs first: a request for another host is refused before CORS.
+    # Cortex's rule (security.allowed_hosts / allow_external_access, re-read per request),
+    # without Cortex's pre-setup bypass: a CLI install has no setup wizard to close it.
+    @app.middleware("http")
+    async def check_host(request: Request, call_next: Any) -> Response:
+        """Answer only a request whose Host header the allow-list names; else a 421."""
+        security = get_settings().security
+        if host_allowed(
+            request.headers.get("host", ""),
+            allowed_hosts=security.allowed_hosts,
+            allow_external_access=security.allow_external_access,
+        ):
+            return cast("Response", await call_next(request))
+        return JSONResponse(
+            {"error": "host_not_allowed", "allowed_hosts": list(security.allowed_hosts)},
+            status_code=421,
+        )
+
+    # Health check endpoint
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok", "database": database}
+
+    # Stats endpoint
+    @app.get("/api/v1/stats")
+    def get_stats() -> dict[str, Any]:
+        ctx = get_context(database_name=database)
+        return ctx.get_stats()
+
+    # Nodes endpoint. Query(ge=1) on limit: a client-supplied limit=0
+    # would otherwise ZeroDivisionError into a 500.
+    @app.get("/api/v1/nodes")
+    def list_nodes(
+        limit: int = Query(_SERVE_PAGE_SIZE, ge=1),
+        offset: int = Query(0, ge=0),
+        template_id: str | None = None,
+    ) -> dict[str, Any]:
+        ctx = get_context(database_name=database)
+        return ctx.node_service.list_nodes(
+            template_id=template_id,
+            page=offset // limit + 1,
+            page_size=limit,
+        )
+
+    # Node by ID endpoint
+    @app.get("/api/v1/nodes/{node_id}")
+    def get_node(node_id: str) -> dict[str, Any]:
+        ctx = get_context(database_name=database)
+        node = ctx.node_service.get_node(node_id)
+        if not node:
+            raise HTTPException(status_code=404, detail="Node not found")
+        return node
+
+    # Edges endpoint
+    @app.get("/api/v1/edges")
+    def list_edges(
+        limit: int = Query(_SERVE_PAGE_SIZE, ge=1),
+        offset: int = Query(0, ge=0),
+        source_node_id: str | None = None,
+    ) -> dict[str, Any]:
+        ctx = get_context(database_name=database)
+        return ctx.edge_service.list_edges(
+            source_node_id=source_node_id,
+            page=offset // limit + 1,
+            page_size=limit,
+        )
+
+    # Templates endpoint
+    @app.get("/api/v1/templates")
+    def list_templates() -> dict[str, Any]:
+        ctx = get_context(database_name=database)
+        return ctx.template_service.list_templates()
+
+    # Template by ID endpoint
+    @app.get("/api/v1/templates/{template_id}")
+    def get_template(template_id: str) -> dict[str, Any]:
+        ctx = get_context(database_name=database)
+        template = ctx.template_service.get_template(template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+        return template
+
+    return app
 
 
 def _run_builtin_server(database: str, host: str, port: int, reload: bool) -> None:
@@ -154,90 +270,8 @@ def _run_builtin_server(database: str, host: str, port: int, reload: bool) -> No
     """
     try:
         import uvicorn
-        from fastapi import FastAPI, HTTPException, Query
-        from fastapi.middleware.cors import CORSMiddleware
 
-        from chaoscypher_cli.context import get_context
-
-        # Create minimal FastAPI app
-        app = FastAPI(
-            title="ChaosCypher Query API (Fallback)",
-            description="Lightweight local knowledge graph query API",
-            version="0.1.0",
-        )
-
-        # Add CORS middleware
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=list(get_settings().cors.dev_fallback_origins),
-            allow_credentials=True,
-            allow_methods=["GET", "OPTIONS", "HEAD"],  # Read-only
-            allow_headers=["Content-Type", "Authorization"],
-        )
-
-        # Health check endpoint
-        @app.get("/health")
-        def health() -> dict[str, str]:
-            return {"status": "ok", "database": database}
-
-        # Stats endpoint
-        @app.get("/api/v1/stats")
-        def get_stats() -> dict[str, Any]:
-            ctx = get_context(database_name=database)
-            return ctx.get_stats()
-
-        # Nodes endpoint. Query(ge=1) on limit: a client-supplied limit=0
-        # would otherwise ZeroDivisionError into a 500.
-        @app.get("/api/v1/nodes")
-        def list_nodes(
-            limit: int = Query(_SERVE_PAGE_SIZE, ge=1),
-            offset: int = Query(0, ge=0),
-            template_id: str | None = None,
-        ) -> dict[str, Any]:
-            ctx = get_context(database_name=database)
-            return ctx.node_service.list_nodes(
-                template_id=template_id,
-                page=offset // limit + 1,
-                page_size=limit,
-            )
-
-        # Node by ID endpoint
-        @app.get("/api/v1/nodes/{node_id}")
-        def get_node(node_id: str) -> dict[str, Any]:
-            ctx = get_context(database_name=database)
-            node = ctx.node_service.get_node(node_id)
-            if not node:
-                raise HTTPException(status_code=404, detail="Node not found")
-            return node
-
-        # Edges endpoint
-        @app.get("/api/v1/edges")
-        def list_edges(
-            limit: int = Query(_SERVE_PAGE_SIZE, ge=1),
-            offset: int = Query(0, ge=0),
-            source_node_id: str | None = None,
-        ) -> dict[str, Any]:
-            ctx = get_context(database_name=database)
-            return ctx.edge_service.list_edges(
-                source_node_id=source_node_id,
-                page=offset // limit + 1,
-                page_size=limit,
-            )
-
-        # Templates endpoint
-        @app.get("/api/v1/templates")
-        def list_templates() -> dict[str, Any]:
-            ctx = get_context(database_name=database)
-            return ctx.template_service.list_templates()
-
-        # Template by ID endpoint
-        @app.get("/api/v1/templates/{template_id}")
-        def get_template(template_id: str) -> dict[str, Any]:
-            ctx = get_context(database_name=database)
-            template = ctx.template_service.get_template(template_id)
-            if not template:
-                raise HTTPException(status_code=404, detail="Template not found")
-            return template
+        app = _build_fallback_app(database)
 
         console.print("[green]Fallback server starting...[/green]")
 

@@ -5,7 +5,8 @@
  * Source Table Row Component
  *
  * Renders a single row in the sources table, including the selection
- * checkbox, title cell with domain icon and tag chips, status cell,
+ * checkbox, title cell with domain icon, tag chips and the summary as a
+ * secondary line under the title, status cell,
  * and the 3-dot action button. A page of an imported site that the site no
  * longer lists is marked "Gone from site", and one the site leaves out "Left out".
  */
@@ -122,56 +123,73 @@ export function SourceRow({
                 : <InfoIcon sx={{ fontSize: 16 }} />}
             </IconButton>
           </Tooltip>
-          <Typography variant="body2">{source.title}</Typography>
-          {source.site_gone_at && (
-            <Tooltip
-              title="The site no longer lists this page. It stays searchable until you delete it."
-              arrow
-            >
-              <Chip label="Gone from site" size="small" color="warning" variant="outlined" sx={{ height: 20, fontSize: '0.7rem' }} />
-            </Tooltip>
-          )}
-          {source.site_left_out && (
-            <Tooltip
-              title="The site leaves this page out: it keeps what it has and a check for updates does not check it."
-              arrow
-            >
-              <Chip label="Left out" size="small" variant="outlined" sx={{ height: 20, fontSize: '0.7rem' }} />
-            </Tooltip>
-          )}
-          {tags.length > 0 && (
-            <>
-              {visibleTags.map((tag) => (
-                <Chip
-                  key={tag.id}
-                  label={tag.name}
-                  size="small"
-                  sx={{
-                    height: 20,
-                    fontSize: '0.7rem',
-                    bgcolor: tag.color || 'grey.500',
-                    color: 'white',
-                  }}
-                />
-              ))}
-              {hiddenCount > 0 && !tagsExpanded && (
-                <Chip
-                  label={`+${hiddenCount}`}
-                  size="small"
-                  variant="outlined"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setTagsExpanded(true);
-                  }}
-                  sx={{
-                    height: 20,
-                    fontSize: '0.7rem',
-                    cursor: 'pointer',
-                  }}
-                />
+          <Box sx={{ minWidth: 0, flex: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography variant="body2">{source.title}</Typography>
+              {source.site_gone_at && (
+                <Tooltip
+                  title="The site no longer lists this page. It stays searchable until you delete it."
+                  arrow
+                >
+                  <Chip label="Gone from site" size="small" color="warning" variant="outlined" sx={{ height: 20, fontSize: '0.7rem' }} />
+                </Tooltip>
               )}
-            </>
-          )}
+              {source.site_left_out && (
+                <Tooltip
+                  title="The site leaves this page out: it keeps what it has and a check for updates does not check it."
+                  arrow
+                >
+                  <Chip label="Left out" size="small" variant="outlined" sx={{ height: 20, fontSize: '0.7rem' }} />
+                </Tooltip>
+              )}
+              {tags.length > 0 && (
+                <>
+                  {visibleTags.map((tag) => (
+                    <Chip
+                      key={tag.id}
+                      label={tag.name}
+                      size="small"
+                      sx={{
+                        height: 20,
+                        fontSize: '0.7rem',
+                        bgcolor: tag.color || 'grey.500',
+                        color: 'white',
+                      }}
+                    />
+                  ))}
+                  {hiddenCount > 0 && !tagsExpanded && (
+                    <Chip
+                      label={`+${hiddenCount}`}
+                      size="small"
+                      variant="outlined"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setTagsExpanded(true);
+                      }}
+                      sx={{
+                        height: 20,
+                        fontSize: '0.7rem',
+                        cursor: 'pointer',
+                      }}
+                    />
+                  )}
+                </>
+              )}
+            </Box>
+            {source.summary && (
+              // One line under the title; the full text on hover. Width 0
+              // with a 100% floor keeps the line from widening the column.
+              <Typography
+                variant="body2"
+                noWrap
+                title={source.summary}
+                data-testid="source-summary"
+                sx={{ color: 'text.secondary', width: 0, minWidth: '100%' }}
+              >
+                {source.summary}
+              </Typography>
+            )}
+          </Box>
         </Box>
       </TableCell>
       <TableCell>

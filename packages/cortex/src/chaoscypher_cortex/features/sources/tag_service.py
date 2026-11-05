@@ -13,6 +13,8 @@ import structlog
 
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from chaoscypher_core.services.graph.management.source import (
         SourceService as EngineSourceService,
     )
@@ -100,3 +102,24 @@ class TagService:
     def get_source_tags(self, source_id: str) -> list[dict[str, Any]]:
         """Get all tags assigned to a source."""
         return self.engine_service.get_source_tags(source_id)
+
+    def edit_source_tags(
+        self,
+        source_id: str,
+        *,
+        add: Sequence[str] = (),
+        remove: Sequence[str] = (),
+        replace: Sequence[str] | None = None,
+    ) -> list[str]:
+        """Add, remove or replace a source's tags by name; returns its tags, sorted.
+
+        Core's ``tag_source`` (the one tag edit MCP and the CLI use too).
+
+        Raises:
+            TagRuleError: a tag breaks the rule, ``replace`` comes with
+                ``add``/``remove``, or the result would be over the cap.
+            NotFoundError: no source has ``source_id``.
+            ValidationError: ``source_id`` is a memory.
+
+        """
+        return self.engine_service.tag_source(source_id, add=add, remove=remove, replace=replace)

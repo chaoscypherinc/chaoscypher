@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chaoscypher-core"
-version = "0.6.0"
+version = "0.7.0"
 description = "Chaos Cypher Core - Knowledge graph library with hexagonal architecture"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -107,7 +107,7 @@ dependencies = [
     "langchain>=1.2.15,<2",
     "langchain_core>=1.2.28,<2",
     "langchain_text_splitters>=1.1.0,<2",
-    "langgraph>=1.1.6,<2",
+    "langgraph>=1.2.14,<2",
     "langchain_ollama>=1.1.0,<2",
     "langchain_openai>=1.1.10,<2",
     "langchain_anthropic>=1.4.0,<2",

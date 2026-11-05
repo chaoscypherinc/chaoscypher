@@ -10,13 +10,23 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
+from sqlalchemy.exc import IntegrityError
 
-from chaoscypher_core.models import SourceDeletion
+from chaoscypher_core.exceptions import ConflictError, NotFoundError
+from chaoscypher_core.models import SourceDeletion, TagMatch
+from chaoscypher_core.services.sources.tags import (
+    edit_source_tags,
+    find_tags,
+    get_or_create_tag,
+    normalize_filter_tags,
+    validate_tag,
+)
 from chaoscypher_core.utils.id import generate_id
+from chaoscypher_core.utils.tool_failure import discard_failed_work
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from typing import Protocol
 
     from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
@@ -27,6 +37,8 @@ if TYPE_CHECKING:
     from chaoscypher_core.ports.storage_citations import CitationStorageProtocol
     from chaoscypher_core.ports.storage_source_tags import SourceTagStorageProtocol
     from chaoscypher_core.ports.storage_sources import SourceStorageProtocol
+    from chaoscypher_core.ports.transactional import TransactionalAdapterProtocol
+    from chaoscypher_core.ports.types import DocumentListing
     from chaoscypher_core.settings import EngineSettings
 
     class SourcesProtocol(
@@ -34,9 +46,10 @@ if TYPE_CHECKING:
         SourceTagStorageProtocol,
         ChunkStorageProtocol,
         CitationStorageProtocol,
+        TransactionalAdapterProtocol,
         Protocol,
     ):
-        """Combined protocol for SourceService — covers CRUD, tags, chunks, citations."""
+        """Combined protocol for SourceService — CRUD, tags, chunks, citations, transactions."""
 
 
 logger = structlog.get_logger(__name__)
@@ -74,6 +87,11 @@ def remove_chunk_vectors(search_repo: Any, source_id: str, chunk_ids: list[str])
         logger.warning(
             "chunk_embeddings_cleanup_failed", source_id=source_id, chunk_count=len(chunk_ids)
         )
+
+
+def _tag_name_taken(name: str) -> ConflictError:
+    """The refusal of a rename to a name another tag of the database has."""
+    return ConflictError(f'a tag named "{name}" already exists', details={"name": name})
 
 
 class SourceService:
@@ -133,6 +151,8 @@ class SourceService:
         tag_id: str | None = None,
         site_id: str | None = None,
         in_site: bool | None = None,
+        tags: Sequence[str] = (),
+        match: TagMatch = TagMatch.ANY,
     ) -> dict[str, Any]:
         """List sources with filtering and pagination.
 
@@ -147,6 +167,10 @@ class SourceService:
             site_id: Only the pages of this imported site
             in_site: True: only pages of imported sites; False: only sources
                 outside any site
+            tags: Tag names, checked and normalised by the tag rule (a filter
+                has no cap); only sources carrying them, inside the query
+                before the page. Empty filters nothing.
+            match: ``ANY`` or ``ALL`` of ``tags``
 
         Returns:
             Dict with keys:
@@ -154,6 +178,9 @@ class SourceService:
                 - total: Total count
                 - page: Current page
                 - page_size: Items per page
+
+        Raises:
+            TagRuleError: a filter tag breaks the tag rule.
 
         """
         sources, total = self.repository.list_sources(
@@ -166,6 +193,8 @@ class SourceService:
             tag_id=tag_id,
             site_id=site_id,
             in_site=in_site,
+            tags=normalize_filter_tags(tags),
+            match=match,
         )
 
         return {"sources": sources, "total": total, "page": page, "page_size": page_size}
@@ -469,38 +498,28 @@ class SourceService:
         description: str | None = None,
         database_name: str = "",
     ) -> dict[str, Any]:
-        """Create a new tag.
+        """Create a tag, or return the one the rule already names (``"Research"`` is ``research``).
 
         Args:
-            name: Tag name
-            color: Optional color (hex)
-            description: Optional human-readable description
+            name: Tag name, checked and normalised by the tag rule
+            color: Optional color (hex), used only when the tag is created
+            description: Optional human-readable description, likewise
             database_name: Database name (optional, uses repository's database if not provided)
 
         Returns:
-            Created tag dict
+            The created or existing tag dict
+
+        Raises:
+            TagRuleError: ``name`` breaks the tag rule.
 
         """
-        # Use repository's database_name if not explicitly provided
-        if not database_name:
-            database_name = self.database_name
-
-        # Return existing tag if name already exists (case-insensitive)
-        existing_tags = self.repository.list_tags(database_name)
-        for existing in existing_tags:
-            if existing["name"].lower() == name.lower():
-                return existing
-
-        tag = {
-            "id": generate_id(),
-            "database_name": database_name,
-            "name": name,
-            "color": color,
-            "description": description,
-            "created_at": datetime.now(UTC),
-        }
-
-        return self.repository.create_tag(tag)
+        return get_or_create_tag(
+            self.repository,
+            database_name or self.database_name,
+            name,
+            color=color,
+            description=description,
+        )
 
     def update_tag(
         self,
@@ -520,19 +539,29 @@ class SourceService:
         Returns:
             Updated tag dict, None if not found
 
+        Raises:
+            TagRuleError: ``name`` breaks the tag rule.
+            ConflictError: another tag in the database already has ``name``.
+
         """
-        tag = self.repository.get_tag(tag_id, self.database_name)
-        if not tag:
+        if not self.repository.get_tag(tag_id, self.database_name):
             return None
-
         if name is not None:
-            tag["name"] = name
-        if color is not None:
-            tag["color"] = color
-        if description is not None:
-            tag["description"] = description
-
-        return self.repository.update_tag(tag)
+            name = validate_tag(name)
+            found, _unknown = find_tags(self.repository, self.database_name, [name])
+            if any(other["id"] != tag_id for other in found):
+                raise _tag_name_taken(name)
+        # Only the fields being changed: the repository skips None, and a
+        # read-back row's other values (its created_at, as text) never go back.
+        changes = {"id": tag_id, "name": name, "color": color, "description": description}
+        try:
+            return self.repository.update_tag(changes)
+        except IntegrityError as exc:
+            discard_failed_work(getattr(self.repository, "session", None))
+            if name is None:
+                raise
+            # A concurrent rename took the name between the check and the write.
+            raise _tag_name_taken(name) from exc
 
     def delete_tag(self, tag_id: str) -> bool:
         """Delete a tag."""
@@ -546,13 +575,77 @@ class SourceService:
         """Get tags for multiple sources in a single query."""
         return self.repository.get_source_tags_batch(source_ids)
 
-    def assign_tag(self, source_id: str, tag_id: str) -> dict[str, Any]:
-        """Assign a tag to a source."""
-        return self.repository.assign_tag(source_id, tag_id, self.database_name)
+    def assign_tag(self, source_id: str, tag_id: str) -> list[str]:
+        """Add the tag with id ``tag_id`` to a document; returns its tags, sorted.
+
+        The tag's name goes through the one tag edit
+        (:func:`~chaoscypher_core.services.sources.tags.edit_source_tags`), so
+        the cap, the memory rule and the writer lock apply as for a by-name add.
+        Assigning a tag the document already carries is a no-op.
+
+        Raises:
+            NotFoundError: no tag has ``tag_id``, or no document has ``source_id``.
+            ValidationError: ``source_id`` is a memory.
+            TagRuleError: the document would carry more than the cap.
+
+        """
+        tag = self.repository.get_tag(tag_id, self.database_name)
+        if tag is None:
+            raise NotFoundError("Tag", tag_id, message=f'No tag has the id "{tag_id}".')
+        return edit_source_tags(
+            self.repository, self.database_name, source_id, add=[str(tag["name"])]
+        )
 
     def unassign_tag(self, source_id: str, tag_id: str) -> bool:
         """Remove a tag from a source."""
         return self.repository.unassign_tag(source_id, tag_id)
+
+    def tag_source(
+        self,
+        source_id: str,
+        *,
+        add: Sequence[str] = (),
+        remove: Sequence[str] = (),
+        replace: Sequence[str] | None = None,
+    ) -> list[str]:
+        """Add, remove or replace a document's tags by name; returns its tags, sorted.
+
+        See :func:`~chaoscypher_core.services.sources.tags.edit_source_tags`.
+        """
+        return edit_source_tags(
+            self.repository, self.database_name, source_id, add=add, remove=remove, replace=replace
+        )
+
+    def list_documents(
+        self,
+        *,
+        tags: Sequence[str] = (),
+        match: TagMatch = TagMatch.ANY,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[DocumentListing], int]:
+        """List the documents (memories excluded), newest first, optionally by tag.
+
+        Args:
+            tags: Tag names, checked and normalised by the tag rule; empty lists everything.
+            match: ``ANY`` or ``ALL`` of ``tags``.
+            limit: Page size.
+            offset: Documents to skip.
+
+        Returns:
+            The page and the total number of matching documents.
+
+        Raises:
+            TagRuleError: a filter tag breaks the tag rule (a filter has no cap).
+
+        """
+        return self.repository.list_documents(
+            self.database_name,
+            tags=normalize_filter_tags(tags),
+            match=match,
+            limit=limit,
+            offset=offset,
+        )
 
     # ================================
     # Chunk Operations

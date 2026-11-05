@@ -116,3 +116,18 @@ def test_embeddings_written_while_another_writer_deletes_a_node_never_fail(
     changed = first.update_node_embeddings_batch({"pierre": [0.1] * 8, "lyon": [0.2] * 8})
     assert attempts == ["database is locked"]  # the read and the write held the lock
     assert changed == 2
+
+
+def test_write_locked_without_a_session_is_a_typed_error(tmp_path: Path) -> None:
+    """A connected adapter that lost its session refuses with InvalidStateError, not an assert."""
+    from chaoscypher_core.exceptions import InvalidStateError
+
+    adapter, _repository_unused = _repository(tmp_path / "lost.db")
+    session = adapter.session
+    adapter.session = None
+    try:
+        with pytest.raises(InvalidStateError, match="write_locked called before connect"):
+            adapter.write_locked()
+    finally:
+        adapter.session = session
+        adapter.disconnect()

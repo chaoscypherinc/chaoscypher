@@ -346,14 +346,27 @@ For detailed architecture of each pipeline stage, see the [Extraction Pipeline A
 
 ## Tags
 
-Tags help organize sources into categories. Each tag has a name, optional color, and optional description.
+Tags group documents: `research`, `project:alpha`, `q3_notes`. Each tag has a name, an optional colour and an optional description, and each database has its own set of tags.
+
+**The tag rule.** One rule holds everywhere a tag is given: the web UI, the API, the CLI, MCP and package import.
+
+- A tag is trimmed and lower-cased first, so `Research` and ` research ` are the tag `research`.
+- After that it must use only `a-z`, `0-9`, `:`, `_` and `-`, start with a letter or digit, and be at most 64 characters long. A tag that does not fit is refused, never quietly changed: `tag "Work Docs" is not allowed: use a-z, 0-9, ':', '_' or '-', starting with a letter or digit, at most 64 characters`.
+- A document carries at most 32 tags. A change that would give it more is refused, and nothing is changed: `a document can carry at most 32 tags; this would give it 33`.
+- The same tag given twice counts once.
+
+**Adding a document again.** Tags given when you add a document that is already there (a skipped duplicate, an MCP re-add) are **added to** its tags. To make them the whole list, use `replace_tags` (MCP) or edit the tags directly (`chaoscypher source tag … --replace`, `PATCH /api/v1/sources/{id}/tags`).
+
+**Imported packages.** A package's keywords become the document's tags. A keyword the rule refuses is skipped with a warning in the import's result, as are keywords past the 32 cap.
+
+**Tags from before 0.7.0.** Migration `0026` renames every existing tag to fit the rule: it lower-cases the name and turns each run of other characters into one `-` (`Work Docs` becomes `work-docs`). Tags that then share a name are merged into the oldest one, which keeps its colour. When it would change any tag, the migration waits for your confirmation and lists every rename and merge first: run `chaoscypher db migrate status` to see them, then apply it from the upgrade page or with `chaoscypher db migrate apply` (MCP clients see the same list in `upgrade_status`). A database whose tags already fit the rule upgrades without asking.
 
 <Tabs>
 <TabItem value="web-ui" label="Web UI">
 
 
-- Create, assign and remove tags from a committed source's detail page header (the tag editor next to the title)
-- Tags support inline editing directly in the UI
+- Create, assign and remove tags from a committed source's detail page header (the tag editor next to the title). A refused tag shows the rule's message.
+- Filter the sources list by tags; with two or more tags chosen, choose whether a source must carry **any** of them or **all** of them.
 
 ![Sources list with status and entity counts](/img/screenshots/sources-list.png)
 
@@ -361,32 +374,60 @@ Tags help organize sources into categories. Each tag has a name, optional color,
 <TabItem value="cli" label="CLI">
 
 
-Tags are managed through the API or Web UI. The CLI supports tag-based scoping in chat:
-
 ```bash
+# Tag a document as you add it (repeat --tag)
+chaoscypher source add report.pdf --tag research --tag project:alpha
+
+# Add, remove, replace or clear a document's tags
+chaoscypher source tag <source_id> --add q3 --remove draft
+chaoscypher source tag <source_id> --replace research
+chaoscypher source tag <source_id> --clear
+
+# List or search only the documents carrying a tag
+chaoscypher source list --tag research --tag project:alpha --match all
+chaoscypher source search "budget" --tag research
+
 # Chat scoped to sources with a specific tag
 chaoscypher chat -t "research" "Summarize the findings"
 ```
+
+See [`source tag`](../reference/cli/sources.md#source-tag) for every option.
 
 </TabItem>
 <TabItem value="api" label="API">
 
 
 ```bash
-# Create a tag
-curl -X POST http://localhost:8080/api/v1/sources/tags \
-  -H "Content-Type: application/json" \
-  -d '{"name": "research", "color": "#1a73e8"}'
+# Upload with tags (repeat the form field) and a summary
+curl -X POST http://localhost:8080/api/v1/sources \
+  -F "file=@report.pdf" -F "tags=research" -F "tags=project:alpha" \
+  -F "summary=Quarterly research report."
 
-# Assign tag to a source
-curl -X POST http://localhost:8080/api/v1/sources/{source_id}/tags/{tag_id}
+# Add and remove tags by name
+curl -X PATCH http://localhost:8080/api/v1/sources/{source_id}/tags \
+  -H "Content-Type: application/json" \
+  -d '{"add": ["q3"], "remove": ["draft"]}'
+
+# List the sources carrying both tags
+curl "http://localhost:8080/api/v1/sources?tags=research&tags=project:alpha&match=all"
 ```
+
+See [Sources API — tags](../reference/api/sources.md#edit-a-sources-tags-by-name).
 
 </TabItem>
 </Tabs>
 
+**Searching inside a tag set.** `source search --tag`, MCP `search_chunks`, `graphrag_search` and `list_documents` with `tags`, and the API's `?tags=` filter apply the tags inside the search itself, before the result limit, so a scoped search returns a full page of matches from those documents. `match` is `any` (the default) or `all`. A tag set that no document carries returns nothing; it never falls back to searching everything. MCP `search_chunks` and `graphrag_search` tag scopes are strict: chunks come only from the tagged documents, and so does `graphrag_search`'s graph: an entity you made by hand, one no document backs, or a relationship only an untagged document states is left out (a source scope, by contrast, keeps them). Chat's tag scoping (`chaoscypher chat --tag`, the API's `tag_ids`) is a lens: it adds the tagged documents to the chat's sources and keeps the source scope's rule (see [Chat — Tag Scoping](chat.md#tag-scoping)).
 
-Tags are scoped to the current database — each database has its own set of tags.
+### Summaries
+
+Each document can carry a one-line summary, shown under its title in the sources list, in `source list`, in MCP `list_documents` and in the API's source responses.
+
+- **Written at import.** When a model is configured, the document's summary is written by that model once the document is indexed: one call, limited to `source_processing.import_summary_timeout_seconds` (60 s by default), never retried. If the call fails or times out, the document is indexed as usual and simply has no summary; no placeholder text is ever stored. With no model configured, no summary is written.
+- **Your own.** A summary you give (`--summary` on `source add`, `summary` on the upload, `PATCH /sources/{id}` or MCP `add_document`/`tag_document`) is used instead, and the model is not asked. A summary given again replaces the old one; leaving it out keeps it; `""` clears it. A summary longer than `source_processing.summary_max_chars` (300 by default) is refused.
+- **The switch.** `source_processing.import_summaries: false` turns import-time summaries off.
+- **Backfill.** `chaoscypher source summarize --missing` writes a summary for every indexed document that lacks one; without `--missing` it rewrites every summary, including ones you typed. See [`source summarize`](../reference/cli/sources.md#source-summarize).
+- **Packages.** Exports carry the summary as the document's `abstract`. Importing a package never calls a model. On a re-import, a document takes its title and summary from the package again, replacing a local edit, so edit them at the package's origin; a package without an abstract keeps the local summary.
 
 ## Content Filtering
 

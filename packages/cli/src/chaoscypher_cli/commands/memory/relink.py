@@ -19,6 +19,7 @@ import click
 from rich.console import Console
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_caught_error
 from chaoscypher_cli.utils.signals import Termination, cancelled_by_signal
 
 
@@ -95,6 +96,6 @@ def relink(database: str, limit: int | None, dry_run: bool, include_empty: bool)
             sys.exit(stopped.exit_code)
         click.echo(report.line())
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)
     sys.exit(0 if report.left == 0 else EXIT_LEFT_UNLINKED)

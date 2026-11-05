@@ -1273,6 +1273,35 @@ class TestFinalizeStateSafety:
         assert "src_001" not in orchestrator._commit_phase
 
     @pytest.mark.asyncio
+    async def test_cancel_before_commit_phase_rolls_status_back(self, orchestrator, mock_engine):
+        """A cancelled finalize (client timeout or disconnect) also rolls back.
+
+        ``CancelledError`` is a ``BaseException``, so an ``except Exception``
+        rollback skipped it and stranded the source at 'committing'.
+        """
+        import asyncio
+
+        from chaoscypher_core.models import SourceStatus
+
+        mock_engine.storage_adapter.get_source.return_value = _make_source(
+            status="mcp_extracting", filename="single.txt"
+        )
+        _finalize_ready(mock_engine)
+        mock_engine.extraction_service.finalize_distributed_extraction = AsyncMock(
+            side_effect=asyncio.CancelledError()
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await orchestrator.finalize("src_001")
+
+        calls = mock_engine.storage_adapter.transition_source_status.call_args_list
+        assert len(calls) == 2, "expected the claiming CAS plus the rollback"
+        assert calls[1].kwargs["from_status"] == SourceStatus.COMMITTING
+        assert calls[1].kwargs["to_status"] == SourceStatus.MCP_EXTRACTING
+        mock_engine.storage_adapter.complete_extraction.assert_not_called()
+        assert "src_001" not in orchestrator._commit_phase
+
+    @pytest.mark.asyncio
     async def test_failure_in_commit_phase_stays_committing(self, orchestrator, mock_engine):
         """Once the entity rows are written, a commit failure is left for recovery."""
         mock_engine.storage_adapter.get_source.return_value = _make_source(

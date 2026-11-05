@@ -19,6 +19,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_caught_error
 
 
 if TYPE_CHECKING:
@@ -139,7 +140,7 @@ def export(
         _display_export_results(output_path, file_size, ctx)
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)
 
 

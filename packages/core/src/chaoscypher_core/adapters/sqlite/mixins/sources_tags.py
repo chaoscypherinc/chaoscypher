@@ -7,23 +7,43 @@ Handles tag CRUD and tag-to-source assignment operations.
 Part of the unified SourceStorageProtocol implementation.
 """
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+from sqlalchemy import text
 from sqlalchemy.orm import load_only
-from sqlmodel import delete, select
+from sqlmodel import col, delete, select
 
 from chaoscypher_core.adapters.sqlite.mixin_base import SqliteMixinBase
 from chaoscypher_core.adapters.sqlite.models import (
     SourceTag,
     SourceTagAssignment,
 )
+from chaoscypher_core.adapters.sqlite.repos.source_tag_scope import tagged_sources_sql
 from chaoscypher_core.ports.storage_source_tags import SourceTagStorageProtocol
 from chaoscypher_core.utils.id import generate_id
 
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from chaoscypher_core.models import TagMatch
+
+
 logger = structlog.get_logger(__name__)
+
+_TAG_COLUMNS = (
+    SourceTag.id,
+    SourceTag.database_name,
+    SourceTag.name,
+    SourceTag.color,
+    SourceTag.description,
+    SourceTag.created_at,
+)
+"""Every column of a tag (``load_only`` on the tag list reads)."""
 
 
 class SourceTagsMixin(SqliteMixinBase, SourceTagStorageProtocol):
@@ -58,20 +78,93 @@ class SourceTagsMixin(SqliteMixinBase, SourceTagStorageProtocol):
         self._ensure_connected()
         stmt = (
             select(SourceTag)
-            .options(
-                load_only(
-                    SourceTag.id,
-                    SourceTag.database_name,
-                    SourceTag.name,
-                    SourceTag.color,
-                    SourceTag.description,
-                    SourceTag.created_at,
-                )
-            )
+            .options(load_only(*_TAG_COLUMNS))
             .where(SourceTag.database_name == database_name)
         )
         results = self.session.exec(stmt)
         return self._entities_to_dicts(results.all())
+
+    def get_tags_by_names(self, database_name: str, names: Sequence[str]) -> list[dict[str, Any]]:
+        """Return the tags of the database whose name is one of ``names`` (exact match)."""
+        if not names:
+            return []
+        self._ensure_connected()
+        stmt = (
+            select(SourceTag)
+            .options(load_only(*_TAG_COLUMNS))
+            .where(
+                SourceTag.database_name == database_name,
+                col(SourceTag.name).in_(list(names)),
+            )
+        )
+        return self._entities_to_dicts(self.session.exec(stmt).all())
+
+    def _assigned_tag_ids(self, source_id: str) -> set[str]:
+        """The ids of the tags assigned to the source."""
+        stmt = select(SourceTagAssignment.tag_id).where(SourceTagAssignment.source_id == source_id)
+        return set(self.session.exec(stmt).all())
+
+    def _assign_missing(
+        self, source_id: str, tag_ids: Sequence[str], database_name: str, assigned: set[str]
+    ) -> None:
+        """Add an assignment row for each of ``tag_ids`` not in ``assigned`` (no commit)."""
+        now = datetime.now(UTC)
+        for tag_id in dict.fromkeys(tag_ids):
+            if tag_id in assigned:
+                continue
+            self.session.add(
+                SourceTagAssignment(
+                    id=generate_id("assignment"),
+                    source_id=source_id,
+                    tag_id=tag_id,
+                    database_name=database_name,
+                    assigned_at=now,
+                )
+            )
+
+    def add_source_tags(self, source_id: str, tag_ids: Sequence[str], database_name: str) -> None:
+        """Assign each of ``tag_ids`` to the source; a pair already assigned is skipped."""
+        if not tag_ids:
+            return
+        self._ensure_connected()
+        self._assign_missing(source_id, tag_ids, database_name, self._assigned_tag_ids(source_id))
+        self._maybe_commit()
+
+    def remove_source_tags(self, source_id: str, tag_ids: Sequence[str]) -> None:
+        """Unassign each of ``tag_ids`` from the source; one it does not carry is a no-op."""
+        if not tag_ids:
+            return
+        self._ensure_connected()
+        stmt = delete(SourceTagAssignment).where(
+            col(SourceTagAssignment.source_id) == source_id,
+            col(SourceTagAssignment.tag_id).in_(list(tag_ids)),
+        )
+        self.session.execute(stmt)
+        self._maybe_commit()
+
+    def set_source_tags(self, source_id: str, tag_ids: Sequence[str], database_name: str) -> None:
+        """Make ``tag_ids`` exactly the source's tags: drop the others, add the missing, one commit."""
+        self._ensure_connected()
+        assigned = self._assigned_tag_ids(source_id)
+        dropped = assigned - set(tag_ids)
+        if dropped:
+            self.session.execute(
+                delete(SourceTagAssignment).where(
+                    col(SourceTagAssignment.source_id) == source_id,
+                    col(SourceTagAssignment.tag_id).in_(dropped),
+                )
+            )
+        self._assign_missing(source_id, tag_ids, database_name, assigned)
+        self._maybe_commit()
+
+    def tagged_source_ids(
+        self, database_name: str, tags: Sequence[str], match: TagMatch
+    ) -> list[str]:
+        """Return the ids of the sources carrying ``tags`` (any or all of them)."""
+        self._ensure_connected()
+        sql, params = tagged_sources_sql(tags, match, database_name=database_name)
+        rows = self.session.execute(text(sql), params).all()
+        return [row[0] for row in rows]
 
     def update_tag(self, tag_data: dict[str, Any]) -> dict[str, Any] | None:
         """Update tag fields."""

@@ -26,6 +26,19 @@ export type Source = components['schemas']['SourceResponse'];
 /** List-view projection (GET /api/v1/sources). Excludes large payload fields. */
 export type SourceSummary = components['schemas']['SourceSummaryResponse'];
 
+/** `any`: sources carrying any of the tags; `all`: carrying every one. */
+export type TagMatch = components['schemas']['TagMatch'];
+
+/**
+ * A filter on `GET /sources` by tag names. `tags` goes out as the repeated
+ * `tags=a&tags=b` FastAPI reads (the API client repeats array keys); `match`
+ * is meaningful only with tags.
+ */
+export interface SourceTagFilter {
+  tags?: string[];
+  match?: TagMatch;
+}
+
 // ========================================
 // Domain confirmation gate types
 // ========================================
@@ -49,6 +62,8 @@ export interface UnifiedSource {
   status: string;
   created_at: string;
   tags?: { id: string; name: string; color?: string }[];
+  /** The model-written summary, shown under the title; null when there is none. */
+  summary?: string | null;
 
   // Site import: the page's address, its site, and when a check for updates
   // first found it no longer listed on the site (kept until deleted).

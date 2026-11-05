@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
+from chaoscypher_core.utils.host_header import host_allowed, request_hostname
 from chaoscypher_cortex.shared.errors import negotiated_error_response
 from chaoscypher_cortex.shared.errors.host_blocked import build_host_blocked_html
 
@@ -38,14 +39,6 @@ if TYPE_CHECKING:
     from starlette.types import ASGIApp
 
     from chaoscypher_core.app_config import Settings
-
-
-def _extract_hostname(host_header: str) -> str:
-    """Strip port and brackets from a raw Host header."""
-    if host_header.startswith("["):
-        end = host_header.find("]")
-        return host_header[1:end] if end != -1 else host_header
-    return host_header.split(":", 1)[0]
 
 
 class HostHeaderCheckMiddleware(BaseHTTPMiddleware):
@@ -76,20 +69,15 @@ class HostHeaderCheckMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         sec = settings.security
-        allowed = {h.lower() for h in sec.allowed_hosts}
-
-        if sec.allow_external_access or "*" in allowed:
+        host_header = request.headers.get("host", "")
+        if host_allowed(
+            host_header,
+            allowed_hosts=sec.allowed_hosts,
+            allow_external_access=sec.allow_external_access,
+        ):
             return await call_next(request)
-
-        host_header = request.headers.get("host", "").lower()
-        if not host_header:
-            return self._blocked(request, "", sec.allowed_hosts)
-
-        hostname = _extract_hostname(host_header)
-        if hostname not in allowed:
-            return self._blocked(request, hostname, sec.allowed_hosts)
-
-        return await call_next(request)
+        hostname = request_hostname(host_header) if host_header else ""
+        return self._blocked(request, hostname, sec.allowed_hosts)
 
     def _blocked(
         self,

@@ -66,6 +66,7 @@ from chaoscypher_core.models import (
     TemplateCreate,
     is_memory_source,
 )
+from chaoscypher_core.policy import TAGS_PER_SOURCE_MAX
 from chaoscypher_core.services.export import ccx_identity, ccx_mapping
 from chaoscypher_core.services.graph.resolution.apply import (
     edge_create_snapshot,
@@ -78,6 +79,15 @@ from chaoscypher_core.services.package.importer.core_types import (
     bundle_packs,
 )
 from chaoscypher_core.services.package.importer.models import ImportOptions, ImportStats
+from chaoscypher_core.services.sources.labels import clean_summary
+from chaoscypher_core.services.sources.tags import (
+    TagRuleError,
+    check_tag_list,
+    ensure_tag_count,
+    get_or_create_tags,
+    source_tag_names,
+    validate_tag,
+)
 
 
 if TYPE_CHECKING:
@@ -1060,7 +1070,7 @@ class CcxImporter:
         source_ctx: dict[str, tuple[str, str | None]] = {}
         closures: list[tuple[str, dict[str, Any]]] = []
         for src_rec in source_records:
-            local_id, full_text = self._upsert_source(pkg, src_rec, database_name)
+            local_id, full_text = self._upsert_source(pkg, src_rec, database_name, stats)
             source_ctx[src_rec["@id"]] = (local_id, full_text)
             stats.sources_imported += 1
             stats.imported_source_ids.append(local_id)
@@ -1497,6 +1507,7 @@ class CcxImporter:
         pkg: Any,
         src_rec: dict[str, Any],
         database_name: str,
+        stats: ImportStats,
     ) -> tuple[str, str | None]:
         """Upsert one ``ccx:Source`` record; return ``(local id, full_text)``.
 
@@ -1552,34 +1563,89 @@ class CcxImporter:
         if isinstance(src_rec.get("extractionPacks"), list):
             source_dict["extraction_packs"] = list(src_rec["extractionPacks"])
 
+        summary = self._package_summary(src_rec.get("abstract"), display_name, stats)
+        if summary is not None:
+            source_dict["summary"] = summary
+
         row = self.sources.upsert_source_by_ccx_iri(ccx_iri, source_dict, database_name)
-        self._restore_source_tags(row["id"], src_rec.get("keywords"), database_name)
+        self._restore_source_tags(row["id"], src_rec.get("keywords"), database_name, stats)
         return row["id"], full_text
 
-    def _restore_source_tags(self, source_id: str, keywords: Any, database_name: str) -> None:
-        """Re-create + assign a source's tags from its CCX ``keywords``.
+    def _package_summary(self, abstract: Any, display_name: str, stats: ImportStats) -> str | None:
+        """The summary a CCX ``abstract`` names, through the one summary rule; no model is called.
 
-        Find-or-create each tag by name in the target database (so tags shared
-        across sources collapse to one row), then assign it. Idempotent:
-        ``assign_tag`` no-ops an existing assignment and the name lookup reuses
-        an existing tag, so a re-import doesn't duplicate.
+        A summary the rule refuses (too long, or not text) is named in ``stats.warnings``
+        and the import goes on without it. ``None`` (no abstract, or one that
+        cleans to nothing) leaves the column out of the upsert, so a re-import
+        keeps the local summary; a summary the package carries replaces it,
+        as the package's other source columns do.
+        """
+        if abstract is None:
+            return None
+        max_chars = self._engine_settings().source_processing.summary_max_chars
+        try:
+            return clean_summary(abstract, max_chars=max_chars)
+        except ValidationError as exc:
+            stats.warnings.append(
+                f'source "{display_name}": its summary was skipped: {exc.message}'
+            )
+            return None
+
+    def _restore_source_tags(
+        self, source_id: str, keywords: Any, database_name: str, stats: ImportStats
+    ) -> None:
+        """Assign a source the tags its CCX ``keywords`` name, through the tag rule.
+
+        Each keyword is checked and normalised (``"Work"`` and ``"WORK"`` are
+        one tag, ``work``); one the rule refuses is skipped and named in
+        ``stats.warnings``. The tags are added to the source's own (a re-import
+        never duplicates one), and the 32-tag cap applies to that union: every
+        tag the source has stays, the first new ones that fit are added, and
+        the rest are named in a warning with the union's count.
         """
         if not keywords or self.sources is None:
             return
-        from chaoscypher_core.utils.id import generate_id
-
-        existing = {t["name"]: t["id"] for t in self.sources.list_tags(database_name)}
-        for name in keywords:
-            if not isinstance(name, str) or not name.strip():
-                continue
-            tag_id = existing.get(name)
-            if tag_id is None:
-                created = self.sources.create_tag(
-                    {"id": generate_id("tag"), "name": name, "database_name": database_name}
+        try:
+            candidates = list(check_tag_list(keywords))
+        except TagRuleError as exc:
+            candidates = []
+            self._warn_source_tags(
+                stats, source_id, database_name, f"{exc.message}; the tags were skipped"
+            )
+        names: list[str] = []
+        for keyword in candidates:
+            try:
+                names.append(validate_tag(keyword))
+            except TagRuleError as exc:
+                self._warn_source_tags(
+                    stats, source_id, database_name, f"{exc.message}; the tag was skipped"
                 )
-                tag_id = created["id"]
-                existing[name] = tag_id
-            self.sources.assign_tag(source_id, tag_id, database_name)
+        # The local tags are read and the union written under the writer lock,
+        # so another writer cannot add tags between the cap and the write.
+        with self.sources.write_locked():
+            current = source_tag_names(self.sources, source_id)
+            new = [n for n in dict.fromkeys(names) if n not in current]
+            room = max(TAGS_PER_SOURCE_MAX - len(current), 0)
+            new, skipped = new[:room], new[room:]
+            if new:
+                tags = get_or_create_tags(self.sources, database_name, new)
+                self.sources.add_source_tags(source_id, [t["id"] for t in tags], database_name)
+        if skipped:
+            try:
+                ensure_tag_count(len(current) + len(new) + len(skipped))
+            except TagRuleError as exc:
+                self._warn_source_tags(
+                    stats, source_id, database_name, f"{exc.message}; skipped: {', '.join(skipped)}"
+                )
+
+    def _warn_source_tags(
+        self, stats: ImportStats, source_id: str, database_name: str, reason: str
+    ) -> None:
+        """Add ``source "<its name>": <reason>`` to the import's warnings."""
+        assert self.sources is not None
+        source = self.sources.get_source(source_id, database_name) or {}
+        name = source.get("title") or source.get("filename") or source_id
+        stats.warnings.append(f'source "{name}": {reason}')
 
     @staticmethod
     def _read_source_text(pkg: Any, src_rec: dict[str, Any]) -> str | None:

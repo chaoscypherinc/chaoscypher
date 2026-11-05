@@ -17,6 +17,7 @@ Maintainability: Replaces 200+ lines of custom formatters with ~50 lines
 
 import logging
 import sys
+from collections.abc import Sequence
 from typing import IO, TYPE_CHECKING, cast
 
 import structlog
@@ -39,6 +40,7 @@ def configure_logging(
     log_level: str = "INFO",
     _correlation_id_var_name: str = "correlation_id",
     stream: IO[str] | None = None,
+    extra_processors: Sequence[Processor] = (),
 ) -> None:
     """Configure application-wide structured logging with structlog.
 
@@ -51,6 +53,9 @@ def configure_logging(
         _correlation_id_var_name: Name of the context variable for correlation IDs (reserved)
         stream: Output stream for log messages. Defaults to sys.stdout.
             Use sys.stderr for MCP servers where stdout is reserved for protocol messages.
+        extra_processors: The caller's own processors, run after the event is prepared and
+            before an exception is rendered (so one can rewrite or drop ``exc_info``). The
+            CLI passes one that turns a database error's traceback into one plain line.
 
     Example:
         >>> # Development mode (human-readable, colored output)
@@ -84,6 +89,8 @@ def configure_logging(
         # Inside private_text() (a memory), no traceback or error text above DEBUG (D16);
         # before the renderer, so a traceback is dropped before it becomes text
         withhold_private_text,
+        # The caller's own, still before the traceback becomes text
+        *extra_processors,
         # Add exception info if present
         structlog.processors.ExceptionRenderer(),
         # Add source location for warnings/errors

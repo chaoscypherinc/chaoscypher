@@ -39,6 +39,7 @@ NOTHING_TO_ROLL_BACK = {
     "last_backup": None,
     "last_applied": [],
     "data_changing": False,
+    "first_build": False,
 }
 
 

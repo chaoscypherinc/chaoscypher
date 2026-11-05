@@ -21,6 +21,40 @@ import chaoscypher_cli.commands.upgrade as upgrade_module
 import chaoscypher_core.database.migrations.upgrade as upgrade_service_mod
 from chaoscypher_cli.__main__ import main
 from chaoscypher_cli.commands.upgrade import upgrade_command
+from chaoscypher_core.database.migrations.tiers import MigrationTier
+from chaoscypher_core.database.migrations.upgrade import (
+    PendingMigration,
+    PendingMigrationsResponse,
+)
+
+
+_HOLD = ['"Work Docs" → "work-docs"', '"[b]old" → "b-old"']
+
+
+class _HeldService:
+    """Stand-in whose pending 0026 holds: it would rename tags."""
+
+    applied: bool = False
+
+    def __init__(self, database_name: str) -> None:
+        _HeldService.applied = False
+
+    def pending(self) -> PendingMigrationsResponse:
+        return PendingMigrationsResponse(
+            ready=False,
+            blocked_on=[
+                PendingMigration(
+                    revision="0026",
+                    tier=MigrationTier.NEEDS_CONFIRMATION,
+                    description="Tag names become lower-case",
+                    hold=list(_HOLD),
+                )
+            ],
+        )
+
+    def apply(self) -> SimpleNamespace:
+        _HeldService.applied = True
+        return SimpleNamespace(applied=["0026"], current_revision="0026", backup_path=None)
 
 
 class _FakeService:
@@ -33,12 +67,12 @@ class _FakeService:
         _FakeService.last_database = database_name
         _FakeService.applied = False
 
-    def pending(self) -> SimpleNamespace:
-        return SimpleNamespace(
+    def pending(self) -> PendingMigrationsResponse:
+        return PendingMigrationsResponse(
             ready=False,
-            blocked_on=[SimpleNamespace(revision="0046", tier="safe_auto", description="x")],
-            message="",
-            last_backup=None,
+            blocked_on=[
+                PendingMigration(revision="0046", tier=MigrationTier.SAFE_AUTO, description="x")
+            ],
         )
 
     def apply(self) -> SimpleNamespace:
@@ -54,8 +88,8 @@ class _AtHeadService:
     def __init__(self, database_name: str) -> None:
         _AtHeadService.applied = False
 
-    def pending(self) -> SimpleNamespace:
-        return SimpleNamespace(ready=True, blocked_on=[], message="", last_backup=None)
+    def pending(self) -> PendingMigrationsResponse:
+        return PendingMigrationsResponse(ready=True)
 
     def apply(self) -> SimpleNamespace:  # pragma: no cover - must not run
         _AtHeadService.applied = True
@@ -110,3 +144,24 @@ def test_upgrade_builds_a_new_database_without_a_backup_or_record(isolated_setti
     assert current_revision(db) == head_revision()
     assert get_upgrade_state(db) == UpgradeState(ready=True)
     assert not (db.parent / "backups").exists()
+
+
+def test_upgrade_lists_the_hold_lines_and_applies_nothing_when_declined(monkeypatch) -> None:
+    """A held migration is never applied unseen: upgrade lists its changes and asks."""
+    monkeypatch.setattr(upgrade_service_mod, "UpgradeService", _HeldService)
+
+    result = CliRunner().invoke(upgrade_command, ["--database", "research"], input="n\n")
+
+    assert result.exit_code == 1, result.output
+    for line in _HOLD:
+        assert line in result.output
+    assert _HeldService.applied is False
+
+
+def test_upgrade_yes_applies_a_held_migration(monkeypatch) -> None:
+    monkeypatch.setattr(upgrade_service_mod, "UpgradeService", _HeldService)
+
+    result = CliRunner().invoke(upgrade_command, ["--database", "research", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert _HeldService.applied is True

@@ -22,6 +22,7 @@ import type {
   InferredRelationship,
   UrlImportOptions,
   UrlImportResponse,
+  SourceTagFilter,
 } from '../../types';
 
 /** The Add Source dialog's choices, as a URL import (or a site import) takes them. */
@@ -185,6 +186,7 @@ export function mapSourceToUnified(s: SourceSummary): UnifiedSource {
     status: s.status,
     created_at: s.created_at,
     tags: s.tags?.map(t => ({ id: t.id, name: t.name, color: t.color ?? undefined })),
+    summary: s.summary ?? null,
     origin_url: s.origin_url,
     site_id: s.site_id,
     site_gone_at: s.site_gone_at,
@@ -577,7 +579,7 @@ export const sourceProcessingApi = {
   // Unified List (single HTTP call, maps Source → UnifiedSource)
   // ========================================
 
-  listUnified: async (params?: {
+  listUnified: async (params?: SourceTagFilter & {
     stage?: 'queued' | 'processing' | 'active' | 'all';
     status?: string;
     source_type?: string;
@@ -593,6 +595,8 @@ export const sourceProcessingApi = {
           source_type: params?.source_type,
           status: params?.status,
           in_site: params?.in_site,
+          tags: params?.tags?.length ? params.tags : undefined,
+          match: params?.tags?.length ? params.match : undefined,
           page_size: DEFAULT_PUBLIC_SETTINGS.batch_graph_source_page_size,
         },
       });

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import structlog
-from sqlalchemy import func, or_
+from sqlalchemy import func, literal_column, or_
 from sqlalchemy.orm import load_only
 from sqlmodel import col, delete, select
 
@@ -21,6 +21,8 @@ from chaoscypher_core.adapters.sqlite.repos.graph.sqlite_membership_ops import (
 from chaoscypher_core.adapters.sqlite.repos.source_visibility import (
     attested_by,
     in_source_scope,
+    member_ids_column,
+    split_member_ids,
     visible,
 )
 from chaoscypher_core.adapters.sqlite.utils import (
@@ -92,6 +94,16 @@ def _stable_edge_id(
 
 # The columns an edge listing loads in full (every one: GraphEdge has no embedding to exclude),
 # shared by list_edges and list_edges_by_node so the two read the same rows the same way.
+_EDGE_MEMBERS = member_ids_column(GraphEdge)
+"""The edge's member source ids, loaded beside it so in-memory scope filters read membership.
+
+A correlated subquery per edge (about 100 ms on a 200k-edge PageRank load):
+selected only when a tag scope will read it, else :data:`_NO_EDGE_MEMBERS`.
+"""
+
+_NO_EDGE_MEMBERS: Any = literal_column("NULL").label("member_ids")
+""":data:`_EDGE_MEMBERS`'s place when no scope reads members: the edge's ``member_source_ids`` stays ``[]``."""
+
 _EDGE_COLUMNS = (
     GraphEdge.id,
     GraphEdge.database_name,
@@ -436,6 +448,7 @@ class EdgeOperationsMixin(MembershipOperationsMixin):
         outgoing: bool,
         limit_per_node: int,
         include_disabled_sources: bool = False,
+        with_members: bool = False,
     ) -> dict[str, list[Edge]]:
         """Each node's edges out of it (``outgoing``) or into it, as ``list_edges`` lists them.
 
@@ -444,8 +457,10 @@ class EdgeOperationsMixin(MembershipOperationsMixin):
         edges by id, in id order, loaded in full. One windowed query per ``SQL_IN_BATCH`` ids
         instead of one per node: the graph context listed edges node by node, 9,248 queries for
         one retrieval sample run, 40% of its time (2026-10-16). Every id is a key, an edgeless
-        node's list empty.
+        node's list empty. ``with_members`` fills each edge's ``member_source_ids`` (a tag
+        scope reads them); otherwise they stay ``[]`` and the members subquery never runs.
         """
+        members_column = _EDGE_MEMBERS if with_members else _NO_EDGE_MEMBERS
         key = GraphEdge.source_node_id if outgoing else GraphEdge.target_node_id
         found: dict[str, list[Edge]] = {node_id: [] for node_id in node_ids}
         for batch in id_batches(node_ids):
@@ -465,9 +480,9 @@ class EdgeOperationsMixin(MembershipOperationsMixin):
                 .options(load_only(*_EDGE_COLUMNS))
                 .order_by(key, GraphEdge.id)
             )
-            for db_edge in self.session.exec(statement).all():
+            for db_edge, members in self.session.execute(statement.add_columns(members_column)):
                 node_id = db_edge.source_node_id if outgoing else db_edge.target_node_id
-                found[node_id].append(self._db_edge_to_model(db_edge))
+                found[node_id].append(self._db_edge_to_model(db_edge, members=members))
         return found
 
     def edges_with_true_properties(
@@ -512,6 +527,7 @@ class EdgeOperationsMixin(MembershipOperationsMixin):
         limit: int = 10000,
         include_disabled_sources: bool = False,
         source_ids: list[str] | None = None,
+        attested_only: bool = False,
     ) -> list[SimpleNamespace]:
         """List edges with minimal fields for analytics (fast).
 
@@ -534,9 +550,19 @@ class EdgeOperationsMixin(MembershipOperationsMixin):
                 ``list_nodes_minimal``). Applied in SQL so the WHERE
                 runs before ``limit``; endpoint-level scope (both ends in the
                 loaded node set) remains the caller's responsibility.
+            attested_only: With ``source_ids``, a source scope that came from
+                document tags (owner decision 2026-11-05): the source node
+                must be attested by a listed source (a person-made or
+                source-less node is out), and so must the EDGE itself
+                (``attested_by``): a relationship only an unlisted source
+                states is out even between two listed nodes.
 
         Returns:
-            List of SimpleNamespace objects with minimal edge data
+            List of SimpleNamespace objects with minimal edge data: the
+            columns above plus ``source_id``, ``person_made`` and
+            ``member_source_ids`` (filled under ``attested_only`` only, else
+            ``[]``), so a tag scope's in-memory filter
+            (``item_in_source_scope``) reads the edge's membership.
 
         """
         flag_columns = [
@@ -554,6 +580,10 @@ class EdgeOperationsMixin(MembershipOperationsMixin):
             GraphEdge.target_node_id,
             GraphEdge.label,
             GraphEdge.template_id,
+            GraphEdge.source_id,
+            GraphEdge.person_made,
+            # the members subquery only when a tag scope's filter will read it
+            _EDGE_MEMBERS if attested_only else _NO_EDGE_MEMBERS,
             inverse_column,
             *flag_columns,
         ).where(GraphEdge.database_name == self.database_name)
@@ -568,7 +598,11 @@ class EdgeOperationsMixin(MembershipOperationsMixin):
             statement = statement.where(visible(GraphNode))
 
         if source_ids is not None:
-            statement = statement.where(in_source_scope(GraphNode, source_ids))
+            statement = statement.where(
+                in_source_scope(GraphNode, source_ids, attested_only=attested_only)
+            )
+            if attested_only:  # the relationship itself, not only its source node
+                statement = statement.where(attested_by(GraphEdge, source_ids))
 
         # Ordered by id like list_edges: a LIMIT with no ORDER BY hands the query
         # planner the choice of which rows to keep (audit wave 4).
@@ -582,7 +616,10 @@ class EdgeOperationsMixin(MembershipOperationsMixin):
                 target_node_id=row[2],
                 label=row[3],
                 template_id=row[4],
-                properties=_minimal_edge_properties(row[5], row[6:]),
+                source_id=row[5],
+                person_made=bool(row[6]),
+                member_source_ids=split_member_ids(row[7]),
+                properties=_minimal_edge_properties(row[8], row[9:]),
             )
             for row in rows
         ]
@@ -829,8 +866,8 @@ class EdgeOperationsMixin(MembershipOperationsMixin):
         )
         return [self._db_edge_to_model(e) for e in result_entities], inserted_count
 
-    def _db_edge_to_model(self, db_edge: GraphEdge) -> Edge:
-        """Convert database edge to Pydantic model."""
+    def _db_edge_to_model(self, db_edge: GraphEdge, members: str | None = None) -> Edge:
+        """Convert database edge to Pydantic model (``members``: a :data:`_EDGE_MEMBERS` value)."""
         return Edge(
             id=db_edge.id,
             template_id=db_edge.template_id,
@@ -840,6 +877,7 @@ class EdgeOperationsMixin(MembershipOperationsMixin):
             properties=db_edge.properties or {},
             source_id=db_edge.source_id,
             person_made=bool(db_edge.person_made),
+            member_source_ids=split_member_ids(members),
             valid_from=_iso_date(db_edge.valid_from),
             valid_to=_iso_date(db_edge.valid_to),
             closed_by_source_id=db_edge.closed_by_source_id,

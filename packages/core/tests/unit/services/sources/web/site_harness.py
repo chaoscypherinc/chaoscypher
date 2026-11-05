@@ -6,7 +6,7 @@
 ``SiteHarness`` wires the ``import_site`` handler the way the worker does: a
 SQLite adapter on an Alembic-migrated database, the real
 ``SourceProcessingService`` (its indexing queue replaced by a recorder), and
-app settings with the web, batching, paths and priorities groups. Fetches go
+app settings with the web, batching, source processing, paths and priorities groups. Fetches go
 through the real WebScraper to ``conftest.fake_site``: no network.
 """
 
@@ -27,7 +27,7 @@ from chaoscypher_core.models import SiteStatus
 from chaoscypher_core.operations.sources.site_import_handler import handle_import_site
 from chaoscypher_core.operations.sources.site_runs import begin_site_refresh, exclusion_keys
 from chaoscypher_core.services.sources.management.service import SourceProcessingService
-from chaoscypher_core.settings import BatchingSettings, WebSettings
+from chaoscypher_core.settings import BatchingSettings, SourceProcessingSettings, WebSettings
 
 
 if TYPE_CHECKING:
@@ -125,6 +125,7 @@ def build_harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **web: Any) -
     settings = SimpleNamespace(
         web=WebSettings(**web),
         batching=BatchingSettings(),
+        source_processing=SourceProcessingSettings(),
         paths=SimpleNamespace(max_filename_length=80),
         priorities=SimpleNamespace(background=50),
         current_database=DB,

@@ -148,6 +148,130 @@ def test_apply_upgrade_applies_when_confirmed(monkeypatch: pytest.MonkeyPatch) -
     assert "reconnect" in result["message"].lower()
 
 
+_HOLD = ['"Work Docs" → "work-docs"', '"Q3" → "q3"']
+
+
+def _held_0026(monkeypatch: pytest.MonkeyPatch) -> None:
+    """0026 is a needs_confirmation migration whose preview lists ``_HOLD``."""
+    import chaoscypher_core.mcp.maintenance as m
+    from chaoscypher_core.database.migrations import tiers
+    from chaoscypher_core.database.migrations.tiers import MigrationInfo, MigrationTier
+
+    monkeypatch.setattr(m, "get_db_path", lambda _name: Path("/data/app.db"))
+    monkeypatch.setattr(m, "pending_revisions", lambda _p: ["0026"])
+    monkeypatch.setattr(
+        m,
+        "read_migration_info",
+        lambda rev: MigrationInfo(rev, MigrationTier.NEEDS_CONFIRMATION, "", has_hold=True),
+    )
+    monkeypatch.setattr(tiers, "hold_preview", lambda _rev, _p: list(_HOLD))
+
+
+def test_apply_upgrade_asks_before_a_held_migration(monkeypatch: pytest.MonkeyPatch) -> None:
+    import chaoscypher_core.mcp.maintenance as m
+    from chaoscypher_core.database.migrations.upgrade import ApplyResponse
+
+    _held_0026(monkeypatch)
+
+    def _boom(self):  # apply must NOT run before the owner confirms
+        raise AssertionError("apply() should not run without confirm_destructive")
+
+    monkeypatch.setattr(m.UpgradeService, "apply", _boom)
+
+    result = m._handle_apply_upgrade("warpeace", confirm_destructive=False)
+
+    assert result["success"] is False
+    assert result["error_code"] == "CONFIRM_REQUIRED"
+    assert "0026" in result["error"]
+    for line in _HOLD:
+        assert line in result["error"]
+    assert result["hold"] == {"0026": _HOLD}
+
+    monkeypatch.setattr(
+        m.UpgradeService,
+        "apply",
+        lambda self: ApplyResponse(applied=["0026"], current_revision="0026", backup_path=None),
+    )
+    confirmed = m._handle_apply_upgrade("warpeace", confirm_destructive=True)
+
+    assert confirmed["success"] is True
+    assert confirmed["applied"] == ["0026"]
+
+
+def test_apply_upgrade_does_not_ask_when_the_preview_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import chaoscypher_core.mcp.maintenance as m
+    from chaoscypher_core.database.migrations import tiers
+    from chaoscypher_core.database.migrations.upgrade import ApplyResponse
+
+    _held_0026(monkeypatch)
+    monkeypatch.setattr(tiers, "hold_preview", lambda _rev, _p: [])
+    monkeypatch.setattr(
+        m.UpgradeService,
+        "apply",
+        lambda self: ApplyResponse(applied=["0026"], current_revision="0026", backup_path=None),
+    )
+
+    result = m._handle_apply_upgrade("warpeace", confirm_destructive=False)
+
+    assert result["success"] is True
+
+
+def test_apply_upgrade_asks_when_a_preview_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A preview that raises is shown as a line and still asks; apply_upgrade never raises."""
+    import sqlite3
+
+    import chaoscypher_core.mcp.maintenance as m
+    from chaoscypher_core.database.migrations import tiers
+
+    _held_0026(monkeypatch)
+
+    def _broken(_rev: str, _p: Path) -> list[str]:
+        raise sqlite3.OperationalError("no such table: missing")
+
+    monkeypatch.setattr(tiers, "hold_preview", _broken)
+
+    result = m._handle_apply_upgrade("warpeace", confirm_destructive=False)
+
+    assert result["success"] is False
+    assert result["error_code"] == "CONFIRM_REQUIRED"
+    assert "Could not list the changes: " in result["error"]
+    assert '"missing" table' in result["error"]
+
+
+def test_upgrade_status_lists_hold_lines(monkeypatch: pytest.MonkeyPatch) -> None:
+    import chaoscypher_core.mcp.maintenance as m
+    from chaoscypher_core.database.migrations.tiers import MigrationTier
+    from chaoscypher_core.database.migrations.upgrade import (
+        PendingMigration,
+        PendingMigrationsResponse,
+    )
+
+    fake_pending = PendingMigrationsResponse(
+        ready=False,
+        blocked_on=[
+            PendingMigration(
+                revision="0026",
+                tier=MigrationTier.NEEDS_CONFIRMATION,
+                description="Tag names become lower-case.",
+                hold=list(_HOLD),
+            ),
+            PendingMigration(
+                revision="0027", tier=MigrationTier.SAFE_AUTO, description="Adds a column."
+            ),
+        ],
+    )
+    monkeypatch.setattr(m, "get_db_path", lambda _name: Path("/data/app.db"))
+    monkeypatch.setattr(m.UpgradeService, "pending", lambda self: fake_pending)
+    monkeypatch.setattr(m, "get_upgrade_state", lambda _p: SimpleNamespace(last_applied=[]))
+
+    result = m._handle_upgrade_status("warpeace")
+
+    assert result["blocked_on"][0]["hold"] == _HOLD
+    assert result["blocked_on"][1]["hold"] == []
+
+
 def test_apply_upgrade_safe_only_no_confirm_needed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

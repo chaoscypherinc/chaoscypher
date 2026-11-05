@@ -351,6 +351,9 @@ async def import_url_page(
                 # Domain-confirmation gate: forwarded from the URL import request.
                 auto_confirm=options.get("auto_confirm", False),
                 site_id=site_id,
+                # The caller's labels (a site's stored tags reach every page).
+                tags=options.get("tags"),
+                summary=options.get("summary"),
             )
         finally:
             with contextlib.suppress(OSError):

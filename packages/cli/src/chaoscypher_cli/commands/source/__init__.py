@@ -12,6 +12,13 @@ Commands for managing sources (documents) in the knowledge graph:
 - quality: Evaluate extraction quality
 - extract: Trigger entity extraction (standalone, supports --force for re-extraction)
 - site: Imported docs sites (``add URL --site``): list, show, refresh, delete
+- summarize: Write each document's one-line summary with the model (--missing)
+- tag: Add, remove or replace a document's tags (--add, --remove, --replace, --clear)
+
+Tags and summaries:
+    add --tag T --summary S   Tag a document (repeatable) and give it a summary;
+                              with --site the tags go to every page, now and later
+    list/search --tag T       Only documents carrying the tag (--match any|all)
 
 The processing pipeline handles:
 1. Upload/staging (or URL fetch + staging)
@@ -57,6 +64,9 @@ Example:
     chaoscypher source get if_abc123
     chaoscypher source delete if_abc123
     chaoscypher source search "machine learning"
+    chaoscypher source add notes.pdf --tag alpha --summary "Field notes"
+    chaoscypher source list --tag alpha --tag beta --match all
+    chaoscypher source tag if_abc123 --add alpha --remove beta
     chaoscypher source quality score <source_id>
 """
 
@@ -80,19 +90,27 @@ LAZY_SUBCOMMANDS = {
     ),
     "list": (
         "chaoscypher_cli.commands.source.list:list_files",
-        "List all sources (--pending, --format json)",
+        "List all sources (--pending, --tag, --format json)",
     ),
     "get": ("chaoscypher_cli.commands.source.get:get", "Get source details"),
     "delete": ("chaoscypher_cli.commands.source.delete:delete", "Delete a source"),
     "search": (
         "chaoscypher_cli.commands.source.search:search",
-        "Search across sources (--format json)",
+        "Search across sources (--tag, --format json)",
     ),
     "rebuild-search": (
         "chaoscypher_cli.commands.source.rebuild_search:rebuild_search",
         "Rebuild search indexes (auto-detects model changes)",
     ),
     "quality": ("chaoscypher_cli.commands.quality:quality", "Evaluate extraction quality"),
+    "summarize": (
+        "chaoscypher_cli.commands.source.summarize:summarize",
+        "Write each document's one-line summary with the model (--missing)",
+    ),
+    "tag": (
+        "chaoscypher_cli.commands.source.tag:tag",
+        "Add, remove or replace a document's tags (--add, --remove, --replace, --clear)",
+    ),
     "site": (
         "chaoscypher_cli.commands.source.site:site",
         "Imported docs sites: list, show, refresh, delete",
@@ -113,6 +131,8 @@ def source() -> None:
       --quiet / -q      Minimal output (just OK/FAILED)
       --json            Output results as JSON
       --pack PACK       Force packs, repeatable (--domain is an alias)
+      --tag TAG         Tag the document, repeatable (--site: every page)
+      --summary TEXT    The document's one-line summary (not with --site)
       --resume / -r     Interactive picker for pending files
 
     \b
@@ -127,6 +147,13 @@ def source() -> None:
       <id> / --all      Confirm one parked source, or all of them
       --pack PACK       Override the proposed packs, repeatable (--domain alias)
       --yes / -y        Accept the recommendation without prompting
+
+    \b
+    Quick reference for 'source tag':
+      --add TAG         Add a tag, repeatable
+      --remove TAG      Remove a tag, repeatable
+      --replace TAG     Make these the whole set, repeatable
+      --clear           Remove every tag
     """  # noqa: D301
 
 

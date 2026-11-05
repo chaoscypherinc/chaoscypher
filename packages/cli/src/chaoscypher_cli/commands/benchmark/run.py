@@ -44,6 +44,7 @@ from chaoscypher_cli.benchmark.leaderboard import render_leaderboard
 from chaoscypher_cli.benchmark.models import filter_models
 from chaoscypher_cli.benchmark.results import dump_results
 from chaoscypher_cli.benchmark.runner import run_benchmark
+from chaoscypher_cli.utils.console import print_caught_error
 
 
 if TYPE_CHECKING:
@@ -170,11 +171,11 @@ def run(
     try:
         cfg = load_config(config_name)
     except FileNotFoundError as exc:
-        console.print(f"[red]{exc}[/red]")
+        print_caught_error(exc, label=None, console=console)
         raise click.Abort from exc
     except (ValueError, TypeError) as exc:
         # a wrong shape (`extractors: {…}`) raises TypeError from the loader
-        console.print(f"[red]Bad config:[/red] {exc}")
+        print_caught_error(exc, label="Bad config", console=console)
         raise click.Abort from exc
 
     # Apply CLI flag overrides on top of config values.
@@ -191,13 +192,13 @@ def run(
     try:
         bundles = [load_dataset_bundle(did) for did in cfg.dataset_ids]
     except FileNotFoundError as exc:
-        console.print(f"[red]{exc}[/red]")
+        print_caught_error(exc, label=None, console=console)
         raise click.Abort from exc
     except (ValueError, TypeError) as exc:
         # A malformed manifest, or a dataset kind the bundle loader does not
         # accept as a primary dataset (e.g. `probes`), used to escape as a
         # raw traceback.
-        console.print(f"[red]Bad dataset:[/red] {exc}")
+        print_caught_error(exc, label="Bad dataset", console=console)
         raise click.Abort from exc
 
     # Apply --dataset filter if requested.
@@ -315,7 +316,7 @@ def run(
                     )
                 )
         except (GraphCacheMissError, GraphCacheMismatchError) as exc:
-            console.print(f"[red]Graph cache:[/red] {exc}")
+            print_caught_error(exc, label="Graph cache", console=console)
             raise click.Abort from exc
         partial_full.unlink(missing_ok=True)
     else:
@@ -419,7 +420,7 @@ def _replay_context(
         builds = replay_builds(packs)
         check_replayable(settings)
     except (ReferencePackError, ValidationError) as exc:
-        console.print(f"[red]--replay:[/red] {exc}")
+        print_caught_error(exc, label="--replay", console=console)
         raise click.Abort from exc
     for (provider, model), build in builds.items():
         console.print(f"Replaying {provider}/{model} as {build}")

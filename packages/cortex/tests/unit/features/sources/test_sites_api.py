@@ -33,7 +33,6 @@ from chaoscypher_core.services.sources.web import (
     SiteManifest,
     SitePage,
 )
-from chaoscypher_cortex.features.sources.models import UrlImportOptions
 from chaoscypher_cortex.features.sources.sites_api import get_sites_service
 from chaoscypher_cortex.features.sources.sites_repository import SitesRepository
 from chaoscypher_cortex.features.sources.sites_service import SitesService
@@ -193,7 +192,26 @@ def test_create_stores_the_site_and_enqueues_its_import(
     assert site["status"] == "queued"
     assert site["page_count"] == 0
     assert site["progress"]["total"] == 0
-    expected = UrlImportOptions(analysis_depth="quick", auto_confirm=True).upload_options()
+    # Stored under the site rules: every page imported without parking, never
+    # skipped as a duplicate, sharing the site's tags and no summary.
+    expected = {
+        "auto_analyze": True,
+        "extraction_depth": "quick",
+        "generate_embeddings": True,
+        "enable_normalization": None,
+        "enable_vision": True,
+        "forced_packs": None,
+        "forced_domain": None,
+        "skip_duplicates": False,
+        "content_filtering": True,
+        "filtering_mode": None,
+        "enable_direction_correction": None,
+        "protect_orphans": None,
+        "enable_inverse_relationships": None,
+        "max_entity_degree_override": None,
+        "auto_confirm": True,
+        "tags": [],
+    }
     assert site["options"] == expected
     assert site["run_in_progress"] is True
     stored = harness.adapter.get_site(site["id"], DB)

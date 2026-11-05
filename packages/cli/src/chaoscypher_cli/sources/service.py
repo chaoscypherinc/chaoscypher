@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +41,11 @@ from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
     labels_of,
     packs_label,
     packs_of_name,
+)
+from chaoscypher_core.services.sources.labels import (
+    apply_source_labels,
+    label_new_source,
+    validate_source_labels,
 )
 from chaoscypher_core.services.sources.management.re_extraction import force_re_extract
 from chaoscypher_core.services.sources.web import MIN_PAGE_CONTENT_CHARS, fetch_page, page_names
@@ -215,6 +221,12 @@ class CLISourceProcessingService:
     # Stage 1: Upload
     # ========================================================================
 
+    def _validate_labels(self, tags: Sequence[str] | None, summary: str | None) -> int:
+        """Refuse bad tags or a bad summary before any row is written; the summary limit."""
+        max_summary_chars: int = self.ctx.settings.source_processing.summary_max_chars
+        validate_source_labels(tags=tags, summary=summary, max_summary_chars=max_summary_chars)
+        return max_summary_chars
+
     def upload_file(
         self,
         file_path: Path,
@@ -229,6 +241,8 @@ class CLISourceProcessingService:
         enable_vision: bool = True,
         content_filtering: bool = True,
         filtering_mode: FilteringMode = "balanced",
+        tags: Sequence[str] | None = None,
+        summary: str | None = None,
     ) -> str | dict[str, Any]:
         """Upload and stage a file for source processing.
 
@@ -252,10 +266,14 @@ class CLISourceProcessingService:
                 during extraction. Persisted on the row.
             filtering_mode: Filtering preset (default ``"balanced"``).
                 Persisted on the row.
+            tags: Tags added to the document, also on a ``skip_duplicates``
+                hit to the existing document (``None`` leaves them alone).
+            summary: The document's summary (``""`` clears it; ``None`` keeps it).
 
         Returns:
             Generated file ID (str), or a dict with ``skipped_duplicate=True`` when
-            ``skip_duplicates=True`` and identical content already exists.
+            ``skip_duplicates=True`` and identical content already exists (its
+            ``tags`` the existing document's tags after).
 
         Raises:
             FileNotFoundError: If file doesn't exist
@@ -266,6 +284,7 @@ class CLISourceProcessingService:
         if not file_path.exists():
             msg = f"File not found: {file_path}"
             raise FileNotFoundError(msg)
+        max_summary_chars = self._validate_labels(tags, summary)
 
         # Validate file type against Core LoaderRegistry
         from chaoscypher_core.services.sources.loaders.factory import get_loader_registry
@@ -300,6 +319,14 @@ class CLISourceProcessingService:
                 result["skipped_duplicate"] = True
                 result["existing_status"] = existing.get("status")
                 result["filename"] = file_path.name
+                result["tags"] = apply_source_labels(
+                    self.ctx.storage_adapter,
+                    self.ctx.database_name,
+                    existing["id"],
+                    tags=tags,
+                    summary=summary,
+                    max_summary_chars=max_summary_chars,
+                )
                 return result
 
         # Generate ID and determine staging directory
@@ -329,6 +356,14 @@ class CLISourceProcessingService:
             content_filtering=content_filtering,
             filtering_mode=filtering_mode,
         )
+        label_new_source(
+            self.ctx.storage_adapter,
+            self.ctx.database_name,
+            file_id,
+            tags=tags,
+            summary=summary,
+            max_summary_chars=max_summary_chars,
+        )
 
         logger.info(
             "file_uploaded",
@@ -352,6 +387,8 @@ class CLISourceProcessingService:
         enable_vision: bool = True,
         content_filtering: bool = True,
         filtering_mode: FilteringMode = "balanced",
+        tags: Sequence[str] | None = None,
+        summary: str | None = None,
     ) -> tuple[str, str] | tuple[dict[str, Any], str]:
         """Fetch URL content and stage as a markdown source file.
 
@@ -378,6 +415,9 @@ class CLISourceProcessingService:
                 extraction. Persisted on the row.
             filtering_mode: Filtering preset (default ``"balanced"``).
                 Persisted on the row.
+            tags: Tags added to the document, also on a ``skip_duplicates``
+                hit to the existing document (``None`` leaves them alone).
+            summary: The document's summary (``""`` clears it; ``None`` keeps it).
 
         Returns:
             Tuple of (file_id, page_title), or (skip_dict, page_title) when a duplicate
@@ -386,6 +426,7 @@ class CLISourceProcessingService:
         Raises:
             ValueError: If URL is invalid, fetch fails, or content is empty
         """
+        max_summary_chars = self._validate_labels(tags, summary)
         # Fetch and extract content. ``fetch_page`` applies the upload
         # allowlist so URL imports follow the same contract as file uploads:
         # mismatched Content-Type raises ValidationError instead of
@@ -439,6 +480,14 @@ class CLISourceProcessingService:
                 skip_result["skipped_duplicate"] = True
                 skip_result["existing_status"] = existing.get("status")
                 skip_result["filename"] = safe_filename
+                skip_result["tags"] = apply_source_labels(
+                    self.ctx.storage_adapter,
+                    self.ctx.database_name,
+                    existing["id"],
+                    tags=tags,
+                    summary=summary,
+                    max_summary_chars=max_summary_chars,
+                )
                 return skip_result, page_title
 
         file_id = self._generate_file_id()
@@ -467,6 +516,14 @@ class CLISourceProcessingService:
             enable_vision=enable_vision,
             content_filtering=content_filtering,
             filtering_mode=filtering_mode,
+        )
+        label_new_source(
+            self.ctx.storage_adapter,
+            self.ctx.database_name,
+            file_id,
+            tags=tags,
+            summary=summary,
+            max_summary_chars=max_summary_chars,
         )
 
         logger.info(
@@ -716,16 +773,33 @@ class CLISourceProcessingService:
                 tokens_count=tokens_count,
             )
 
-            return {
-                "chunks_count": chunks_count,
-                "tokens_count": tokens_count,
-                "embedding_model": embedding_model,
-                "failed_embeddings": failed_embeddings,
-            }
-
         except Exception as e:
             self.ctx.storage_adapter.fail_indexing(file_id, str(e))
             raise
+
+        # The document's one-line summary, after the indexing has committed
+        # (CC051) and outside the failure handler: a failed call leaves the
+        # source indexed with no summary.
+        from chaoscypher_core.adapters.llm.summary import summary_chat
+        from chaoscypher_core.services.sources import summaries
+
+        self._run_async(
+            summaries.write_import_summary(
+                self.ctx.storage_adapter,
+                self.ctx.database_name,
+                file_id,
+                chat=summary_chat(self.ctx.settings),
+                settings=self.ctx.settings,
+                text=text,
+            )
+        )
+
+        return {
+            "chunks_count": chunks_count,
+            "tokens_count": tokens_count,
+            "embedding_model": embedding_model,
+            "failed_embeddings": failed_embeddings,
+        }
 
     def _apply_vision_processing(  # noqa: C901, PLR0912
         self,

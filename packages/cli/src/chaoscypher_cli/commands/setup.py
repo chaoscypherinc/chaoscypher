@@ -32,6 +32,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
 
+from chaoscypher_cli.utils.console import print_caught_error
 from chaoscypher_core.adapters.embedding.registry import (
     CURATED_EMBEDDING_MODELS,
     get_curated_dimensions,
@@ -1169,5 +1170,5 @@ def setup(
         sys.exit(130)
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)

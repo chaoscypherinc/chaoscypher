@@ -30,6 +30,8 @@ def test_the_defaults_are_the_single_url_imports() -> None:
         "enable_inverse_relationships": None,
         "max_entity_degree_override": None,
         "auto_confirm": False,
+        "tags": [],
+        "summary": None,
     }
 
 

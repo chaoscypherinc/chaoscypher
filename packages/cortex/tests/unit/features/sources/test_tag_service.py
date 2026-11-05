@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from chaoscypher_core.exceptions import NotFoundError
 from chaoscypher_cortex.features.sources.tag_service import TagService
 
 
@@ -130,12 +131,12 @@ class TestTagAssignment:
         engine.assign_tag.assert_called_once_with("src-1", "tag-1")
         assert result is True
 
-    def test_assign_tag_propagates_value_error(self) -> None:
-        """assign_tag re-raises ValueError from engine (source/tag missing)."""
+    def test_assign_tag_propagates_not_found(self) -> None:
+        """assign_tag lets the engine's NotFoundError (source or tag missing) through."""
         engine = MagicMock()
-        engine.assign_tag.side_effect = ValueError("source not found")
+        engine.assign_tag.side_effect = NotFoundError("Tag", "tag-1")
         service = _make_service(engine)
-        with pytest.raises(ValueError, match="source not found"):
+        with pytest.raises(NotFoundError, match="tag-1"):
             service.assign_tag("missing", "tag-1")
 
     def test_unassign_tag_delegates_and_returns_engine_bool(self) -> None:

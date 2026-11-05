@@ -20,6 +20,9 @@
 * Every ``QualityCounter`` member has a row in the Quality Metrics API
   reference: the page carried a hand-typed count (45, then 44 + 2) and was
   four counters short.
+* A source delete releases only what no other source attests (#795): no page
+  may say it "cascades to all" graph nodes or edges. The API reference said so
+  for ``DELETE /sources/{id}`` while the user guide and the code said otherwise.
 """
 
 from __future__ import annotations
@@ -170,3 +173,20 @@ def test_the_memory_profile_docs_say_which_tools_each_mode_serves() -> None:
         assert "read mode" in text, (
             f"{path.name} describes the memory profile without saying what read mode serves"
         )
+
+
+_CASCADES_TO_ALL_GRAPH_ROWS = re.compile(
+    r"cascade[sd]?(?: delete)? (?:to )?all\b[^.]*\b(?:nodes|edges)\b", re.IGNORECASE
+)
+
+
+def test_no_page_says_a_source_delete_cascades_to_every_graph_row() -> None:
+    """The release keeps every node and edge another source attests (``release_source_graph``)."""
+    offenders = [
+        str(path.relative_to(_ROOT))
+        for path in (sorted(_DOCS.rglob("*.md")) if _DOCS.exists() else [])
+        if path not in _HISTORY and _CASCADES_TO_ALL_GRAPH_ROWS.search(path.read_text())
+    ]
+    assert not offenders, offenders
+    delete = _read(_DOCS / "reference" / "api" / "sources.md").split("### Delete Source", 1)[1]
+    assert "no other source attests" in delete.split("\n### ", 1)[0]

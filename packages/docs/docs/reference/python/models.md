@@ -143,6 +143,7 @@ Includes all fields needed by GraphRepository including timestamps.
 - `created_at`: `datetime`
 - `id`: `str`
 - `label`: `str`
+- `member_source_ids`: `list[str]`
 - `model_config`
 - `person_made`: `bool`
 - `properties`: `dict[str, Any]`
@@ -468,6 +469,7 @@ Result from Engine.process_document() and Engine.add_document().
 - `nodes`: `list[str]`
 - `source_id`: `str`
 - `status`: `str | None`
+- `tags`: `list[str]`
 - `templates`: `list[str]`
 
 ### `class PropertyDefinition`
@@ -702,6 +704,20 @@ Type of tool used in a workflow step.
 - `SYSTEM_TOOL`
 - `USER_TOOL`
 - `WORKFLOW`
+
+### `class TagMatch`
+
+How a set of filter tags matches a document's tags.
+
+Defined here, below the ports, so a storage port can default to it; the
+tag rule's module (`services.sources.tags`) is where callers import it.
+
+**Bases:** `StrEnum`
+
+**Attributes:**
+
+- `ALL`
+- `ANY`
 
 ### `class Template`
 

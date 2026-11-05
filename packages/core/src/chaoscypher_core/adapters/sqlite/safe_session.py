@@ -9,6 +9,8 @@ environments (Cortex API, Neuron workers).
 """
 
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import structlog
@@ -317,3 +319,48 @@ class SafeSession(Session):
         """
         if self._transaction_depth == 0 and not self.in_nested_transaction():
             self.rollback()
+
+    @contextmanager
+    def write_locked(self) -> Iterator[None]:
+        """A unit of work holding SQLite's writer lock from its first statement (``BEGIN IMMEDIATE``).
+
+        The driver opens a transaction only at the first write, so the reads
+        before it run outside any transaction and another writer may commit
+        between a read and the write built on it: the post-commit identity
+        pass folded a node read before a source release rebuilt it, then wrote
+        the stale fold over the rebuild (#795); two tag edits each passed the
+        32-tag cap on the same count and stored 33. Inside this block the lock
+        is taken before the first read; another writer waits for it (the busy
+        timeout) and then reads what this block wrote.
+
+        Taking the lock also reloads the rows the session cached: pending
+        changes are flushed first, then every cached row is expired, so what
+        is read inside is the database as of the lock. A long-lived session
+        would otherwise hand back a row it loaded before another process
+        changed it (SQLAlchemy's identity map; spec 2026-10-24 § 3).
+
+        Shares ``adapter.transaction()``'s depth: the outermost block commits
+        on a clean exit and rolls back on an exception. Inside a caller's
+        transaction it only takes the lock (when the transaction has not
+        written yet, so holds no lock) and leaves the commit to the caller.
+
+        The one implementation: ``SqliteAdapter.write_locked`` and
+        ``GraphRepository.write_locked`` both open this on their session.
+        """
+        self._transaction_depth += 1
+        outermost = self._transaction_depth == 1
+        try:
+            connection = self.connection()
+            if not connection.connection.driver_connection.in_transaction:  # type: ignore[union-attr]
+                connection.exec_driver_sql("BEGIN IMMEDIATE")
+                self.flush()
+                self.expire_all()
+            yield
+            if outermost:
+                self.commit()
+        except BaseException:
+            if outermost:
+                self.rollback()
+            raise
+        finally:
+            self._transaction_depth -= 1

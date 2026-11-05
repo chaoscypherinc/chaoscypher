@@ -13,22 +13,21 @@ from __future__ import annotations
 
 import asyncio
 import errno
-import itertools
 import json
 import shutil
+import sqlite3
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlmodel import SQLModel
 
 from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
-from chaoscypher_core.adapters.sqlite.engine import evict_engine, get_engine
-from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode, GraphTemplate
+from chaoscypher_core.adapters.sqlite.engine import evict_engine
 from chaoscypher_core.adapters.sqlite.repos import GraphRepository
-from chaoscypher_core.app_config import get_settings
-from chaoscypher_core.app_config.engine_factory import build_engine_settings
+from chaoscypher_core.database.migrations.state import get_upgrade_state
 from chaoscypher_core.services.compose import merger as merger_module
 from chaoscypher_core.services.compose.merger import (
     COMPOSITION_MANIFEST_FILENAME,
@@ -40,9 +39,9 @@ from chaoscypher_core.services.compose.models import (
     PackageSpec,
     ResolvedPackage,
 )
-from chaoscypher_core.services.export import CcxExporter
 from chaoscypher_core.services.package import extract_archive
 from chaoscypher_core.templates.default_templates import SHIPPED_TEMPLATE_IDS
+from chaoscypher_core.testing.ccx_packages import build_ccx_package
 
 
 # ---------------------------------------------------------------------------
@@ -57,88 +56,9 @@ from chaoscypher_core.templates.default_templates import SHIPPED_TEMPLATE_IDS
 _OPENED_DBS: list[Path] = []
 
 
-def _adapter(tmp_path: Path, name: str) -> SqliteAdapter:
-    db_dir = tmp_path / "src" / name
-    db_dir.mkdir(parents=True, exist_ok=True)
-    db_path = db_dir / "app.db"
-    _OPENED_DBS.append(db_path)
-    SQLModel.metadata.create_all(get_engine(db_path), checkfirst=True)
-    adapter = SqliteAdapter(str(db_path), database_name="default")
-    adapter.connect()
-    return adapter
-
-
-def _seed(adapter: SqliteAdapter, *, suffix: str, people: tuple[str, ...]) -> None:
-    """Seed one Person template + ``people`` nodes + a chain of edges."""
-    assert adapter.session is not None
-    session = adapter.session
-    session.add(
-        GraphTemplate(
-            id=f"tpl_person_{suffix}",
-            database_name="default",
-            name="Person",
-            template_type="node",
-            color="#ff0000",
-        )
-    )
-    session.add(
-        GraphTemplate(
-            id=f"tpl_rel_{suffix}",
-            database_name="default",
-            name="WorksWith",
-            template_type="edge",
-            color=None,
-        )
-    )
-    session.flush()
-    for person in people:
-        session.add(
-            GraphNode(
-                id=f"node_{person.lower()}_{suffix}",
-                database_name="default",
-                graph_name="knowledge",
-                template_id=f"tpl_person_{suffix}",
-                label=person,
-            )
-        )
-    session.flush()
-    for left, right in itertools.pairwise(people):
-        session.add(
-            GraphEdge(
-                id=f"edge_{left.lower()}_{right.lower()}_{suffix}",
-                database_name="default",
-                graph_name="knowledge",
-                template_id=f"tpl_rel_{suffix}",
-                source_node_id=f"node_{left.lower()}_{suffix}",
-                target_node_id=f"node_{right.lower()}_{suffix}",
-                label="worksWith",
-                properties={"since": 2020},
-            )
-        )
-    session.commit()
-
-
-def _export(adapter: SqliteAdapter) -> bytes:
-    assert adapter.session is not None
-    settings = build_engine_settings(get_settings())
-    exporter = CcxExporter(
-        graph_repository=GraphRepository(adapter.session, "default"),
-        sources_repository=adapter,
-        settings=settings,
-    )
-    return exporter.export(include_embeddings=False)
-
-
 def _package(tmp_path: Path, name: str, people: tuple[str, ...]) -> ResolvedPackage:
     """Build a real .ccx on disk and wrap it as an archive-backed ResolvedPackage."""
-    adapter = _adapter(tmp_path, name)
-    try:
-        _seed(adapter, suffix=name, people=people)
-        data = _export(adapter)
-    finally:
-        adapter.disconnect()
-    archive = tmp_path / f"{name}.ccx"
-    archive.write_bytes(data)
+    archive = build_ccx_package(tmp_path, name, people)
     return ResolvedPackage(
         spec=PackageSpec.parse(f"{name}:1.0.0"),
         name=name,
@@ -325,6 +245,37 @@ class TestMerge:
         assert (out / "cache" / "pkg.ccx").read_bytes() == b"cached"
         assert (out / "settings.yaml").exists()
         assert json.loads((out / COMPOSITION_MANIFEST_FILENAME).read_text())["total_entities"] == 1
+
+    @pytest.mark.asyncio
+    async def test_clean_build_after_the_upgrade_gate_opened_the_same_database(
+        self, tmp_path: Path
+    ) -> None:
+        """A clean rebuild works after the CLI's upgrade gate opened the composed database.
+
+        With ``CHAOSCYPHER_DATA_DIR`` equal to the output folder, the CLI's
+        pre-command gate opens ``databases/default/app.db`` through the engine
+        cache; the clean build then deletes that folder. The schema used to be
+        built through the stale cached engine, into the deleted file, and the
+        import failed with ``no such table: sources``.
+        """
+        out = tmp_path / "out"
+        merger = NamespaceMerger(output_dir=out, strategy=MergeStrategy.NAMESPACE)
+        first = await merger.merge([_package(tmp_path, "pack-a", ("Ada",))], clean=True)
+        assert first.success, first.errors
+        db_path = merger.database_dir / "app.db"
+        # `compose build` runs in a new process: nothing of the first build is cached
+        evict_engine(db_path)
+        # the CLI's pre-command gate opens the composed database through the engine cache
+        get_upgrade_state(db_path)
+
+        result = await merger.merge([_package(tmp_path, "pack-b", ("Grace",))], clean=True)
+
+        assert result.success, result.errors
+        assert result.total_entities == 1  # Grace only: a clean build keeps nothing of Ada
+        # the file on disk holds the build, not only the engine that built it
+        with closing(sqlite3.connect(db_path)) as conn:
+            assert conn.execute("SELECT count(*) FROM graph_nodes").fetchone()[0] > 0
+        assert _count(out)[0] > 0
 
     @pytest.mark.asyncio
     async def test_failed_upsert_build_restores_the_existing_composition(
@@ -586,6 +537,294 @@ class TestMerge:
         assert second.packages_included == ["alpha:1.0.0"]
         # Beta's entity is gone, not merely unlisted in the manifest.
         assert _count(out)[0] == 1
+
+
+# ---------------------------------------------------------------------------
+# A cleanup failure after a failed build never hides the build's own error
+# ---------------------------------------------------------------------------
+
+
+async def _write_to_read_only_database(
+    self: NamespaceMerger, engine: object, pkg: object
+) -> object:
+    """A real database failure in the import step: SQLite refuses a write to a read-only file.
+
+    The file is opened read-only (rather than chmod'ed, which root ignores), and
+    the write SQLite rejects is the one a read-only composition folder produces.
+    """
+    with closing(sqlite3.connect(f"file:{self.database_file}?mode=ro", uri=True)) as conn:
+        conn.execute("CREATE TABLE pack_a_rows (id INTEGER PRIMARY KEY)")
+    raise AssertionError("the write to a read-only database should have failed")
+
+
+def _removal_denied(monkeypatch: pytest.MonkeyPatch, denied: Path) -> None:
+    """Make removing ``denied`` raise PermissionError, as a read-only folder does."""
+    real_rmtree = shutil.rmtree
+
+    def _rmtree(path: Path | str, *args: Any, **kwargs: Any) -> None:
+        if Path(path) == denied:
+            raise PermissionError(errno.EACCES, "Permission denied", str(denied))
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(merger_module.shutil, "rmtree", _rmtree)
+
+
+@pytest.mark.unit
+class TestCleanupFailureAfterAFailedBuild:
+    """`compose build --no-clean` into a read-only folder: the real cause stays first.
+
+    The import failed with a plain `attempt to write a readonly database`, then
+    removing the half-built database raised PermissionError out of `merge()`, and
+    the caller's last line became `PermissionError: [Errno 13] Permission denied`.
+    """
+
+    @pytest.mark.asyncio
+    async def test_clean_build_reports_the_failure_then_the_cleanup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        out = tmp_path / "out"
+        merger = NamespaceMerger(output_dir=out)
+        monkeypatch.setattr(NamespaceMerger, "_merge_package", _write_to_read_only_database)
+        _removal_denied(monkeypatch, merger.database_dir)
+
+        result = await merger.merge([_package(tmp_path, "pack-a", ("Alice",))], clean=True)
+
+        assert result.success is False
+        assert result.errors[0] == (
+            f"Failed to merge pack-a: the database at {merger.database_file} is read-only "
+            "while importing package pack-a"
+        )
+        assert result.errors[1:] == [
+            f"could not remove the half-built database at {merger.database_dir}: permission denied"
+        ]
+        evict_engine(merger.database_file)
+
+    @pytest.mark.asyncio
+    async def test_upsert_build_keeps_the_copy_and_says_the_next_build_restores_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        out = tmp_path / "out"
+        alpha = _package(tmp_path, "alpha", ("Alice", "Bob"))
+        assert (await NamespaceMerger(output_dir=out).merge([alpha], clean=True)).success
+        evict_engine(out / "databases" / "default" / "app.db")
+
+        merger = NamespaceMerger(output_dir=out)
+        monkeypatch.setattr(NamespaceMerger, "_merge_package", _write_to_read_only_database)
+        _removal_denied(monkeypatch, merger.database_dir)
+
+        result = await merger.merge([_package(tmp_path, "pack-a", ("Carol",))], clean=False)
+
+        assert result.success is False
+        assert result.errors[0].startswith("Failed to merge pack-a: the database at ")
+        assert "is read-only while importing package pack-a" in result.errors[0]
+        snapshot = out / ".default.pre-build"
+        assert result.errors[1:] == [
+            f"could not put back the composition from before the build "
+            f"({merger.database_dir}: permission denied); its copy is kept at {snapshot} "
+            "and the next build restores it"
+        ]
+        assert (snapshot / "database" / "app.db").exists()
+        evict_engine(merger.database_file)
+
+    @pytest.mark.asyncio
+    async def test_an_interruption_is_not_replaced_by_the_cleanup_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        out = tmp_path / "out"
+        merger = NamespaceMerger(output_dir=out)
+
+        async def _interrupted(self: NamespaceMerger, engine: object, pkg: object) -> object:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(NamespaceMerger, "_merge_package", _interrupted)
+        _removal_denied(monkeypatch, merger.database_dir)
+
+        with pytest.raises(KeyboardInterrupt):
+            await merger.merge([_package(tmp_path, "pack-a", ("Alice",))], clean=True)
+        evict_engine(merger.database_file)
+
+
+def _real_missing_table_error(tmp_path: Path) -> Exception:
+    """A real SQLAlchemy OperationalError (``no such table``) from an empty file."""
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.exc import OperationalError
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'empty.db'}")
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT id FROM sources"))
+    except OperationalError as exc:
+        return exc
+    finally:
+        engine.dispose()
+    raise AssertionError("the query against an empty database should have failed")
+
+
+@pytest.mark.unit
+class TestWholeBuildFailure:
+    """The `Merge failed:` branch: a failure outside one package's import."""
+
+    async def _merge_with_a_failed_package_then_a_failed_count(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, merger: NamespaceMerger
+    ) -> Any:
+        async def _bad_manifest(self: NamespaceMerger, engine: object, pkg: object) -> object:
+            raise ValueError("manifest is missing")
+
+        error = _real_missing_table_error(tmp_path)
+
+        def _count_fails(*_args: object, **_kwargs: object) -> int:
+            raise error
+
+        monkeypatch.setattr(NamespaceMerger, "_merge_package", _bad_manifest)
+        monkeypatch.setattr(GraphRepository, "count_nodes", _count_fails)
+        return await merger.merge([_package(tmp_path, "pack-a", ("Alice",))], clean=True)
+
+    @pytest.mark.asyncio
+    async def test_keeps_the_package_errors_and_names_the_database_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        merger = NamespaceMerger(output_dir=tmp_path / "out")
+
+        result = await self._merge_with_a_failed_package_then_a_failed_count(
+            tmp_path, monkeypatch, merger
+        )
+
+        assert result.success is False
+        assert result.errors == [
+            "Failed to merge pack-a: manifest is missing",
+            f'Merge failed: the database at {merger.database_file} has no "sources" table '
+            "while building the composed database "
+            "(it may not be set up, or was replaced while open)",
+        ]
+        assert not merger.database_dir.exists()
+        evict_engine(merger.database_file)
+
+    @pytest.mark.asyncio
+    async def test_a_cleanup_failure_on_that_path_comes_after_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        merger = NamespaceMerger(output_dir=tmp_path / "out")
+        _removal_denied(monkeypatch, merger.database_dir)
+
+        result = await self._merge_with_a_failed_package_then_a_failed_count(
+            tmp_path, monkeypatch, merger
+        )
+
+        assert result.success is False
+        assert result.errors[0] == "Failed to merge pack-a: manifest is missing"
+        assert result.errors[1].startswith("Merge failed: the database at ")
+        assert result.errors[2:] == [
+            f"could not remove the half-built database at {merger.database_dir}: permission denied"
+        ]
+        evict_engine(merger.database_file)
+
+
+@pytest.mark.unit
+class TestCleanupMessagesSayWhatFailed:
+    """Each cleanup message names what actually failed, not a neighbouring step."""
+
+    @pytest.mark.asyncio
+    async def test_a_clean_build_that_cannot_remove_the_previous_composition(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Nothing was built yet: the old composition, not a half-built one, is in the way."""
+        out = tmp_path / "out"
+        alpha = _package(tmp_path, "alpha", ("Alice",))
+        assert (await NamespaceMerger(output_dir=out).merge([alpha], clean=True)).success
+        evict_engine(out / "databases" / "default" / "app.db")
+        merger = NamespaceMerger(output_dir=out)
+        _removal_denied(monkeypatch, merger.database_dir)
+
+        result = await merger.merge([alpha], clean=True)
+
+        assert result.success is False
+        assert result.errors == [
+            f"could not remove the previous composition at {merger.database_dir} "
+            "before building: permission denied"
+        ]
+        assert "half-built" not in " ".join(result.errors)
+        assert (out / COMPOSITION_MANIFEST_FILENAME).exists()
+
+    async def _failed_upsert_build(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, deny: str
+    ) -> tuple[Any, Path]:
+        out = tmp_path / "out"
+        alpha = _package(tmp_path, "alpha", ("Alice", "Bob"))
+        assert (await NamespaceMerger(output_dir=out).merge([alpha], clean=True)).success
+        evict_engine(out / "databases" / "default" / "app.db")
+        snapshot = out / ".default.pre-build"
+
+        async def _bad_manifest(self: NamespaceMerger, engine: object, pkg: object) -> object:
+            raise ValueError("manifest is missing")
+
+        monkeypatch.setattr(NamespaceMerger, "_merge_package", _bad_manifest)
+        if deny == "manifest":
+            real_move = shutil.move
+            denied = snapshot / COMPOSITION_MANIFEST_FILENAME
+
+            def _move(src: Any, dst: Any, *args: Any, **kwargs: Any) -> Any:
+                if Path(src) == denied:
+                    raise PermissionError(errno.EACCES, "Permission denied", str(denied))
+                return real_move(src, dst, *args, **kwargs)
+
+            monkeypatch.setattr(merger_module.shutil, "move", _move)
+        else:
+            _removal_denied(monkeypatch, snapshot)
+
+        result = await NamespaceMerger(output_dir=out).merge([alpha], clean=False)
+        evict_engine(out / "databases" / "default" / "app.db")
+        return result, snapshot
+
+    @pytest.mark.asyncio
+    async def test_the_manifest_could_not_be_put_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, snapshot = await self._failed_upsert_build(tmp_path, monkeypatch, deny="manifest")
+
+        assert result.success is False
+        assert result.errors[0] == "Failed to merge alpha: manifest is missing"
+        manifest = snapshot / COMPOSITION_MANIFEST_FILENAME
+        assert result.errors[1:] == [
+            "the database from before the build was put back, but not its manifest "
+            f"({manifest}: permission denied); it is kept at {snapshot} and the next "
+            "build puts it back"
+        ]
+        assert manifest.exists()
+
+    @pytest.mark.asyncio
+    async def test_the_copy_could_not_be_removed_after_putting_everything_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, snapshot = await self._failed_upsert_build(tmp_path, monkeypatch, deny="snapshot")
+
+        assert result.success is False
+        assert result.errors[1:] == [
+            "the composition from before the build was put back, but its copy at "
+            f"{snapshot} could not be removed ({snapshot}: permission denied)"
+        ]
+        assert _count(tmp_path / "out") == (2, 1, 1)
+
+
+@pytest.mark.asyncio
+async def test_a_database_failure_while_indexing_warns_in_plain_words(tmp_path: Path) -> None:
+    """Compose build prints its warnings; the indexing one must not carry SQL either."""
+    error = _real_missing_table_error(tmp_path)
+    merger = NamespaceMerger(output_dir=tmp_path / "out")
+
+    with patch(
+        "chaoscypher_core.operations.importing.imported_source_handler.index_imported_package",
+        new=AsyncMock(side_effect=error),
+    ):
+        result = await merger.merge([_package(tmp_path, "pack-a", ("Alice",))], clean=True)
+
+    assert result.success is True, result.errors
+    skipped = [w for w in result.warnings if w.startswith("search indexing skipped:")]
+    assert skipped == [
+        f'search indexing skipped: the database at {merger.database_file} has no "sources" '
+        "table while indexing the composed database for search "
+        "(it may not be set up, or was replaced while open)"
+    ]
+    evict_engine(merger.database_file)
 
 
 # ---------------------------------------------------------------------------

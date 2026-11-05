@@ -208,3 +208,30 @@ async def test_each_touched_source_is_pushed_once(
 
     assert counts.chunks == total + 2
     assert sorted(pushed) == sorted({source, two_engines.lise, two_engines.anna})
+
+
+async def test_a_provider_error_mid_run_still_pushes_the_vectors_earlier_waves_stored(
+    two_engines: SimpleNamespace,
+) -> None:
+    # a re-run selects only vector-less chunks, so wave 1's stored vector must be pushed now
+    class _FailsOnSecondCall(_RecordingProvider):
+        calls = 0
+
+        async def batch_embed(self, texts: list[str], batch_size: int = 64) -> BatchEmbedResult:
+            type(self).calls += 1
+            if type(self).calls > 1:
+                raise ConnectionError("embedder went away")
+            return await super().batch_embed(texts, batch_size=batch_size)
+
+    engine = two_engines.engine
+    search = engine.search_repository
+    engine.settings.batching.embedding_wave_size = 1
+    assert search.count_vectors("chunk") == 1
+
+    with pytest.raises(ConnectionError):
+        await _run(two_engines, provider=_FailsOnSecondCall())
+
+    assert search.count_vectors("chunk") == 2  # wave 1's chunk is in the index
+    counts = await _run(two_engines)  # the re-run embeds and pushes what is left
+    assert counts.chunks == 1
+    assert search.count_vectors("chunk") == 3

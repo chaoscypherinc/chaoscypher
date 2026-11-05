@@ -131,6 +131,7 @@ One JSON object per line (`application/x-ndjson`, sorted keys, UTF-8). Two recor
 | `sourceMode` | One of `embedded`, `referenced`, `derived-only`. |
 | `title` | Optional display title. |
 | `keywords` | Optional tags (schema.org-aligned). |
+| `abstract` | Optional one-line summary of the document. |
 | `extractedBy` | Optional extraction mode of the producing pipeline. |
 | `extractionDomain` | Optional producer domain hint. |
 | `chunking` | Optional chunking provenance (strategy and size/overlap/boundary parameters) so chunk offsets are reproducible. |

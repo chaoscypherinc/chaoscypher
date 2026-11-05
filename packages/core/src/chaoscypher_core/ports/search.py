@@ -17,8 +17,10 @@ Main implementation: chaoscypher_core.adapters.sqlite.repos.SearchRepository
 
 from __future__ import annotations
 
-from collections.abc import Callable, Container, Iterable, Mapping
+from collections.abc import Callable, Container, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
+
+from chaoscypher_core.models import TagMatch
 
 
 if TYPE_CHECKING:
@@ -72,8 +74,17 @@ def attesting_sources(item: object) -> list[str]:
     return [] if has_no_source(home) else [str(home)]
 
 
-def item_in_source_scope(item: object, scope: Container[str]) -> bool:
-    """Whether a graph row is in a source scope: a person made it, it names no source, or a source in the scope attests it."""
+def item_in_source_scope(
+    item: object, scope: Container[str], *, attested_only: bool = False
+) -> bool:
+    """Whether a graph row is in a source scope: a person made it, it names no source, or a source in the scope attests it.
+
+    With ``attested_only`` (a scope that came from document tags) only a
+    source in the scope attesting it counts: a person-made or unattested row
+    is out (owner decision 2026-11-05).
+    """
+    if attested_only:
+        return any(sid in scope for sid in attesting_sources(item))
     if getattr(item, "person_made", False):  # a person's row is in every lens and scope
         return True
     sources: list[str | None] = [*attesting_sources(item)] or [None]
@@ -142,6 +153,9 @@ class SearchRepositoryProtocol(Protocol):
         limit: int = 10,
         item_type: str | None = "node",
         source_ids: Iterable[str] | None = None,
+        tags: Sequence[str] = (),
+        tag_match: TagMatch = TagMatch.ANY,
+        attested_only: bool = False,
     ) -> list[tuple[str, float]]:
         """Perform full-text keyword search (any significant word or quoted phrase matches).
 
@@ -151,6 +165,15 @@ class SearchRepositoryProtocol(Protocol):
             item_type: "node" (default), "chunk", or None for both.
             source_ids: A source scope applied before the ``limit``; None for every source.
                 A switched-off source's items never match (:func:`source_visible`).
+            tags: A tag scope (normalised names): only the sources carrying
+                them, intersected with ``source_ids``, applied in the same
+                place; a tag set no document carries matches nothing. Empty:
+                no tag scope.
+            tag_match: ``ANY`` or ``ALL`` of ``tags``.
+            attested_only: A node is in ``source_ids`` only when one of them
+                attests it, never for being person-made or unattested: a
+                source scope that came from document tags (a tag scope is
+                always read so). Chunks are unaffected.
 
         Returns:
             List of (node_id, score) tuples, sorted by relevance descending.
@@ -164,6 +187,9 @@ class SearchRepositoryProtocol(Protocol):
         k: int = 10,
         item_type: str | None = None,
         source_ids: Iterable[str] | None = None,
+        tags: Sequence[str] = (),
+        tag_match: TagMatch = TagMatch.ANY,
+        attested_only: bool = False,
     ) -> list[tuple[str, float]]:
         """Find k nearest neighbors to query embedding.
 
@@ -176,6 +202,15 @@ class SearchRepositoryProtocol(Protocol):
             source_ids: A source scope applied before the ``k`` cut (chunks
                 and nodes; templates come from no source); None for every source.
                 A switched-off source's items never match (:func:`source_visible`).
+            tags: A tag scope (normalised names): only the sources carrying
+                them, intersected with ``source_ids``, applied in the same
+                place; a tag set no document carries matches nothing. Empty:
+                no tag scope.
+            tag_match: ``ANY`` or ``ALL`` of ``tags``.
+            attested_only: A node is in ``source_ids`` only when one of them
+                attests it, never for being person-made or unattested: a
+                source scope that came from document tags (a tag scope is
+                always read so). Chunks are unaffected.
 
         Returns:
             List of (node_id, similarity_score) tuples,
@@ -198,6 +233,8 @@ class SearchRepositoryProtocol(Protocol):
         k: int = 10,
         embedding_provider_callback: Callable[[str], Any] | None = None,
         item_type: str | None = None,
+        tags: Sequence[str] = (),
+        tag_match: TagMatch = TagMatch.ANY,
     ) -> list[tuple[str, float]]:
         """Perform semantic search using query text.
 
@@ -211,6 +248,10 @@ class SearchRepositoryProtocol(Protocol):
                 Example: async def(text: str) -> {"embedding": [...]}
             item_type: Optional filter ("node", "chunk", "template"); None
                 searches nodes and chunks.
+            tags: A tag scope (normalised names), applied before the ``k``
+                cut; a tag set no document carries matches nothing. Empty: no
+                tag scope.
+            tag_match: ``ANY`` or ``ALL`` of ``tags``.
 
         Returns:
             List of (node_id, similarity_score) tuples
@@ -226,6 +267,8 @@ class SearchRepositoryProtocol(Protocol):
         min_similarity: float = 0.55,
         item_type: str | None = None,
         source_ids: Iterable[str] | None = None,
+        tags: Sequence[str] = (),
+        tag_match: TagMatch = TagMatch.ANY,
     ) -> SearchHits:
         """Perform hybrid search: keyword and vector rankings fused by reciprocal rank.
 
@@ -241,6 +284,11 @@ class SearchRepositoryProtocol(Protocol):
             item_type: "node", "chunk", or None for both.
             source_ids: A source scope applied inside both arms, before their cut;
                 None for every source.
+            tags: A tag scope (normalised names): only the sources carrying
+                them, intersected with ``source_ids``, applied in the same
+                place; a tag set no document carries matches nothing. Empty:
+                no tag scope.
+            tag_match: ``ANY`` or ``ALL`` of ``tags``.
 
         Returns:
             The (node_id, score) hits, best first, with how many candidates
@@ -249,7 +297,13 @@ class SearchRepositoryProtocol(Protocol):
         """
         ...
 
-    def count_in_scope(self, item_type: str, source_ids: Iterable[str] | None = None) -> int:
+    def count_in_scope(
+        self,
+        item_type: str,
+        source_ids: Iterable[str] | None = None,
+        tags: Sequence[str] = (),
+        tag_match: TagMatch = TagMatch.ANY,
+    ) -> int:
         """How many items of ``item_type`` (``"chunk"``, ``"node"``) a source scope holds that may answer.
 
         A switched-off source's items are never counted (:func:`source_visible`).
@@ -257,10 +311,23 @@ class SearchRepositoryProtocol(Protocol):
         Args:
             item_type: ``"chunk"`` or ``"node"``.
             source_ids: The scope; None counts every item.
+            tags: A tag scope (normalised names): only the sources carrying
+                them, intersected with ``source_ids``, applied in the same
+                place; a tag set no document carries matches nothing. Empty:
+                no tag scope.
+            tag_match: ``ANY`` or ``ALL`` of ``tags``.
 
         Returns:
             The number of items a search in that scope could return.
 
+        """
+        ...
+
+    def tagged_source_ids(self, tags: Sequence[str], match: TagMatch) -> list[str]:
+        """The ids of the sources carrying ``tags`` (``match``: ANY or ALL of them).
+
+        The tag scope as a source list, for a caller that scopes by source
+        (GraphRAG). Empty ``tags`` names no source.
         """
         ...
 

@@ -11,6 +11,7 @@ directly — this package intentionally re-exports nothing:
 - display: Status/quality color helpers
 - llm_check: LLM configuration verification utilities
 - event_loops: Persistent event-loop teardown, safe from any thread
+- migrations: The confirmation asked before an explicit migration apply
 
 Archive helpers live in ``chaoscypher_core.services.package``; Lexicon API
 access goes through ``chaoscypher_core.services.lexicon.LexiconClient``.

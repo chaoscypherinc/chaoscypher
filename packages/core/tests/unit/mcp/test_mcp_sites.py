@@ -332,3 +332,100 @@ async def test_the_site_tools_need_write_mode(
         w.engine.close()
 
     assert "NOT_AUTHORIZED" in text
+
+
+def _page_tags(world: SimpleNamespace, site_id: str) -> dict[str, list[str]]:
+    from chaoscypher_core.services.sources.tags import source_tag_names
+
+    return {
+        url: source_tag_names(world.storage, p["id"]) for url, p in _pages(world, site_id).items()
+    }
+
+
+async def test_add_site_with_tags_tags_every_page(
+    world: SimpleNamespace, fake_site: FakeSite
+) -> None:
+    _serve(fake_site, {"intro": _page("Intro"), "install": _page("Install")})
+
+    text, is_error = await call_raw(world.server, "add_site", {"url": ROOT, "tags": ["Alpha"]})
+
+    assert not is_error, text
+    await wait_for_site_imports()
+    [site] = _sites(world)
+    assert site["options"]["tags"] == ["alpha"]
+    page_tags = _page_tags(world, site["id"])
+    assert len(page_tags) == 2
+    assert all(tags == ["alpha"] for tags in page_tags.values())
+
+
+async def test_add_site_again_with_tags_retags_the_site_and_its_pages(
+    world: SimpleNamespace, fake_site: FakeSite
+) -> None:
+    _serve(fake_site, {"intro": _page("Intro"), "install": _page("Install")})
+    await call_raw(world.server, "add_site", {"url": ROOT, "tags": ["alpha"]})
+    await wait_for_site_imports()
+    [site] = _sites(world)
+
+    text, is_error = await call_raw(world.server, "add_site", {"url": ROOT, "tags": ["beta"]})
+
+    assert not is_error, text
+    assert text == (
+        f'{ROOT}/ (the site\'s title: "Example Docs") is already imported; its pages now '
+        "carry the tags alpha, beta. refresh_site checks it for updates."
+    )
+    assert _sites(world)[0]["options"]["tags"] == ["alpha", "beta"]
+    page_tags = _page_tags(world, site["id"])
+    assert len(page_tags) == 2
+    assert all(tags == ["alpha", "beta"] for tags in page_tags.values())
+
+
+async def test_add_site_again_with_replace_tags_replaces_them(
+    world: SimpleNamespace, fake_site: FakeSite
+) -> None:
+    _serve(fake_site, {"intro": _page("Intro"), "install": _page("Install")})
+    await call_raw(world.server, "add_site", {"url": ROOT, "tags": ["alpha"]})
+    await wait_for_site_imports()
+    [site] = _sites(world)
+
+    text, is_error = await call_raw(
+        world.server, "add_site", {"url": ROOT, "tags": ["gamma"], "replace_tags": True}
+    )
+
+    assert not is_error, text
+    assert "its pages now carry the tags gamma." in text
+    assert _sites(world)[0]["options"]["tags"] == ["gamma"]
+    assert all(tags == ["gamma"] for tags in _page_tags(world, site["id"]).values())
+
+
+async def test_add_site_refuses_a_bad_tag_before_finding_pages(
+    world: SimpleNamespace, fake_site: FakeSite
+) -> None:
+    _serve(fake_site, {"intro": _page("Intro")})
+
+    text, is_error = await call_raw(world.server, "add_site", {"url": ROOT, "tags": ["Work Docs"]})
+
+    assert is_error
+    assert text.startswith('tag "Work Docs" is not allowed')
+    assert fake_site.requested == []
+    assert _sites(world) == []
+
+
+async def test_add_site_again_with_tags_waits_while_a_run_is_under_way(
+    world: SimpleNamespace, fake_site: FakeSite
+) -> None:
+    """A live run read the site's options when it started; its later pages would miss a retag."""
+    _serve(fake_site, {"intro": _page("Intro")})
+    await call_raw(world.server, "add_site", {"url": ROOT, "tags": ["alpha"]})
+    await wait_for_site_imports()
+    [site] = _sites(world)
+    world.storage.update_site(site["id"], "test", {"status": SiteStatus.REFRESHING})
+
+    text, is_error = await call_raw(world.server, "add_site", {"url": ROOT, "tags": ["beta"]})
+
+    assert is_error
+    assert text == (
+        f'{ROOT}/ (the site\'s title: "Example Docs") is being imported or checked; '
+        "add_site with its tags again once that is done."
+    )
+    assert _sites(world)[0]["options"]["tags"] == ["alpha"]
+    assert all(tags == ["alpha"] for tags in _page_tags(world, site["id"]).values())

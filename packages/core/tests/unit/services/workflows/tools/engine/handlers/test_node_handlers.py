@@ -185,6 +185,7 @@ def indexing_repo() -> MagicMock:
     repo = MagicMock()
     repo.get_chunks_by_ids_batch.return_value = []
     repo.get_source_filenames_by_ids.return_value = {}
+    repo.get_source_titles_by_ids.return_value = {}
     return repo
 
 
@@ -560,15 +561,12 @@ class TestSearchChunks:
         embedding_callback: AsyncMock,
         search_settings: SearchSettings,
     ) -> None:
-        """Single source_id filter excludes chunks from other sources."""
+        """A single source_id is the search's scope (applied in the search, before its limit)."""
         allowed_chunk = make_chunk("c1", "Allowed content.", source_id="src_allowed")
-        blocked_chunk = make_chunk("c2", "Blocked content.", source_id="src_blocked")
 
-        search_repo.hybrid_search = AsyncMock(return_value=[("chunk:c1", 0.9), ("chunk:c2", 0.85)])
+        search_repo.hybrid_search = AsyncMock(return_value=[("chunk:c1", 0.9)])
 
-        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(
-            allowed_chunk, blocked_chunk
-        )
+        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(allowed_chunk)
 
         with (
             patch(f"{_CHUNK_HYDRATION_MODULE}.format_chunk_content") as mock_format,
@@ -588,6 +586,8 @@ class TestSearchChunks:
 
         assert result["count"] == 1
         assert result["chunks"][0]["chunk_id"] == "c1"
+        kwargs = search_repo.hybrid_search.call_args.kwargs
+        assert (kwargs["item_type"], kwargs["source_ids"]) == ("chunk", ["src_allowed"])
 
     @pytest.mark.asyncio
     async def test_source_ids_filter(
@@ -598,15 +598,12 @@ class TestSearchChunks:
         embedding_callback: AsyncMock,
         search_settings: SearchSettings,
     ) -> None:
-        """source_ids list filter excludes chunks from other sources."""
+        """A source_ids list is the search's scope (applied in the search, before its limit)."""
         allowed_chunk = make_chunk("c1", "Content.", source_id="src_ok")
-        blocked_chunk = make_chunk("c2", "Blocked.", source_id="src_no")
 
-        search_repo.hybrid_search = AsyncMock(return_value=[("chunk:c1", 0.9), ("chunk:c2", 0.85)])
+        search_repo.hybrid_search = AsyncMock(return_value=[("chunk:c1", 0.9)])
 
-        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(
-            allowed_chunk, blocked_chunk
-        )
+        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(allowed_chunk)
 
         with (
             patch(f"{_CHUNK_HYDRATION_MODULE}.format_chunk_content") as mock_format,
@@ -626,6 +623,8 @@ class TestSearchChunks:
 
         assert result["count"] == 1
         assert result["chunks"][0]["chunk_id"] == "c1"
+        kwargs = search_repo.hybrid_search.call_args.kwargs
+        assert (kwargs["item_type"], kwargs["source_ids"]) == ("chunk", ["src_ok"])
 
     @pytest.mark.asyncio
     async def test_empty_chunk_results(

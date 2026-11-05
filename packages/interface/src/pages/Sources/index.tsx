@@ -19,7 +19,7 @@ import { ChaosCypherPalette } from '../../theme/palette';
 import { sourcesApi } from '../../services/api/sources';
 import { chatApi } from '../../services/api/chat';
 import { getApiErrorMessage } from '../../utils/errors';
-import type { UnifiedSource } from '../../types';
+import type { TagMatch, UnifiedSource } from '../../types';
 import { useSourcePause } from '../../hooks/useSourcePause';
 import { useSourcesData } from './hooks/useSourcesData';
 import { useSourcesUpload } from '../../hooks/useSourcesUpload';
@@ -54,6 +54,8 @@ export default function SourcesPage() {
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') ?? '');
   const [typeFilter, setTypeFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [tagMatch, setTagMatch] = useState<TagMatch>('any');
 
   // Sort state
   const [sortField, setSortField] = useState<'created_at' | 'size'>('created_at');
@@ -91,6 +93,8 @@ export default function SourcesPage() {
     status: statusFilter,
     source_type: typeFilter,
     search: searchQuery,
+    tags: tagFilter,
+    match: tagMatch,
   });
 
   // Pause/resume actions
@@ -180,6 +184,15 @@ export default function SourcesPage() {
   const handleTypeChange = useCallback(
     (value: string) => {
       setTypeFilter(value);
+      selection.deselectAll();
+    },
+    [selection]
+  );
+
+  const handleTagsChange = useCallback(
+    (tags: string[], match: TagMatch) => {
+      setTagFilter(tags);
+      setTagMatch(match);
       selection.deselectAll();
     },
     [selection]
@@ -412,11 +425,14 @@ export default function SourcesPage() {
         stageFilter={stageFilter}
         statusFilter={statusFilter}
         typeFilter={typeFilter}
+        tagFilter={tagFilter}
+        tagMatch={tagMatch}
         sortField={sortField}
         sortDirection={sortDirection}
         onStageChange={handleStageChange}
         onStatusChange={handleStatusChange}
         onTypeChange={handleTypeChange}
+        onTagsChange={handleTagsChange}
         onSortChange={handleSortChange}
       />
       {/* Upload Progress Bar */}

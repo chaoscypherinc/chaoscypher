@@ -25,6 +25,7 @@ from chaoscypher_core.database.engine import (
     get_db_path,
     get_engine,
     init_database,
+    remove_database_dir,
 )
 from chaoscypher_core.database.seed import seed_default_data
 
@@ -35,5 +36,6 @@ __all__ = [
     "get_engine",
     "get_sqlite_adapter",
     "init_database",
+    "remove_database_dir",
     "seed_default_data",
 ]

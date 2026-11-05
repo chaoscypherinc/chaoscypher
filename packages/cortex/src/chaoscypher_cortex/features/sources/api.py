@@ -32,12 +32,13 @@ from fastapi.responses import FileResponse
 
 from chaoscypher_core.app_config import Settings, get_config_manager, get_settings
 from chaoscypher_core.llm_queue import get_provider_factory
-from chaoscypher_core.models import AnalysisDepth
+from chaoscypher_core.models import AnalysisDepth, TagMatch
 from chaoscypher_core.operations import queue_utils
 from chaoscypher_core.operations.sources.processing import SourceFileValidators
 from chaoscypher_core.services.sources import (
     SourceProcessingService as EngineSourceProcessingService,
 )
+from chaoscypher_core.services.sources.labels import validate_source_labels
 from chaoscypher_core.utils.url_safety import validate_url_safety
 from chaoscypher_cortex.features.sources.mappers import (
     add_duration_fields,
@@ -61,6 +62,8 @@ from chaoscypher_cortex.features.sources.models import (
     SourceImageInfo,
     SourceResponse,
     SourceSummaryResponse,
+    SourceTagsEdit,
+    SourceTagsResponse,
     SourceUpdate,
     TagResponse,
     UrlImportRequest,
@@ -196,6 +199,18 @@ async def list_sources(
     enabled: Literal["enabled", "disabled"] | None = Query(default=None),
     search: str | None = Query(default=None),
     tag_id: str | None = Query(default=None),
+    tags: list[str] = Query(
+        default=[],
+        description=(
+            "Only sources carrying these tags, by name (repeat the parameter: "
+            "?tags=alpha&tags=beta). Checked by the tag rule; a tag no source "
+            "carries matches nothing."
+        ),
+    ),
+    match: TagMatch = Query(
+        default=TagMatch.ANY,
+        description="any: sources carrying any of the tags; all: carrying every one.",
+    ),
     in_site: bool | None = Query(
         default=None,
         description=(
@@ -214,6 +229,8 @@ async def list_sources(
     - enabled: Filter by enabled status ('enabled' or 'disabled')
     - search: Search in title and origin_url
     - tag_id: Filter by tag ID
+    - tags / match: Filter by tag names, any or all of them (400 on a tag the
+      tag rule refuses)
     - in_site: Pages of imported sites only (true), or none of them (false).
       One site's pages: ``GET /sources/sites/{site_id}/pages``.
     """
@@ -227,6 +244,8 @@ async def list_sources(
         search=search,
         tag_id=tag_id,
         in_site=in_site,
+        tags=tags,
+        match=match,
     )
     sources = result["sources"]
     total = result["total"]
@@ -333,6 +352,8 @@ async def import_url(
     - `packs`: Force the packs (optional; `[]` is the floor alone)
     - `domain`: One pack, the single-element form of `packs` (optional)
     - `auto_confirm`: Bypass the domain-confirmation gate (default: False).
+    - `tags`: Tags the page's document gets, by name (422 on a tag the tag rule refuses)
+    - `summary`: The page's summary (400 when too long)
 
     **Returns 202 Accepted** with the queue task id. Poll the source
     list (or task status) to observe the fetch + indexing progress.
@@ -355,6 +376,11 @@ async def import_url(
                 message="URL is not allowed (blocked scheme or cloud metadata endpoint)",
             ).model_dump(),
         )
+    validate_source_labels(
+        tags=request.tags,
+        summary=request.summary,
+        max_summary_chars=settings.source_processing.summary_max_chars,
+    )
 
     task_id = await queue_utils.queue_fetch_url(
         url=request.url,
@@ -584,6 +610,16 @@ async def upload_file(
             "None = use domain / global default."
         ),
     ),
+    tags: list[str] | None = Form(
+        None,
+        description=(
+            "Tags the document gets, by name; repeat the field for several. "
+            "Checked by the tag rule before the source exists (400 on a refusal)."
+        ),
+    ),
+    summary: str | None = Form(
+        None, description="The document's summary (cleaned; 400 when too long)."
+    ),
 ) -> dict[str, Any]:
     """Upload a file to create a new source.
 
@@ -628,6 +664,8 @@ async def upload_file(
         protect_orphans=protect_orphans,
         enable_inverse_relationships=enable_inverse_relationships,
         max_entity_degree_override=max_entity_degree_override,
+        tags=tags,
+        summary=summary,
     )
 
 
@@ -714,6 +752,14 @@ async def upload_batch(
             "None = use domain / global default."
         ),
     ),
+    tags: list[str] | None = Form(
+        None,
+        description=(
+            "Tags every file's document gets, by name; repeat the field for several. "
+            "Checked once before any file is written (400 on a refusal). A batch "
+            "takes no summary: one does not describe many files."
+        ),
+    ),
 ) -> BatchUploadResponse:
     """Upload multiple files to create new sources.
 
@@ -748,6 +794,7 @@ async def upload_batch(
         protect_orphans=protect_orphans,
         enable_inverse_relationships=enable_inverse_relationships,
         max_entity_degree_override=max_entity_degree_override,
+        tags=tags,
     )
     return BatchUploadResponse(
         uploaded=len(successes),
@@ -772,13 +819,18 @@ async def update_source(
     source_data: SourceUpdate,
     service: Annotated[SourceService, Depends(get_source_service)],
 ) -> dict[str, Any]:
-    """Update a source."""
+    """Update a source.
+
+    ``summary`` sets the summary (cleaned; 400 when too long) and ``""``
+    clears it; omitted, the summary is kept.
+    """
     source = service.update_source(
         source_id=source_id,
         title=source_data.title,
         processing_status=source_data.processing_status,
         enabled=source_data.enabled,
         user_metadata=source_data.user_metadata,
+        summary=source_data.summary,
     )
     return raise_if_not_found(source, "Source not found")
 
@@ -994,6 +1046,34 @@ async def get_source_tags(
     return service.get_source_tags(source_id)
 
 
+@router.patch(
+    "/{source_id}/tags",
+    response_model=SourceTagsResponse,
+    responses={
+        **COMMON_ERROR_RESPONSES,
+        **AUTH_ERROR_RESPONSES,
+        **NOT_FOUND_RESPONSE,
+    },
+)
+async def edit_source_tags(
+    _: CurrentUsername,
+    source_id: str,
+    edit: SourceTagsEdit,
+    service: Annotated[TagService, Depends(get_tag_service)],
+) -> SourceTagsResponse:
+    """Add, remove or replace a source's tags by name; returns its tags after, sorted.
+
+    ``add`` adds, ``remove`` takes away (a tag the source lacks is a no-op),
+    ``replace`` makes the list the whole set (``[]`` clears it). Every name is
+    checked by the tag rule (422); ``replace`` with ``add`` or ``remove`` is a
+    422; a result over 32 tags is a 400; an unknown source is a 404.
+    """
+    tags = service.edit_source_tags(
+        source_id, add=edit.add, remove=edit.remove, replace=edit.replace
+    )
+    return SourceTagsResponse(source_id=source_id, tags=tags)
+
+
 @router.post(
     "/{source_id}/tags/{tag_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -1009,11 +1089,12 @@ async def assign_tag_to_source(
     tag_id: str,
     service: Annotated[TagService, Depends(get_tag_service)],
 ) -> None:
-    """Assign a tag to a source."""
-    try:
-        service.assign_tag(source_id, tag_id)
-    except ValueError as e:
-        raise resource_not_found_error("source_or_tag", source_id) from e
+    """Add the tag with id ``tag_id`` to a source, through the same edit as PATCH ``/tags``.
+
+    The 32-tag cap (400), the memory rule (400) and an unknown source or tag
+    (404) apply as for a by-name add; a tag the source already has is a no-op.
+    """
+    service.assign_tag(source_id, tag_id)
 
 
 @router.delete(

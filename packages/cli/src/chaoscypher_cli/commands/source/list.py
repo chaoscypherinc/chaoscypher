@@ -6,18 +6,50 @@
 import json
 import sys
 from datetime import datetime
+from typing import Any
 
 import click
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
-from chaoscypher_cli.utils.console import print_json
+from chaoscypher_cli.sources.tag_options import match_option, tag_option
+from chaoscypher_cli.utils.console import print_caught_error, print_json
 from chaoscypher_cli.utils.display import get_quality_color, get_status_color
-from chaoscypher_core.models import SourceStatus
+from chaoscypher_core.models import SourceStatus, TagMatch
 
 
 console = Console()
+
+# The widest the Tags and Summary cells grow; longer text is cut with an ellipsis.
+TAGS_COLUMN_WIDTH = 24
+SUMMARY_COLUMN_WIDTH = 40
+
+
+def _with_tags(ctx: Any, files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Give each row its ``tags``: the document's tag names, sorted (one query for the page)."""
+    tags_by_source = ctx.storage_adapter.get_source_tags_batch([f["id"] for f in files])
+    for f in files:
+        f["tags"] = sorted(t["name"] for t in tags_by_source.get(f["id"], []))
+    return files
+
+
+def _total_in_db(ctx: Any, status: str | None, tag_names: list[str], tag_match: TagMatch) -> int:
+    """How many sources the listing's filters select in the whole database (no limit)."""
+    if tag_names:
+        # The tag filter's count, from the same SQL filter as the rows.
+        _page, total = ctx.storage_adapter.list_sources(
+            page=1, page_size=1, status=status, tags=tag_names, match=tag_match
+        )
+        return int(total)
+    if status:
+        return int(
+            ctx.storage_adapter.count_sources_by_statuses(
+                statuses=[status], database_name=ctx.database_name
+            )
+        )
+    return int(ctx.storage_adapter.count_sources(database_name=ctx.database_name))
 
 
 @click.command("list")
@@ -54,6 +86,8 @@ console = Console()
     default=None,
     help="Maximum number of files to fetch (default: adapter default, 100).",
 )
+@tag_option("Only documents carrying this tag (repeatable)")
+@match_option()
 @click.option("--database", "-d", default="default", help="Database name")
 def list_files(
     status: str | None,
@@ -61,6 +95,8 @@ def list_files(
     awaiting: bool,
     output_format: str,
     limit: int | None,
+    tags: tuple[str, ...],
+    match: str,
     database: str,
 ) -> None:
     """List all ingested files.
@@ -73,8 +109,12 @@ def list_files(
         chaoscypher source list --status indexed
         chaoscypher source list --limit 500
         chaoscypher source list --format json
+        chaoscypher source list --tag alpha --tag beta --match all
     """
+    from chaoscypher_core.services.sources.tags import filter_tag_scope
+
     try:
+        tag_names, tag_match = filter_tag_scope(tags, match)
         ctx = get_context(database_name=database)
 
         # Get source files from storage adapter. Use ``ctx.database_name``
@@ -86,9 +126,13 @@ def list_files(
         effective_status = SourceStatus.AWAITING_CONFIRMATION if awaiting else status
         # Only pass ``limit`` through when the user asked for one, so the
         # adapter's own default stays the single source of truth.
-        limit_kwargs: dict[str, int] = {} if limit is None else {"limit": limit}
+        # The tag filter, likewise only when given, runs in the adapter's
+        # query, before its limit.
+        filter_kwargs: dict[str, Any] = {} if limit is None else {"limit": limit}
+        if tag_names:
+            filter_kwargs.update(tags=tag_names, match=tag_match)
         files = ctx.storage_adapter.list_files(
-            database_name=ctx.database_name, status=effective_status, **limit_kwargs
+            database_name=ctx.database_name, status=effective_status, **filter_kwargs
         )
         fetched_count = len(files)
 
@@ -102,6 +146,8 @@ def list_files(
                 for f in files
                 if f.get("status") not in (SourceStatus.COMMITTED, SourceStatus.ERROR)
             ]
+
+        files = _with_tags(ctx, files) if files else files
 
         if output_format == "json":
             print_json(json.dumps(files, indent=2, default=str))
@@ -120,6 +166,10 @@ def list_files(
                 console.print("[dim]No ingested files found.[/dim]")
                 if status:
                     console.print(f"[dim]Filter: status={status}[/dim]")
+                if tag_names:
+                    console.print(
+                        f"[dim]Filter: tags={', '.join(tag_names)} (match {tag_match})[/dim]"
+                    )
                 console.print("\nAdd files with: chaoscypher source add <file>")
                 return
 
@@ -130,6 +180,21 @@ def list_files(
             table.add_column("Size", style="white", justify="right")
             table.add_column("Status", style="green")
             table.add_column("Quality", justify="right")
+            # Shown when a listed document has tags (or a summary): two empty
+            # columns would only squeeze the others on a narrow terminal.
+            show_tags = any(f["tags"] for f in files)
+            show_summary = any(f.get("summary") for f in files)
+            if show_tags:
+                table.add_column(
+                    "Tags", style="magenta", max_width=TAGS_COLUMN_WIDTH, overflow="ellipsis"
+                )
+            if show_summary:
+                table.add_column(
+                    "Summary",
+                    max_width=SUMMARY_COLUMN_WIDTH,
+                    overflow="ellipsis",
+                    no_wrap=True,
+                )
             table.add_column("Created", style="dim")
 
             for f in files:
@@ -165,6 +230,10 @@ def list_files(
                 else:
                     quality_display = "[dim]-[/dim]"
 
+                labels = [
+                    *([escape(", ".join(f["tags"]))] if show_tags else []),
+                    *([escape(f.get("summary") or "")] if show_summary else []),
+                ]
                 table.add_row(
                     f.get("id", ""),
                     f.get("filename", ""),
@@ -172,6 +241,7 @@ def list_files(
                     size_display,
                     status_display,
                     quality_display,
+                    *labels,
                     created,
                 )
 
@@ -181,13 +251,9 @@ def list_files(
             # 100), so "Total" lied for databases with more sources than
             # the cap. Compare the fetched row count against the real
             # DB total and say so when rows were left behind.
-            if effective_status:
-                total_in_db = ctx.storage_adapter.count_sources_by_statuses(
-                    statuses=[str(effective_status)],
-                    database_name=ctx.database_name,
-                )
-            else:
-                total_in_db = ctx.storage_adapter.count_sources(database_name=ctx.database_name)
+            total_in_db = _total_in_db(
+                ctx, str(effective_status) if effective_status else None, tag_names, tag_match
+            )
             if total_in_db > fetched_count:
                 console.print(
                     f"\n[dim]Showing first {len(files)} of {total_in_db} file(s)."
@@ -202,5 +268,5 @@ def list_files(
                 console.print("[dim]Or use:    chaoscypher source add --resume[/dim]")
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)

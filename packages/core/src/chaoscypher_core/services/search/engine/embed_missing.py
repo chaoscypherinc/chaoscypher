@@ -56,7 +56,8 @@ async def embed_missing(
     Chunks: waves of ``batching.embedding_wave_size`` chunks with no vector,
     each embedded per source (``IndexingService.embed_chunks`` with
     ``chunk_status=None``, so a committed memory stays committed), then each
-    touched source's chunk vectors pushed once (:func:`index_source_chunk_vectors`).
+    touched source's chunk vectors pushed once (:func:`index_source_chunk_vectors`),
+    also when a later wave raises.
     Nodes: waves of the same size re-embedded with :func:`reembed_nodes`. Both
     loops advance a keyset cursor, so a row the provider cannot embed is read
     once and the run ends. A provider error propagates; each wave's writes are
@@ -78,26 +79,29 @@ async def embed_missing(
     chunks = 0
     touched: dict[str, None] = {}  # the sources whose chunks got vectors, in order
     after: str | None = None
-    while batch := storage.list_chunks_without_embedding(
-        database_name=settings.current_database, after_id=after, limit=wave
-    ):
-        after = batch[-1]["id"]
-        by_source: dict[str, list[dict]] = defaultdict(list)
-        for chunk in batch:
-            by_source[chunk["source_id"]].append(chunk)
-        for source_id, source_chunks in by_source.items():
-            chunks += await indexing.embed_chunks(
-                chunks=source_chunks,
-                source_id=source_id,
-                database_name=settings.current_database,
-                chunk_status=None,
+    try:
+        while batch := storage.list_chunks_without_embedding(
+            database_name=settings.current_database, after_id=after, limit=wave
+        ):
+            after = batch[-1]["id"]
+            by_source: dict[str, list[dict]] = defaultdict(list)
+            for chunk in batch:
+                by_source[chunk["source_id"]].append(chunk)
+            for source_id, source_chunks in by_source.items():
+                touched[source_id] = None  # before the embed: a failure can store some
+                chunks += await indexing.embed_chunks(
+                    chunks=source_chunks,
+                    source_id=source_id,
+                    database_name=settings.current_database,
+                    chunk_status=None,
+                )
+    finally:
+        # once per source after every wave (a push sends its whole vector set), and when a
+        # wave raises too: a re-run selects only vector-less chunks, so it never pushes them
+        for source_id in touched:
+            index_source_chunk_vectors(
+                storage, search, source_id, page_size=settings.batching.chunk_fetch_limit
             )
-            touched[source_id] = None
-    # once per source, after every wave: a push sends the source's whole vector set
-    for source_id in touched:
-        index_source_chunk_vectors(
-            storage, search, source_id, page_size=settings.batching.chunk_fetch_limit
-        )
 
     nodes = 0
     after = None

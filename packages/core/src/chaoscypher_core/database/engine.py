@@ -13,6 +13,8 @@ schema — it only runs idempotent data backfills and logs constraint drift.
 """
 
 import contextlib
+import shutil
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
@@ -22,6 +24,9 @@ from chaoscypher_core.adapters.sqlite.engine import (
 )
 from chaoscypher_core.adapters.sqlite.engine import (
     database_exists as engine_database_exists,
+)
+from chaoscypher_core.adapters.sqlite.engine import (
+    evict_engines_under,
 )
 from chaoscypher_core.adapters.sqlite.engine import (
     get_db_path as engine_get_db_path,
@@ -34,8 +39,6 @@ from chaoscypher_core.utils.filelock import lock_file, unlock_file
 
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from sqlalchemy.engine import Engine
 
 logger = structlog.get_logger(__name__)
@@ -237,3 +240,18 @@ def init_database(
 
     with contextlib.suppress(Exception):
         lock_file_path.unlink(missing_ok=True)
+
+
+def remove_database_dir(path: Path | str) -> None:
+    """Delete a database folder, first evicting every cached engine inside it.
+
+    The one way a database folder is deleted (``compose build``'s composed
+    database, the database repository, ``chaoscypher db delete``): engines are
+    disposed before the files go, so no pooled connection holds a deleted file
+    open, and on Windows the delete is not refused over an open handle. A
+    missing folder is nothing to do. An ``OSError`` from the delete is raised.
+    """
+    folder = Path(path)
+    evict_engines_under(folder)
+    if folder.exists():
+        shutil.rmtree(folder)

@@ -617,7 +617,7 @@ class TestDelete:
                 return_value=databases_dir,
             ):
                 with patch(
-                    "chaoscypher_cli.commands.db.delete.shutil.rmtree",
+                    "chaoscypher_core.database.engine.shutil.rmtree",
                     side_effect=OSError("locked"),
                 ):
                     result = runner.invoke(delete, ["stale", "--yes"])

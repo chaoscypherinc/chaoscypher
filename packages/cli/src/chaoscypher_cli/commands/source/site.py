@@ -30,7 +30,7 @@ from rich.console import Console
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
-from chaoscypher_cli.utils.console import print_json
+from chaoscypher_cli.utils.console import print_caught_error, print_json
 
 
 if TYPE_CHECKING:
@@ -232,7 +232,7 @@ def refresh_site(
             ctx.storage_adapter, record["id"], ctx.database_name, exclude=wanted
         )
     except ValidationError as exc:
-        console.print(f"[red]Error:[/red] {exc.message}")
+        print_caught_error(exc, console=console)
         sys.exit(1)
     record = ctx.storage_adapter.get_site(record["id"], ctx.database_name) or record
     overrides: dict[str, Any] = {"skip_embeddings": skip_embeddings}

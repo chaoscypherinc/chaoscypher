@@ -16,6 +16,7 @@ import click
 from rich.console import Console
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_caught_error
 
 
 console = Console()
@@ -61,5 +62,5 @@ def export(output: str, scope: str | None, title: str | None, database: str) -> 
         console.print(f"[green]✓ Exported {count} memories to {output_path}[/green]")
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)

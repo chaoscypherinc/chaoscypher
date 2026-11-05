@@ -75,6 +75,39 @@ def test_nodes_minimal_source_scope_applies_before_limit(graph_repo: GraphReposi
     assert len(unscoped) == 12  # omitting source_ids keeps the unscoped behavior
 
 
+def test_nodes_minimal_template_filter_applies_before_limit(graph_repo: GraphRepository) -> None:
+    """limit=2 with 12 other-template rows ahead (ids sort first): only a pre-limit WHERE passes."""
+    now = datetime.now(UTC)
+    graph_repo.session.add(
+        GraphTemplate(
+            id="tpl2",
+            database_name="default",
+            name="T2",
+            template_type="node",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    graph_repo.session.maybe_commit()  # the template row before its nodes (FK)
+    for i in range(3):
+        graph_repo.session.add(
+            GraphNode(
+                id=f"zz-n{i}",
+                label=f"zz {i}",
+                source_id="src-b",
+                database_name="default",
+                graph_name="knowledge",
+                template_id="tpl2",
+            )
+        )
+    graph_repo.session.maybe_commit()
+
+    nodes = graph_repo.list_nodes_minimal(
+        limit=2, include_disabled_sources=True, source_ids=["src-b"], template_id="tpl2"
+    )
+    assert [n.id for n in nodes] == ["zz-n0", "zz-n1"]
+
+
 def test_edges_minimal_source_scope_applies_before_limit(graph_repo: GraphRepository) -> None:
     """Edge scope keys off the SOURCE node's source_id, applied before the limit."""
     edges = graph_repo.list_edges_minimal(

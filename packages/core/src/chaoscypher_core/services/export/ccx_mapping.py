@@ -469,11 +469,13 @@ def source_records(
 
     Args:
         source: A SourceRow dict (``id, ccx_iri?, title?, full_text?,
-            extraction_mode?, extraction_domain?, extraction_packs?, tags?``).
+            extraction_mode?, extraction_domain?, extraction_packs?, tags?,
+            summary?``).
             ``extraction_mode`` supplies ``extractedBy``; ``extraction_domain``
             supplies ``extractionDomain`` (the graph view's per-source icon);
             ``extraction_packs`` supplies ``extractionPacks``; ``tags``
-            (a list of names) supplies ``keywords``; the
+            (a list of names) supplies ``keywords``; ``summary`` supplies
+            ``abstract``; the
             :data:`SOURCE_PROVENANCE_TERMS` columns their terms; ``closes``
             (``[{"edge": edge_reference, "valid_to"}]``) supplies
             :data:`CLOSES_KEY`.
@@ -511,6 +513,9 @@ def source_records(
         # schema.org-aligned keyword list; round-trips a source's tags and feeds
         # the package-level manifest ``tags`` the hub search indexes.
         src_rec["keywords"] = list(source["tags"])
+    if source.get("summary"):
+        # schema.org ``abstract``: the document's one-line summary, beside its keywords.
+        src_rec["abstract"] = source["summary"]
     if source.get("title"):
         src_rec["title"] = source["title"]
     src_rec.update(_provenance_terms(source))

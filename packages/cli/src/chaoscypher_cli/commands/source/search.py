@@ -19,13 +19,17 @@ from rich.console import Console
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
-from chaoscypher_cli.utils.console import print_json
+from chaoscypher_cli.sources.tag_options import match_option, tag_option
+from chaoscypher_cli.utils.console import print_caught_error, print_json
 from chaoscypher_core.adapters.embedding import require_embedding_provider
 from chaoscypher_core.app_config import get_settings
 
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from chaoscypher_cli.context import CLIContext
+    from chaoscypher_core.models import TagMatch
 
 console = Console()
 
@@ -55,12 +59,16 @@ console = Console()
     default="table",
     help="Output format",
 )
+@tag_option("Only documents carrying this tag (repeatable)")
+@match_option()
 @click.option("--database", "-d", default="default", help="Database name")
 def search(
     query: str,
     mode: str,
     limit: int,
     output_format: str,
+    tags: tuple[str, ...],
+    match: str,
     database: str,
 ) -> None:
     """Search across sources in the knowledge graph.
@@ -77,14 +85,18 @@ def search(
         chaoscypher source search "machine learning"
         chaoscypher source search "API" --mode keyword --limit 20
         chaoscypher source search "neural networks" --mode semantic
+        chaoscypher source search "API" --tag alpha --tag beta --match all
     """  # noqa: D301  -- Click \x08 paragraph escape, intentional non-raw docstring.
+    from chaoscypher_core.services.sources.tags import filter_tag_scope
+
     try:
+        tag_names, tag_match = filter_tag_scope(tags, match)
         ctx = get_context(database_name=database)
 
         console.print(f"[cyan]Searching:[/cyan] {query} [dim]({mode} mode)[/dim]")
 
         # Perform search
-        results = _perform_search(ctx, query, mode, limit)
+        results = _perform_search(ctx, query, mode, limit, tags=tag_names, tag_match=tag_match)
 
         if not results:
             console.print("[yellow]No results found.[/yellow]")
@@ -97,11 +109,19 @@ def search(
             _display_table(results)
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)
 
 
-def _perform_search(ctx: CLIContext, query: str, mode: str, limit: int) -> list[dict[str, Any]]:
+def _perform_search(
+    ctx: CLIContext,
+    query: str,
+    mode: str,
+    limit: int,
+    *,
+    tags: Sequence[str],
+    tag_match: TagMatch,
+) -> list[dict[str, Any]]:
     """Perform search using SearchRepository.
 
     Args:
@@ -109,6 +129,9 @@ def _perform_search(ctx: CLIContext, query: str, mode: str, limit: int) -> list[
         query: Search query string.
         mode: Search mode (keyword, semantic, hybrid).
         limit: Maximum results to return.
+        tags: A tag scope (normalised names), applied inside the search
+            before its limit; empty for none.
+        tag_match: ``ANY`` or ``ALL`` of ``tags``.
 
     Returns:
         List of search result dictionaries.
@@ -117,7 +140,7 @@ def _perform_search(ctx: CLIContext, query: str, mode: str, limit: int) -> list[
 
     if mode == "keyword":
         # Keyword search - synchronous
-        raw_results = search_repo.keyword_search(query, limit=limit)
+        raw_results = search_repo.keyword_search(query, limit=limit, tags=tags, tag_match=tag_match)
     elif mode == "semantic":
         # Semantic search - needs a provider to embed the query
         require_embedding_provider(ctx.embedding_service, "Semantic search")
@@ -126,6 +149,8 @@ def _perform_search(ctx: CLIContext, query: str, mode: str, limit: int) -> list[
                 query,
                 k=limit,
                 embedding_provider_callback=_get_embedding_callback(ctx),
+                tags=tags,
+                tag_match=tag_match,
             )
         )
     else:  # hybrid: its keyword arm alone with vector search off (no callback)
@@ -134,6 +159,8 @@ def _perform_search(ctx: CLIContext, query: str, mode: str, limit: int) -> list[
                 query,
                 k=limit,
                 embedding_provider_callback=_get_embedding_callback(ctx),
+                tags=tags,
+                tag_match=tag_match,
             )
         )
 

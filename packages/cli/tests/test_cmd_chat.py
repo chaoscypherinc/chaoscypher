@@ -348,60 +348,108 @@ def test_resolve_source_scope_sources_only() -> None:
     assert set(result) == {"a", "b"}
 
 
-def test_resolve_source_scope_merges_tags_by_name() -> None:
-    """--tag values are names; they resolve to tag IDs before the lookup."""
+@pytest.fixture
+def tag_adapter(tmp_path: Any) -> Any:
+    """A real SQLite adapter holding tag ``research`` (``tag-1``) on ``doc-b`` and ``doc-c``."""
+    from sqlmodel import SQLModel
+
+    from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
+    from chaoscypher_core.adapters.sqlite.engine import get_engine
+
+    db_path = tmp_path / "chat-tags" / "app.db"
+    db_path.parent.mkdir(parents=True)
+    SQLModel.metadata.create_all(get_engine(str(db_path)), checkfirst=True)
+    adapter = SqliteAdapter(str(db_path), database_name="default")
+    adapter.connect()
+    adapter.create_tag({"id": "tag-1", "database_name": "default", "name": "research"})
+    adapter.create_tag({"id": "tag-2", "database_name": "default", "name": "idle"})
+    for source_id in ("doc-b", "doc-c"):
+        adapter.create_source(
+            {
+                "id": source_id,
+                "database_name": "default",
+                "filename": f"{source_id}.txt",
+                "filepath": "",
+                "status": "committed",
+            }
+        )
+        adapter.add_source_tags(source_id, ["tag-1"], "default")
+    yield adapter
+    adapter.disconnect()
+
+
+def _tag_ctx(adapter: Any) -> MagicMock:
     ctx = MagicMock()
     ctx.database_name = "default"
-    ctx.storage_adapter.list_tags.return_value = [{"id": "tag-1", "name": "Research"}]
-    ctx.storage_adapter.get_source_ids_by_tag_ids.return_value = ["b", "c"]
-    result = _resolve_source_scope(ctx, ("a",), ("research",))
-    assert set(result) == {"a", "b", "c"}
-    ctx.storage_adapter.get_source_ids_by_tag_ids.assert_called_once_with(["tag-1"], "default")
+    ctx.storage_adapter = adapter
+    return ctx
 
 
-def test_resolve_source_scope_accepts_raw_tag_id() -> None:
+def test_resolve_source_scope_merges_tags_by_name(tag_adapter: Any) -> None:
+    """--tag values are names; they resolve to the tag's sources and merge with --source."""
+    result = _resolve_source_scope(_tag_ctx(tag_adapter), ("a",), ("research",))
+    assert set(result) == {"a", "doc-b", "doc-c"}
+
+
+def test_resolve_source_scope_accepts_raw_tag_id(tag_adapter: Any) -> None:
     """A value matching no name but a real tag ID is used as-is."""
-    ctx = MagicMock()
-    ctx.database_name = "default"
-    ctx.storage_adapter.list_tags.return_value = [{"id": "tag-1", "name": "research"}]
-    ctx.storage_adapter.get_source_ids_by_tag_ids.return_value = ["b"]
-    result = _resolve_source_scope(ctx, (), ("tag-1",))
-    assert result == ["b"]
-    ctx.storage_adapter.get_source_ids_by_tag_ids.assert_called_once_with(["tag-1"], "default")
+    result = _resolve_source_scope(_tag_ctx(tag_adapter), (), ("tag-1",))
+    assert sorted(result) == ["doc-b", "doc-c"]
 
 
-def test_resolve_source_scope_unknown_tag_exits(capsys: pytest.CaptureFixture[str]) -> None:
+def test_resolve_source_scope_unknown_tag_exits(
+    tag_adapter: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
     """An unknown tag aborts instead of silently chatting unscoped."""
-    ctx = MagicMock()
-    ctx.database_name = "default"
-    ctx.storage_adapter.list_tags.return_value = [{"id": "tag-1", "name": "research"}]
     with pytest.raises(SystemExit) as exc_info:
-        _resolve_source_scope(ctx, (), ("nope",))
+        _resolve_source_scope(_tag_ctx(tag_adapter), (), ("nope", "Bad Tag"))
     assert exc_info.value.code == 1
     out = capsys.readouterr().out
-    assert "Unknown tag(s): nope" in out
-    assert "research" in out  # available tags listed
+    assert "Unknown tag(s): nope, Bad Tag" in out
+    assert "Available tags: idle, research" in out
 
 
-def test_resolve_source_scope_tag_without_sources_exits() -> None:
+def test_resolve_source_scope_unknown_tag_is_printed_as_text(
+    tag_adapter: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A --tag value that looks like Rich markup is shown as typed, never read as markup."""
+    with pytest.raises(SystemExit):
+        _resolve_source_scope(_tag_ctx(tag_adapter), (), ("[bold]x[/bold]", "[/oops]"))
+    assert "Unknown tag(s): [bold]x[/bold], [/oops]" in capsys.readouterr().out
+
+
+def test_resolve_source_scope_tag_without_sources_exits(tag_adapter: Any) -> None:
     """Tags that match zero sources abort rather than running unscoped."""
-    ctx = MagicMock()
-    ctx.database_name = "default"
-    ctx.storage_adapter.list_tags.return_value = [{"id": "tag-1", "name": "research"}]
-    ctx.storage_adapter.get_source_ids_by_tag_ids.return_value = []
     with pytest.raises(SystemExit) as exc_info:
-        _resolve_source_scope(ctx, (), ("research",))
+        _resolve_source_scope(_tag_ctx(tag_adapter), (), ("idle",))
     assert exc_info.value.code == 1
 
 
-def test_resolve_source_scope_tag_without_sources_keeps_explicit_sources() -> None:
+def test_resolve_source_scope_tag_without_sources_keeps_explicit_sources(tag_adapter: Any) -> None:
     """With --source present, an empty tag match warns but keeps the source scope."""
-    ctx = MagicMock()
-    ctx.database_name = "default"
-    ctx.storage_adapter.list_tags.return_value = [{"id": "tag-1", "name": "research"}]
-    ctx.storage_adapter.get_source_ids_by_tag_ids.return_value = []
-    result = _resolve_source_scope(ctx, ("a",), ("research",))
+    result = _resolve_source_scope(_tag_ctx(tag_adapter), ("a",), ("idle",))
     assert result == ["a"]
+
+
+def test_chat_tag_resolves_names_case_insensitively(tag_adapter: Any) -> None:
+    """``chat --tag Research`` finds tag ``research`` and scopes the chat to its sources."""
+    runner = CliRunner()
+    ctx = _ctx_with_llm()
+    ctx.storage_adapter = tag_adapter
+    captured: dict[str, Any] = {}
+
+    def _fake_infra(c: Any, source_ids: Any = None) -> tuple[Any, Any, list[Any]]:
+        captured["source_ids"] = source_ids
+        return MagicMock(), MagicMock(), []
+
+    with patch.object(chat_mod, "get_context", return_value=ctx):
+        with patch.object(chat_mod, "_create_tool_infrastructure", side_effect=_fake_infra):
+            with _patch_run_chat_turn(answer="scoped"):
+                result = runner.invoke(chat, ["--tag", "Research", "hi"])
+
+    assert result.exit_code == 0, result.output
+    assert "Scoped to 2 source(s)" in result.output
+    assert sorted(captured["source_ids"]) == ["doc-b", "doc-c"]
 
 
 # ===========================================================================

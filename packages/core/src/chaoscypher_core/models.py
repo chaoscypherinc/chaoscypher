@@ -147,6 +147,17 @@ def is_memory_source(row: Mapping[str, Any] | object) -> bool:
     return getattr(row, "source_type", None) == MEMORY_SOURCE_TYPE
 
 
+class TagMatch(StrEnum):
+    """How a set of filter tags matches a document's tags.
+
+    Defined here, below the ports, so a storage port can default to it; the
+    tag rule's module (``services.sources.tags``) is where callers import it.
+    """
+
+    ANY = "any"
+    ALL = "all"
+
+
 class MemoryLinkState(StrEnum):
     """What happened to a memory's link into the graph (``sources.memory_link_state``).
 
@@ -391,6 +402,15 @@ class Edge(BaseModel):
     person_made: bool = Field(
         default=False,
         description="Made by a person (create_edge), not a source: no release deletes or rewrites it",
+    )
+    member_source_ids: list[str] = Field(
+        default_factory=list,
+        exclude=True,
+        description=(
+            "Every source that attests this edge (its graph_edge_sources rows), as the "
+            "repository's edge listings for retrieval fill it; empty when not loaded. Internal: "
+            "the in-memory scope filters read it (ports.search.attesting_sources), the API does not."
+        ),
     )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC), description="Creation timestamp"
@@ -848,6 +868,9 @@ class ProcessingResult(BaseModel):
             "False when the commit stood but its identity pass or a memory's "
             "supersession failed; the memory link step finishes them."
         ),
+    )
+    tags: list[str] = Field(
+        default_factory=list, description="The document's tags after this call, sorted"
     )
 
     model_config = ConfigDict(extra="forbid")

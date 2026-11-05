@@ -10,6 +10,7 @@ import click
 from rich.console import Console
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_caught_error
 
 
 console = Console()
@@ -109,5 +110,5 @@ def update(
             console.print(f"  [dim]Properties removed:[/dim] {', '.join(unset)}")
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)

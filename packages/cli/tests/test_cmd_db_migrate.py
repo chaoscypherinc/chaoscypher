@@ -62,8 +62,13 @@ def _migration(
     revision: str,
     tier: MigrationTier = MigrationTier.SAFE_AUTO,
     description: str = "desc",
+    hold: list[str] | None = None,
 ) -> PendingMigration:
-    return PendingMigration(revision=revision, tier=tier, description=description)
+    return PendingMigration(revision=revision, tier=tier, description=description, hold=hold or [])
+
+
+# A tag name in square brackets must print as typed, not as Rich markup.
+_HOLD = ['"Work Docs" → "work-docs"', '"[b]old" → "b-old"']
 
 
 def _service_mock(pending: PendingMigrationsResponse) -> MagicMock:
@@ -149,6 +154,28 @@ class TestStatus:
         assert "0007_abc" in result.output
         assert "0008_def" in result.output
         assert "merge dupes" in result.output
+
+    def test_migrate_status_prints_the_hold_lines(self) -> None:
+        """Each change a held migration lists is printed under its row, as typed."""
+        runner = CliRunner()
+        svc = _service_mock(
+            _pending_resp(
+                ready=False,
+                blocked=[
+                    _migration("0026", MigrationTier.NEEDS_CONFIRMATION, "tag names", _HOLD),
+                    _migration("0027", MigrationTier.SAFE_AUTO, "add column"),
+                ],
+            )
+        )
+
+        with patch("chaoscypher_cli.commands.db.migrate._service", return_value=svc):
+            result = runner.invoke(migrate, ["status"])
+
+        assert result.exit_code == 0, result.output
+        out = result.output
+        for line in _HOLD:
+            assert line in out
+            assert out.index("0026") < out.index(line) < out.index("0027")
 
     def test_status_ready_but_blocked_renders_table(self) -> None:
         """ready=True with a non-empty blocked_on still renders the table."""
@@ -266,6 +293,62 @@ class TestApply:
         assert result.exit_code == 0, result.output
         assert "need confirmation" in result.output
         assert "Pre-upgrade backup:" in result.output
+        svc.apply.assert_called_once()
+
+    def test_apply_prompt_lists_the_hold_lines(self) -> None:
+        """Without --yes, the confirmation lists every change a held migration would make."""
+        runner = CliRunner()
+        svc = _service_mock(
+            _pending_resp(
+                ready=False,
+                blocked=[_migration("0026", MigrationTier.NEEDS_CONFIRMATION, "tag names", _HOLD)],
+            )
+        )
+
+        with patch("chaoscypher_cli.commands.db.migrate._service", return_value=svc):
+            result = runner.invoke(migrate, ["apply"], input="n\n")
+
+        assert result.exit_code == 1
+        for line in _HOLD:
+            assert line in result.output
+        assert result.output.index(_HOLD[-1]) < result.output.index("Apply all pending")
+        svc.apply.assert_not_called()
+
+    def test_apply_asks_before_a_held_safe_auto_migration(self) -> None:
+        """A hold asks first whatever the tier."""
+        runner = CliRunner()
+        svc = _service_mock(
+            _pending_resp(
+                ready=False,
+                blocked=[_migration("0026", MigrationTier.SAFE_AUTO, "tag names", _HOLD)],
+            )
+        )
+
+        with patch("chaoscypher_cli.commands.db.migrate._service", return_value=svc):
+            result = runner.invoke(migrate, ["apply"], input="n\n")
+
+        assert result.exit_code == 1
+        assert _HOLD[0] in result.output
+        svc.apply.assert_not_called()
+
+    def test_apply_first_build_does_not_prompt(self) -> None:
+        """A database with no schema yet is built, not upgraded: nothing to confirm."""
+        runner = CliRunner()
+        pending = _pending_resp(
+            ready=True,
+            blocked=[_migration("0019", MigrationTier.NEEDS_CONFIRMATION, "memberships")],
+        )
+        pending.first_build = True
+        svc = _service_mock(pending)
+        svc.apply.return_value = ApplyResponse(
+            applied=["0019"], current_revision="0019", backup_path=None
+        )
+
+        with patch("chaoscypher_cli.commands.db.migrate._service", return_value=svc):
+            result = runner.invoke(migrate, ["apply"])
+
+        assert result.exit_code == 0, result.output
+        assert "need confirmation" not in result.output
         svc.apply.assert_called_once()
 
     def test_apply_needs_confirmation_aborts_on_no(self) -> None:

@@ -132,6 +132,17 @@ def _clear_bound_logger_lazy_proxy_caches() -> None:
         proxy.__dict__.pop("bind", None)
 
 
+def forget_cached_loggers() -> None:
+    """Make every module-level structlog logger pick up the configuration now in force.
+
+    For a test that runs the real logging setup itself (``configure_logging`` with the
+    idempotency guard lifted): a module logger used by an earlier test in the same
+    worker is cached against the configuration it first saw. ``logging_left_as_found``
+    restores the configuration and clears the caches again after the test.
+    """
+    _clear_bound_logger_lazy_proxy_caches()
+
+
 def use_plain_tracebacks() -> None:
     """Keep structlog's processor chain, but render a logged exception as a plain traceback.
 
@@ -221,6 +232,7 @@ class _LoggingState:
 
 
 def _stdlib_loggers() -> Iterator[tuple[str, _stdlib_logging.Logger]]:
+    """Every real stdlib logger by name (placeholders skipped)."""
     # ``loggerDict`` holds ``Logger`` and ``PlaceHolder`` instances; only loggers can be disabled.
     for name, logger in list(_stdlib_logging.Logger.manager.loggerDict.items()):
         if isinstance(logger, _stdlib_logging.Logger):
@@ -228,6 +240,7 @@ def _stdlib_loggers() -> Iterator[tuple[str, _stdlib_logging.Logger]]:
 
 
 def _logging_state() -> _LoggingState:
+    """A snapshot of the structlog and stdlib logging configuration."""
     config = structlog.get_config()
     root = _stdlib_logging.getLogger()
     return _LoggingState(

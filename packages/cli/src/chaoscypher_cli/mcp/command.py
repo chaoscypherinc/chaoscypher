@@ -9,7 +9,6 @@ graph tools to MCP-compatible hosts (Claude Desktop, Cursor, etc.).
 """
 
 import asyncio
-import os
 import sys
 from typing import Any, Literal, cast
 
@@ -111,12 +110,9 @@ def serve_stdio(
     """
     # MCP stdio transport uses stdout for JSON-RPC protocol messages.
     # All logging MUST go to stderr to avoid corrupting the protocol stream.
-    from chaoscypher_core.utils.logging import configure_logging
+    from chaoscypher_cli.log_setup import configure_cli_logging
 
-    configure_logging(
-        log_level=os.getenv("LOG_LEVEL", "WARNING"),
-        stream=sys.stderr,
-    )
+    configure_cli_logging(stream=sys.stderr)
 
     # Run the same startup migration the Engine would run, BEFORE building the
     # heavy Engine. With auto_apply_destructive on (default) this heals the DB

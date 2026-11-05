@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from chaoscypher_core.models import TagMatch
 from chaoscypher_cortex.features.sources.api import (
     cleanup_orphan_tasks,
     delete_source,
@@ -109,6 +110,8 @@ class TestListSourcesHandler:
             search=None,
             tag_id=None,
             in_site=None,
+            tags=[],
+            match=TagMatch.ANY,
         )
 
         service.list_sources_enriched.assert_called_once_with(
@@ -120,6 +123,8 @@ class TestListSourcesHandler:
             search=None,
             tag_id=None,
             in_site=None,
+            tags=[],
+            match=TagMatch.ANY,
         )
         assert isinstance(result, PaginatedSourcesResponse)
         assert len(result.data) == 2
@@ -147,6 +152,8 @@ class TestListSourcesHandler:
             search="neural",
             tag_id="tag-1",
             in_site=False,
+            tags=["alpha"],
+            match=TagMatch.ALL,
         )
 
         service.list_sources_enriched.assert_called_once_with(
@@ -158,6 +165,8 @@ class TestListSourcesHandler:
             search="neural",
             tag_id="tag-1",
             in_site=False,
+            tags=["alpha"],
+            match=TagMatch.ALL,
         )
         assert result.pagination.total_pages == 3
         assert result.pagination.has_prev is True
@@ -249,6 +258,7 @@ class TestUpdateSourceHandler:
             processing_status=None,
             enabled=False,
             user_metadata=None,
+            summary=None,
         )
         assert result["title"] == "New"
 

@@ -27,9 +27,10 @@ from sqlalchemy.orm import load_only
 from sqlmodel import select
 
 from chaoscypher_core.adapters.sqlite.mixin_base import SqliteMixinBase
+from chaoscypher_core.adapters.sqlite.mixins.sources import carrying_tags
 from chaoscypher_core.adapters.sqlite.models import SourceRow
 from chaoscypher_core.constants import SOURCE_ROW_FILTERING_MODE
-from chaoscypher_core.models import SourceErrorStage, SourceStatus
+from chaoscypher_core.models import SourceErrorStage, SourceStatus, TagMatch
 from chaoscypher_core.services.quality.counters import QualityCounter
 from chaoscypher_core.services.sources.engine.extraction.domains.packs import pack_columns
 
@@ -540,13 +541,28 @@ class SourceLifecycleMixin(SqliteMixinBase):
         return result.first()
 
     def list_files(
-        self, database_name: str, status: str | None = None, limit: int = 100
+        self,
+        database_name: str,
+        status: str | None = None,
+        limit: int = 100,
+        *,
+        tags: Sequence[str] = (),
+        match: TagMatch = TagMatch.ANY,
     ) -> list[dict[str, Any]]:
-        """List source processing files for database with optional status filter.
+        """List source processing files for database with optional status and tag filters.
 
         Narrow ``load_only`` projection skips JSON columns for
         performance. Includes cached quality score fields for efficient
-        quality queries.
+        quality queries, and the one-line summary.
+
+        Args:
+            database_name: The database.
+            status: Only sources in this status.
+            limit: The most rows returned.
+            tags: Normalised tag names: only sources carrying them
+                (``carrying_tags``, inside the query before the ``limit``).
+                Empty filters nothing.
+            match: ``ANY`` or ``ALL`` of ``tags``.
         """
         self._ensure_connected()
         # Use load_only to exclude large JSON columns but include cached scores
@@ -566,6 +582,8 @@ class SourceLifecycleMixin(SqliteMixinBase):
                     SourceRow.origin_url,
                     SourceRow.version,
                     SourceRow.parent_id,
+                    # The one-line summary (migration 0026)
+                    SourceRow.summary,
                     # Status tracking
                     SourceRow.status,
                     SourceRow.indexing_complete,
@@ -652,6 +670,8 @@ class SourceLifecycleMixin(SqliteMixinBase):
 
         if status:
             statement = statement.where(SourceRow.status == status)
+        if tags:
+            statement = statement.where(carrying_tags(tags, match, database_name))
 
         statement = statement.order_by(SourceRow.created_at.desc()).limit(limit)  # type: ignore[attr-defined]
 

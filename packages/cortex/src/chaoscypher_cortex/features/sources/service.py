@@ -17,7 +17,7 @@ from chaoscypher_core.constants import (
     OP_VISION_FINALIZE,
     OP_VISION_PAGE,
 )
-from chaoscypher_core.models import SourceErrorStage, SourceStatus
+from chaoscypher_core.models import SourceErrorStage, SourceStatus, TagMatch
 from chaoscypher_core.operations import queue_utils
 from chaoscypher_core.operations.importing.confirmation_gate import (
     confirm_extraction as confirm_extraction_gate,
@@ -32,6 +32,7 @@ from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
     chosen_packs_of,
     pack_columns,
 )
+from chaoscypher_core.services.sources.labels import apply_source_labels
 from chaoscypher_core.services.sources.management.re_extraction import force_re_extract
 from chaoscypher_cortex.features.sources.mappers import (
     attach_quality_scores,
@@ -163,8 +164,14 @@ class SourceService:
         tag_id: str | None = None,
         site_id: str | None = None,
         in_site: bool | None = None,
+        tags: Sequence[str] = (),
+        match: TagMatch = TagMatch.ANY,
     ) -> dict[str, Any]:
-        """List sources with filtering and pagination (``site_id`` / ``in_site``: by site)."""
+        """List sources with filtering and pagination.
+
+        ``site_id`` / ``in_site``: by site; ``tags`` / ``match``: by tag name
+        (Core checks them by the tag rule and filters inside the query).
+        """
         if page_size is None:
             page_size = self.settings.pagination.default_page_size
         return self.engine_service.list_sources(
@@ -177,6 +184,8 @@ class SourceService:
             tag_id=tag_id,
             site_id=site_id,
             in_site=in_site,
+            tags=tags,
+            match=match,
         )
 
     async def trigger_extraction(
@@ -267,7 +276,7 @@ class SourceService:
         # Preflight the LLM provider BEFORE anything destructive runs.
         #
         # This check used to sit *after* force_re_extract below. force_re_extract
-        # deletes the source's nodes, edges and templates and resets the row to
+        # releases the source's part of the graph and resets the row to
         # INDEXED, and it commits -- its atomicity guarantee covers only its own
         # two writes, not the caller's later failure points. So on a COMMITTED
         # source with force=True and no reachable provider, the subgraph was
@@ -616,6 +625,8 @@ class SourceService:
         tag_id: str | None = None,
         site_id: str | None = None,
         in_site: bool | None = None,
+        tags: Sequence[str] = (),
+        match: TagMatch = TagMatch.ANY,
     ) -> dict[str, Any]:
         """List sources with duration fields, tags (batched), and domain icons enriched.
 
@@ -645,6 +656,8 @@ class SourceService:
             tag_id=tag_id,
             site_id=site_id,
             in_site=in_site,
+            tags=tags,
+            match=match,
         )
 
         sources = [add_duration_fields(s) for s in result.get("sources", [])]
@@ -672,8 +685,27 @@ class SourceService:
         processing_status: str | None = None,
         enabled: bool | None = None,
         user_metadata: dict[str, Any] | None = None,
+        summary: str | None = None,
     ) -> dict[str, Any] | None:
-        """Update a source."""
+        """Update a source; ``summary`` sets it (``""`` clears it), ``None`` keeps it.
+
+        The summary goes through Core's ``apply_source_labels`` (cleaned by
+        ``clean_summary``, refused before anything is written when too long)
+        ahead of the other fields, so a refused summary changes nothing.
+
+        Raises:
+            ValidationError: the summary is too long, or the source is a memory.
+            NotFoundError: ``summary`` is given and no source has ``source_id``.
+
+        """
+        if summary is not None:
+            apply_source_labels(
+                self.storage_adapter,
+                self.database_name,
+                source_id,
+                summary=summary,
+                max_summary_chars=self.settings.source_processing.summary_max_chars,
+            )
         return self.engine_service.update_source(
             source_id=source_id,
             title=title,

@@ -79,6 +79,7 @@ function makeGetRouter(sourcesData: unknown) {
       return Promise.resolve({ data: { domains: [{ name: 'science', description: 'Science', builtin: true }] } });
     if (url === '/settings') return Promise.resolve({ data: {} });
     if (url === '/llm/stats') return Promise.resolve({ data: {} });
+    if (url === '/sources/tags') return Promise.resolve({ data: [] });
     return Promise.resolve({ data: {} });
   };
 }
@@ -99,7 +100,9 @@ describe('SourcesPage', () => {
 
   it('loads and lists sources via the migrated TanStack Query hook', async () => {
     mockedApiClient.get.mockImplementation((url: string) =>
-      url === '/sources' ? Promise.resolve({ data: PAGINATED_SOURCES }) : Promise.resolve({ data: {} }),
+      url === '/sources'
+        ? Promise.resolve({ data: PAGINATED_SOURCES })
+        : Promise.resolve({ data: url === '/sources/tags' ? [] : {} }),
     );
 
     renderPage();
@@ -113,7 +116,7 @@ describe('SourcesPage', () => {
         ? Promise.resolve({
             data: { data: [], pagination: { total: 0, page: 1, page_size: 50, total_pages: 0, has_next: false, has_prev: false } },
           })
-        : Promise.resolve({ data: {} }),
+        : Promise.resolve({ data: url === '/sources/tags' ? [] : {} }),
     );
 
     renderPage();
@@ -241,6 +244,7 @@ describe('SourcesPage — upload wizard entry point', () => {
       if (url === '/settings/llm/health') {
         return Promise.resolve({ data: { verified: true, missing_models: [] } });
       }
+      if (url === '/sources/tags') return Promise.resolve({ data: [] });
       return Promise.resolve({ data: {} });
     });
 

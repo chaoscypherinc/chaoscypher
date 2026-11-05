@@ -144,6 +144,11 @@ class AnthropicProvider(BaseLLMProvider):
         if timeout is not None:
             kwargs["timeout"] = timeout
 
+        # Retries inside one call; None keeps the library's default.
+        max_retries = self.config.get("client_max_retries")
+        if max_retries is not None:
+            kwargs["max_retries"] = max_retries
+
         logger.info("anthropic_initialized", provider="anthropic", model=self.chat_model)
         return ChatAnthropic(**kwargs)
 

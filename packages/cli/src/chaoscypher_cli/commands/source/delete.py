@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.prompt import Confirm
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_caught_error
 
 
 console = Console()
@@ -62,5 +63,5 @@ def delete(file_id: str, force: bool, database: str) -> None:
         console.print("[green]✓ File deleted successfully[/green]")
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)

@@ -51,6 +51,8 @@ curl -X POST http://localhost/api/v1/sources \
 | `protect_orphans` | bool | No | `null` | Orphan entities (no relationships) that carry a description or an evidence sentence are always committed, flagged `properties.orphan`. When `true`, the ones carrying neither are kept (flagged) too; when `false`, those are dropped before commit. `null` = domain config / global default (`false`). |
 | `enable_inverse_relationships` | bool | No | `null` | When `false`, inverse edges are not created during commit. `null` = global default (`true`). |
 | `max_entity_degree_override` | int | No | `null` | Hard cap on relationships per entity for this source. `null` = domain / global default. |
+| `tags` | string[] | No | `null` | Tags by name (repeat the form field: `-F tags=research -F tags=q3`). Checked by the [tag rule](../../user-guide/sources.md#tags); a refused tag is a `400` and nothing is stored. With `skip_duplicates` hitting an existing document, they are added to its tags. |
+| `summary` | string | No | `null` | The document's one-line summary, folded to one line; used instead of a model-written one. Longer than `source_processing.summary_max_chars` is a `400`. |
 
 :::info[Upload settings are persistent]
 
@@ -69,6 +71,7 @@ curl -X POST http://localhost/api/v1/sources \
   "status": "pending",
   "enabled": true,
   "extraction_depth": "full",
+  "summary": null,
   "created_at": "2026-03-09T12:00:00",
   "updated_at": "2026-03-09T12:00:00"
 }
@@ -118,6 +121,7 @@ curl -X POST http://localhost/api/v1/sources/batch \
 | `protect_orphans` | bool | No | `null` | Keep (`true`) or drop (`false`) the orphan entities that carry no description or evidence; an orphan that carries either is always kept, flagged. `null` = domain / global default. |
 | `enable_inverse_relationships` | bool | No | `null` | When `false`, inverse edges are not created during commit. `null` = global default (`true`). |
 | `max_entity_degree_override` | int | No | `null` | Hard cap on relationships per entity for these sources. `null` = domain / global default. |
+| `tags` | string[] | No | `null` | Tags every file gets, by name (repeat the form field). A refused tag is a `400` before any file is written. The batch takes no `summary`: one does not describe many files. |
 
 **Response** `202 Accepted`
 
@@ -187,6 +191,8 @@ curl -X POST http://localhost/api/v1/sources/url \
 | `protect_orphans` | bool | No | `null` | Keep (`true`) or drop (`false`) the orphan entities that carry no description or evidence; an orphan that carries either is always kept, flagged. `null` = domain / global default. |
 | `enable_inverse_relationships` | bool | No | `null` | When `false`, inverse edges are not created during commit. `null` = global default (`true`). |
 | `max_entity_degree_override` | int | No | `null` | Hard cap on relationships per entity for this source. `null` = domain / global default. |
+| `tags` | string[] | No | `[]` | Tags the page's document gets, by name. A refused tag is a `422` with the rule's message. |
+| `summary` | string | No | `null` | The page's one-line summary. Too long is a `400`, before the fetch is queued. |
 
 :::note[URL fetcher Content-Type validation]
 
@@ -241,6 +247,8 @@ curl "http://localhost/api/v1/sources?status=committed"
 | `enabled` | string | No | `null` | Filter by enabled state: `enabled` or `disabled` |
 | `search` | string | No | `null` | Search in title and origin URL |
 | `tag_id` | string | No | `null` | Filter by tag ID |
+| `tags` | string[] | No | `[]` | Only sources carrying these tags, by name (repeat the parameter: `?tags=research&tags=q3`). A tag the rule refuses is a `400` with its message; a tag no source carries returns an empty page. The filter runs before paging, so `pagination.total` counts only the matches. |
+| `match` | string | No | `any` | `any`: sources carrying any of `tags`; `all`: carrying every one. Another value is a `422`. |
 | `in_site` | bool | No | `null` | Pages of imported sites only (`true`) or none of them (`false`); one site's pages: [`GET /sources/sites/{site_id}/pages`](#list-site-pages) |
 
 **Response** `200 OK` -- [PaginatedSourcesResponse](#paginatedsourcesresponse)
@@ -262,8 +270,9 @@ curl "http://localhost/api/v1/sources?status=committed"
       "extraction_entities_count": 85,
       "extraction_relationships_count": 120,
       "cached_quality_grade": "A",
+      "summary": "A survey of graph-based retrieval methods.",
       "tags": [
-        { "id": "tag_001", "name": "Research", "color": "#4dabf5" }
+        { "id": "tag_001", "name": "research", "color": "#4dabf5" }
       ],
       "created_at": "2026-03-09T10:00:00"
     }
@@ -335,11 +344,13 @@ curl -X PATCH http://localhost/api/v1/sources/src_abc123 \
 | `processing_status` | string | No | Override the lifecycle status; must be a `SourceStatus` value (`pending`, `indexing`, `vision_pending`, `indexed`, `awaiting_confirmation`, `extracting`, `mcp_extracting`, `extracted`, `committing`, `committed`, `error`) -- an unknown value is rejected with `422` |
 | `enabled` | bool | No | Enable or disable the source |
 | `user_metadata` | object | No | Arbitrary key-value metadata |
+| `summary` | string | No | The one-line summary (folded to one line); `""` clears it, and leaving it out keeps it. Longer than `source_processing.summary_max_chars` is a `400`, and nothing is changed. |
 
 **Response** `200 OK` -- [SourceResponse](#sourceresponse)
 
 | Status | Description |
 |--------|-------------|
+| `400` | Summary too long |
 | `404` | Source not found |
 
 ---
@@ -350,8 +361,12 @@ curl -X PATCH http://localhost/api/v1/sources/src_abc123 \
 DELETE /api/v1/sources/{source_id}
 ```
 
-Permanently deletes the source and cascades to all chunks, citations, graph nodes,
-edges, templates, and search index entries.
+Permanently deletes the source, its chunks, citations and search index entries, and
+releases its part of the knowledge graph: the source's memberships, the nodes and edges
+no other source attests, and the templates it created that nothing left in the graph
+uses. A node or edge another source also attests stays and is rebuilt from the sources
+that remain, a template still in use passes to a source that uses it, and person-made
+nodes stay.
 
 ```bash
 curl -X DELETE http://localhost/api/v1/sources/src_abc123
@@ -1013,9 +1028,9 @@ POST /api/v1/sources/{source_id}/reclassify
 Change the extraction domain for a source and queue a new extraction pass.
 Returns `202 Accepted` while the new extraction runs in the background.
 
-For sources that are already `committed`, this endpoint atomically resets prior
-graph artifacts (nodes, edges, templates) before dispatching so the new
-extraction starts clean.
+For sources that are already `committed`, this endpoint atomically releases the
+source's part of the graph (as [Delete Source](#delete-source) does) before
+dispatching so the new extraction starts clean.
 
 **When to use:** When auto-detection chose the wrong domain, or when you want to
 re-run extraction under a different domain template after reviewing the initial
@@ -1362,8 +1377,8 @@ Returns the updated source record after the re-extraction job has been queued.
 
 **Allowed source states:**
 
-- `committed` — Atomically deletes graph artifacts (nodes, edges, templates), resets
-  to `indexed`, and re-extracts.
+- `committed` — Atomically releases the source's part of the graph (as
+  [Delete Source](#delete-source) does), resets to `indexed`, and re-extracts.
 - `error` (after post-INDEXING stage) — Resets to `indexed`, clears cached payload,
   and re-extracts.
 - `indexed` / `extracted` / `extracting` / `mcp_extracting` / `committing` — Forcibly
@@ -2177,7 +2192,7 @@ curl http://localhost/api/v1/sources/tags
   {
     "id": "tag_001",
     "database_name": "default",
-    "name": "Research",
+    "name": "research",
     "color": "#4dabf5",
     "description": "Research papers",
     "created_at": "2026-03-01T08:00:00"
@@ -2185,7 +2200,7 @@ curl http://localhost/api/v1/sources/tags
   {
     "id": "tag_002",
     "database_name": "default",
-    "name": "Technical",
+    "name": "technical",
     "color": "#66bb6a",
     "description": null,
     "created_at": "2026-03-02T09:00:00"
@@ -2217,7 +2232,7 @@ curl http://localhost/api/v1/sources/tags/tag_001
 {
   "id": "tag_001",
   "database_name": "default",
-  "name": "Research",
+  "name": "research",
   "color": "#4dabf5",
   "description": "Research papers",
   "created_at": "2026-03-01T08:00:00"
@@ -2242,7 +2257,7 @@ Create a new tag.
 curl -X POST http://localhost/api/v1/sources/tags \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "Research",
+    "name": "research",
     "color": "#4dabf5",
     "description": "Research papers"
   }'
@@ -2250,7 +2265,7 @@ curl -X POST http://localhost/api/v1/sources/tags \
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `name` | string | **Yes** | -- | Tag display name |
+| `name` | string | **Yes** | -- | Tag name; follows the [tag rule](../../user-guide/sources.md#tags): trimmed and lower-cased, and a refused name is a `422` with the rule's message. When the database already has a tag of that name, that tag is returned and `color` and `description` are left as they were. |
 | `color` | string | No | `null` | Hex color code (e.g. `#4dabf5`) |
 | `description` | string | No | `null` | Tag description |
 
@@ -2258,7 +2273,7 @@ curl -X POST http://localhost/api/v1/sources/tags \
 
 | Status | Description |
 |--------|-------------|
-| `400` | Duplicate tag name or validation error |
+| `422` | The name breaks the tag rule |
 
 ---
 
@@ -2273,13 +2288,13 @@ Update tag properties. All fields are optional.
 ```bash
 curl -X PATCH http://localhost/api/v1/sources/tags/tag_001 \
   -H "Content-Type: application/json" \
-  -d '{ "name": "Updated Name", "color": "#ff5722" }'
+  -d '{ "name": "papers", "color": "#ff5722" }'
 ```
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `tag_id` | string (path) | **Yes** | Tag ID |
-| `name` | string | No | Updated tag name |
+| `name` | string | No | New tag name; follows the tag rule (`422` when refused) |
 | `color` | string | No | Updated hex color |
 | `description` | string | No | Updated description |
 
@@ -2287,8 +2302,9 @@ curl -X PATCH http://localhost/api/v1/sources/tags/tag_001 \
 
 | Status | Description |
 |--------|-------------|
-| `400` | Duplicate tag name or validation error |
 | `404` | Tag not found |
+| `409` | Another tag already has that name (`a tag named "papers" already exists`) |
+| `422` | The name breaks the tag rule |
 
 ---
 
@@ -2341,13 +2357,59 @@ curl http://localhost/api/v1/sources/src_abc123/tags
   {
     "id": "tag_001",
     "database_name": "default",
-    "name": "Research",
+    "name": "research",
     "color": "#4dabf5",
     "description": "Research papers",
     "created_at": "2026-03-01T08:00:00"
   }
 ]
 ```
+
+---
+
+### Edit a Source's Tags by Name
+
+```
+PATCH /api/v1/sources/{source_id}/tags
+```
+
+Add, remove or replace a source's tags by name, creating any tag the database does not have yet. Returns the source's tags after the change, sorted.
+
+```bash
+curl -X PATCH http://localhost/api/v1/sources/src_abc123/tags \
+  -H "Content-Type: application/json" \
+  -d '{"add": ["research", "q3"], "remove": ["draft"]}'
+```
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `source_id` | string (path) | **Yes** | -- | Source ID |
+| `add` | string[] | No | `[]` | Tags to add |
+| `remove` | string[] | No | `[]` | Tags to remove; one the source lacks is ignored |
+| `replace` | string[] | No | -- | The whole new set of tags (`[]` clears them). Cannot be combined with `add` or `remove`. |
+
+Every name follows the [tag rule](../../user-guide/sources.md#tags).
+
+**Response** `200 OK` -- `SourceTagsResponse`
+
+```json
+{
+  "source_id": "src_abc123",
+  "tags": ["q3", "research"]
+}
+```
+
+| Status | Description |
+|--------|-------------|
+| `400` | The result would carry more than 32 tags (`a document can carry at most 32 tags; this would give it 33`), or the source is a memory (memories carry no tags) |
+| `404` | Source not found |
+| `422` | A name breaks the tag rule, or `replace` is sent with `add` or `remove` (`replace sets the whole list; it cannot be combined with add or remove`) |
+
+:::note[422 in a JSON body, 400 in a query string or form]
+
+The same bad tag is refused with `422` when it arrives in a JSON body (this route, URL import, creating or renaming a tag) and with `400` when it arrives in a query string or a form field (`GET /sources?tags=`, uploads). The message is the rule's own text either way; in a `422` (`VALIDATION_FAILED`) it is the `msg` of the first entry in `details.errors`.
+
+:::
 
 ---
 
@@ -2572,6 +2634,7 @@ all lifecycle fields across indexing, extraction, commit, and LLM metrics stages
 | `file_type` | string? | File type (e.g. `pdf`, `csv`) |
 | `file_size` | int? | File size in bytes |
 | `title` | string? | Display title |
+| `summary` | string? | The document's one-line summary, typed or model-written (`null` when it has none) |
 | `source_type` | string? | Source type (e.g. `pdf`, `webpage`) |
 | `origin_url` | string? | Original URL for web imports |
 | `status` | string | Lifecycle status: `pending` \| `indexing` \| `vision_pending` \| `indexed` \| `awaiting_confirmation` \| `extracting` \| `mcp_extracting` \| `extracted` \| `committing` \| `committed` \| `error` |
@@ -2721,6 +2784,7 @@ array enriched at the API layer.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `summary` | string \| null | The document's one-line summary (`null` when it has none) |
 | `site_id` | string \| null | The [imported site](#docs-sites) the page belongs to (`null` otherwise) |
 | `site_gone_at` | datetime \| null | When a [refresh](#refresh-site) first found the page no longer listed on its site (`null` otherwise) |
 | `site_left_out` | bool | The site leaves this page out (unticked at import, or excluded by a refresh), so a check for updates does not check it; `false` for a page the site lists and for every other source |

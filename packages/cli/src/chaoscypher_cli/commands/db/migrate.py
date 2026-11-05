@@ -17,12 +17,20 @@ omitted, the one selected by ``chaoscypher db switch``.
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
 
 import click
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from chaoscypher_cli.context import get_database_name
+from chaoscypher_cli.utils.console import print_caught_error
+from chaoscypher_cli.utils.migrations import confirm_pending_migrations
+
+
+if TYPE_CHECKING:
+    from chaoscypher_core.database.migrations.upgrade import PendingMigration
 
 
 console = Console()
@@ -103,8 +111,19 @@ def status(database: str | None, as_json: bool) -> None:
             "needs_confirmation": "yellow",
             "manual": "red",
         }.get(str(m.tier), "")
-        table.add_row(m.revision, f"[{tier_style}]{m.tier}[/{tier_style}]", m.description)
+        table.add_row(m.revision, f"[{tier_style}]{m.tier}[/{tier_style}]", _description(m))
     console.print(table)
+
+
+def _description(m: PendingMigration) -> Text:
+    """A migration's description, with each change it waits on (``hold``) listed below it.
+
+    Plain ``Text``: a hold line quotes the user's data (a tag name), never Rich markup.
+    """
+    text = Text(m.description)
+    for line in m.hold:
+        text.append(f"\n  - {line}")
+    return text
 
 
 @migrate.command("apply")
@@ -122,9 +141,11 @@ def status(database: str | None, as_json: bool) -> None:
 def apply(database: str | None, yes: bool) -> None:
     """Apply all pending migrations.
 
-    If any pending migration is tier=needs_confirmation, you'll be
-    prompted to confirm unless --yes is passed. Safe_auto migrations
-    are applied immediately.
+    If any pending migration is tier=needs_confirmation or manual, or
+    lists changes it would make to your data (a hold), you'll be prompted
+    to confirm, with those changes listed, unless --yes is passed.
+    Otherwise (or on a database with no schema yet, which is built, not
+    upgraded) the migrations are applied immediately.
     """
     svc = _service(database)
     pending = svc.pending()
@@ -133,19 +154,13 @@ def apply(database: str | None, yes: bool) -> None:
         console.print("[green]Nothing to apply.[/green]")
         return
 
-    needs_confirm = [m for m in pending.blocked_on if str(m.tier) != "safe_auto"]
-    if needs_confirm and not yes:
-        console.print(f"[yellow]{len(needs_confirm)} migration(s) need confirmation:[/yellow]")
-        for m in needs_confirm:
-            console.print(f"  - {m.revision} ({m.tier}): {m.description}")
-        if pending.last_backup:
-            console.print(f"\nPre-upgrade backup: {pending.last_backup}")
-        click.confirm("Apply all pending migrations?", abort=True)
+    if not yes:
+        confirm_pending_migrations(pending, console=console)
 
     try:
         result = svc.apply()
     except Exception as exc:
-        console.print(f"[red]Migration failed:[/red] {exc}")
+        print_caught_error(exc, label="Migration failed", console=console)
         if pending.last_backup:
             console.print(
                 f"Roll back with: "
@@ -192,7 +207,7 @@ def rollback(database: str | None, yes: bool) -> None:
     try:
         result = svc.rollback()
     except Exception as exc:
-        console.print(f"[red]Rollback failed:[/red] {exc}")
+        print_caught_error(exc, label="Rollback failed", console=console)
         sys.exit(1)
 
     console.print(f"[green]Restored from:[/green] {result.restored_from}")

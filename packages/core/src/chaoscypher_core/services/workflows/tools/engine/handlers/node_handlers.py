@@ -16,9 +16,11 @@ import structlog
 from chaoscypher_core.models import Node, NodeCreate, NodeUpdate
 from chaoscypher_core.ports.search import item_in_source_scope
 from chaoscypher_core.services.graph.management.release import reembed_nodes
+from chaoscypher_core.services.sources.tags import TagRuleError, filter_tag_scope
 from chaoscypher_core.services.workflows.tools.engine.chunk_hydration import (
     assign_chunk_aliases,
     chunk_source_filenames,
+    chunk_source_titles,
     clean_chunk_metadata,
     format_chunk_content,
 )
@@ -26,6 +28,7 @@ from chaoscypher_core.services.workflows.tools.engine.handlers.decorators import
 from chaoscypher_core.services.workflows.tools.engine.handlers.template_lookup import (
     resolve_template,
 )
+from chaoscypher_core.utils.tool_failure import discard_failed_work, log_tool_failure
 
 
 if TYPE_CHECKING:
@@ -36,6 +39,9 @@ if TYPE_CHECKING:
     from chaoscypher_core.settings import SearchSettings
 
 logger = structlog.get_logger(__name__)
+
+_NOT_YET_SEARCHABLE = " (saved; not yet searchable, indexing failed: do not repeat this call)"
+"""Added to a write's message when the node committed but its indexing failed."""
 
 
 class NodeToolHandlers:
@@ -316,19 +322,28 @@ class NodeToolHandlers:
         limit: int = 5,
         source_id: str | None = None,
         source_ids: list[str] | None = None,
+        tags: list[str] | None = None,
+        match: str = "any",
     ) -> dict:
         """Search document chunks and return full content.
 
         Use for finding quotes, descriptions, or textual evidence in source documents.
+        The scope (sources and tags) is applied inside the search, before its limit:
+        a source outranked by others still answers.
 
         Args:
             query: Text to search for in document chunks
             limit: Maximum number of chunks to return (default 5)
             source_id: Optional single source ID to filter results
-            source_ids: Optional list of source IDs to filter results
+            source_ids: Optional list of source IDs to filter results; with
+                ``source_id`` too, the scope is both (their intersection)
+            tags: Optional document tags: only documents carrying them
+            match: ``any`` (the default) or ``all`` of ``tags``
 
         Returns:
-            Dict with success status and list of chunks with content
+            Dict with success status and list of chunks with content; each
+            chunk names its document's ``filename`` and ``source_title``
+            (the title, else the filename)
 
         """
         if not self.indexing:
@@ -336,6 +351,15 @@ class NodeToolHandlers:
                 "success": False,
                 "error": "Chunk search not available (no indexing repository)",
             }
+        try:
+            tag_names, tag_match = filter_tag_scope(tags or [], match)
+        except TagRuleError as exc:
+            return {"success": False, "error": exc.message}
+        scope = list(dict.fromkeys(source_ids or []))
+        if source_id:
+            scope = [source_id] if not source_ids or source_id in scope else []
+            if not scope:  # the two name no common source: nothing to search
+                return {"success": True, "count": 0, "chunks": [], "query": query}
 
         # Ensure minimum limit for LLM return count
         min_limit = self.search_settings.search_chunks_min_limit if self.search_settings else 5
@@ -365,6 +389,10 @@ class NodeToolHandlers:
             k=fetch_count,
             embedding_provider_callback=self._make_embedding_callback(),
             min_similarity=0.3,
+            item_type="chunk",
+            source_ids=scope,
+            tags=tag_names,
+            tag_match=tag_match,
         )
 
         # Max chunks to collect before reranking trims to final limit
@@ -384,27 +412,18 @@ class NodeToolHandlers:
         }
 
         chunks: list[dict] = []
-        # The source filenames for the citation labels, one read per database for the hits
-        # in scope (chunk_hydration.chunk_source_filenames).
+        # The source filenames and titles for the citation labels, one read per database
+        # for the hits (chunk_hydration); the search already applied the scope.
+        hit_rows = [row for row in (chunks_by_id.get(cid) for cid, _ in chunk_hits) if row]
         source_filenames = chunk_source_filenames(
-            (
-                row
-                for row in (chunks_by_id.get(chunk_uuid) for chunk_uuid, _ in chunk_hits)
-                if row
-                and not (source_ids and row.get("source_id") not in source_ids)
-                and not (source_id and row.get("source_id") != source_id)
-            ),
-            getattr(self.indexing, "get_source_filenames_by_ids", None),
+            hit_rows, getattr(self.indexing, "get_source_filenames_by_ids", None)
+        )
+        source_titles = chunk_source_titles(
+            hit_rows, getattr(self.indexing, "get_source_titles_by_ids", None)
         )
         for chunk_uuid, score in chunk_hits:
             chunk_data = chunks_by_id.get(chunk_uuid)
             if chunk_data:
-                # Filter by source scope
-                chunk_source = chunk_data.get("source_id")
-                if source_ids and chunk_source not in source_ids:
-                    continue
-                if source_id and chunk_source != source_id:
-                    continue
                 original_content = chunk_data["content"]
                 chunk_source_id = chunk_data.get("source_id", "")
 
@@ -431,7 +450,8 @@ class NodeToolHandlers:
                         "content": numbered_content,
                         "original_content": original_content,
                         "source_id": chunk_source_id,
-                        "filename": source_filenames.get(chunk_source_id, ""),
+                        "filename": filename,
+                        "source_title": source_titles.get(chunk_source_id, ""),
                         "chunk_index": chunk_data.get("chunk_index"),
                         "page_number": chunk_data.get("page_number"),
                         "section": chunk_data.get("section"),
@@ -457,7 +477,8 @@ class NodeToolHandlers:
             "search_chunks_completed",
             query=query,
             chunks_found=len(chunks),
-            source_filter=source_ids or source_id,
+            source_filter=scope or None,
+            tag_filter=tag_names or None,
             reranked=rerank_enabled,
         )
 
@@ -535,15 +556,29 @@ class NodeToolHandlers:
             "search_query": query if query else None,
         }
 
-    async def _index_written(self, node: Node) -> None:
+    async def _index_written(self, node: Node) -> bool:
         """Index a node the tools wrote, the way the commit path indexes an extracted one.
 
         Keywords always; the vector too when a provider is wired (``reembed_nodes``, the one
         re-embed path, which also refreshes the search index's node row).
+
+        Best effort, True when it indexed: the node is already committed, so a failure is
+        logged by type and the write still answers success. "Not done … try again" made a
+        retrying agent create a duplicate person-made node no identity pass merges.
         """
-        self.search.index_node(node)
-        if self.embedding_provider is not None:
-            await reembed_nodes(self.graph, [node.id], self.embedding_provider, search=self.search)
+        try:
+            self.search.index_node(node)
+            if self.embedding_provider is not None:
+                await reembed_nodes(
+                    self.graph, [node.id], self.embedding_provider, search=self.search
+                )
+        except Exception as error:
+            discard_failed_work(self.graph)
+            log_tool_failure(
+                logger, "tool_node_index_failed", error, level="warning", node_id=node.id
+            )
+            return False
+        return True
 
     @tool_handler("list_nodes_failed")
     async def list_nodes(
@@ -599,11 +634,11 @@ class NodeToolHandlers:
             NodeCreate(template_id=resolved, label=label, properties=properties),
             person_made=True,  # made by a person (or an agent for one), no source
         )
-        await self._index_written(node)
+        indexed = await self._index_written(node)
 
         return {
             "success": True,
-            "message": f"Created node: {label}",
+            "message": f"Created node: {label}" + ("" if indexed else _NOT_YET_SEARCHABLE),
             "node_id": node.id,
             "node": {
                 "id": node.id,
@@ -611,6 +646,7 @@ class NodeToolHandlers:
                 "template_id": node.template_id,
                 "properties": node.properties,
             },
+            "indexed": indexed,
         }
 
     @tool_handler("update_node_failed")
@@ -639,9 +675,14 @@ class NodeToolHandlers:
         node = self.graph.update_node(node_id, NodeUpdate(**update_data))
         if node is None:
             return {"success": False, "error": f"Failed to update node: {node_id}"}
-        await self._index_written(node)
+        indexed = await self._index_written(node)
 
-        return {"success": True, "message": f"Updated node: {node.label}", "node_id": node.id}
+        return {
+            "success": True,
+            "message": f"Updated node: {node.label}" + ("" if indexed else _NOT_YET_SEARCHABLE),
+            "node_id": node.id,
+            "indexed": indexed,
+        }
 
     @tool_handler("delete_node_failed")
     async def delete_node(self, node_id: str, source_ids: list[str] | None = None) -> dict:

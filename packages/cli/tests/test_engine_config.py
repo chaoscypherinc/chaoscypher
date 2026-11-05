@@ -3,6 +3,7 @@
 
 """Cheap settings.yaml peek helpers used by CLI startup paths."""
 
+import pytest
 import yaml
 
 from chaoscypher_cli import engine_config
@@ -48,3 +49,29 @@ def test_corrupt_yaml_returns_empty_peek(isolated_settings):
     (isolated_settings / "settings.yaml").write_text("{not: valid: yaml", encoding="utf-8")
     assert engine_config.peek_settings_yaml() == {}
     assert engine_config.is_setup_completed() is False
+
+
+@pytest.mark.parametrize(
+    ("settings_yaml", "env_provider"),
+    [
+        ({"setup_completed": True}, None),
+        ({"llm": {"chat_provider": "ollama"}}, None),
+        (None, None),
+        (None, "ollama"),
+        ("{not: valid: yaml", None),
+        ("- setup_completed\n- llm\n", None),
+    ],
+    ids=["setup-completed", "chat-provider", "nothing", "env-provider", "corrupt", "not-a-dict"],
+)
+def test_cli_setup_check_matches_core(isolated_settings, monkeypatch, settings_yaml, env_provider):
+    """The CLI's cheap startup check and Core's rule give the same answer."""
+    from chaoscypher_core.services.llm.configured import setup_completed
+
+    if isinstance(settings_yaml, str):  # written as is: not valid YAML, or not a mapping
+        (isolated_settings / "settings.yaml").write_text(settings_yaml, encoding="utf-8")
+    elif settings_yaml is not None:
+        _write_settings(isolated_settings, settings_yaml)
+    if env_provider is not None:
+        monkeypatch.setenv("CHAOSCYPHER_LLM_PROVIDER", env_provider)
+
+    assert engine_config.is_setup_completed() == setup_completed(isolated_settings)

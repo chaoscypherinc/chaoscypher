@@ -25,6 +25,7 @@ import click
 from rich.console import Console
 
 from chaoscypher_cli.sources.domains import DOMAIN_NAMES, chosen_packs, pack_option
+from chaoscypher_cli.utils.console import print_caught_error
 from chaoscypher_core.models import AnalysisDepth
 from chaoscypher_core.ports.types import FilteringMode
 from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
@@ -133,7 +134,7 @@ def confirm_cmd(
         console.print("\n[yellow]Cancelled[/yellow]")
         sys.exit(130)
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)
 
 

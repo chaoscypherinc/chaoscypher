@@ -77,6 +77,10 @@ chaoscypher source add document.pdf --database research
 | `--resume` | `-r` | Interactive picker for resuming pending files |
 | `--site` | | Import every page of the docs site at the one URL given, as one site. See [Import a Docs Site](#import-a-docs-site). |
 | `--yes` | | With `--site`: import without asking, once it has shown what it found. |
+| `--tag TAG` | | Tag the document; repeat for several. Follows the [tag rule](../../user-guide/sources.md#tags); a refused tag prints the rule's message and nothing is added. On a re-add the tags are added to the document's own. With `--site`, every page carries them, including pages a later `source site refresh` finds; re-adding an imported site with `--tag` adds the tags to all its pages. |
+| `--summary TEXT` | | The document's one-line summary, used instead of a model-written one; it replaces the old one on a re-add. Refused with `--site` (`Error: a site's pages do not share one summary`). |
+
+`--tag` and `--summary` cannot be combined with resuming a file (`--resume` or a file ID): a resumed run adds nothing new, so they are refused rather than dropped.
 
 :::info[CLI flags match the API contract]
 
@@ -251,7 +255,7 @@ chaoscypher source add doc1.pdf doc2.pdf doc3.pdf
 
 ## Import a Docs Site
 
-`source add URL --site` finds the site's pages (its `llms.txt`, its sitemap, or a crawl of its links), says how many it found and how, asks, then imports each page as its own source under one site, a line per page. The `source add` options apply to every page; a site's pages are never parked one by one for domain confirmation, and `--skip-duplicates` does not apply to them (a page already imported elsewhere is still imported as the site's own page; your earlier source is left alone). A site already imported (any spelling of its address) is refused with the `source site refresh` command that checks it. How pages are found, the politeness rules and the limits: [Import a Docs Site](../../user-guide/site-import.md).
+`source add URL --site` finds the site's pages (its `llms.txt`, its sitemap, or a crawl of its links), says how many it found and how, asks, then imports each page as its own source under one site, a line per page. The `source add` options apply to every page; a site's pages are never parked one by one for domain confirmation, and `--skip-duplicates` does not apply to them (a page already imported elsewhere is still imported as the site's own page; your earlier source is left alone). `--json`, `--verbose` and `--resume` are refused with `--site` (a usage error, exit 2). A site already imported (any spelling of its address) is refused with the `source site refresh` command that checks it. How pages are found, the politeness rules and the limits: [Import a Docs Site](../../user-guide/site-import.md).
 
 ```bash
 chaoscypher source add https://docs.example.com --site
@@ -316,6 +320,8 @@ chaoscypher source list
 | `--status STATUS` | `-s` | Filter by status (`pending`, `indexing`, `indexed`, `extracted`, `committed`, `error`) |
 | `--pending` | `-p` | Show only files not yet committed (excludes committed and errored) |
 | `--awaiting` | `-a` | Show only sources awaiting domain confirmation |
+| `--tag TAG` | | Only documents carrying this tag; repeat for several. The filter runs before `--limit`. |
+| `--match any\|all` | | With several `--tag`: documents carrying any of them (default) or all of them. |
 | `--format FORMAT` | `-f` | Output format: `table` (default), `json`, `yaml` |
 | `--limit N` | `-n` | Maximum number of files to fetch (default: adapter default, 100) |
 | `--database DATABASE` | `-d` | Database name (default: the current database) |
@@ -335,6 +341,8 @@ chaoscypher source list
 
 Total: 3 file(s)
 ```
+
+When any listed document has tags or a summary, the table gains a **Tags** column (comma-separated) and a **Summary** column (cut at 40 characters). The JSON and YAML output always carry `tags` (sorted) and `summary` (`null` when there is none).
 
 ### Pending Files
 
@@ -370,7 +378,9 @@ chaoscypher source list --format json
     "cached_quality_grade": 92,
     "cached_quality_label": "Outstanding",
     "created_at": "2026-03-08T14:22:30Z",
-    "updated_at": "2026-03-08T14:25:12Z"
+    "updated_at": "2026-03-08T14:25:12Z",
+    "tags": ["project:alpha", "research"],
+    "summary": "A survey of graph-based retrieval methods."
   },
   {
     "id": "if_f6e5d4c3b2a1",
@@ -381,10 +391,87 @@ chaoscypher source list --format json
     "cached_quality_grade": null,
     "cached_quality_label": null,
     "created_at": "2026-03-08T15:10:05Z",
-    "updated_at": "2026-03-08T15:10:42Z"
+    "updated_at": "2026-03-08T15:10:42Z",
+    "tags": [],
+    "summary": null
   }
 ]
 ```
+
+---
+
+## Source Tag
+
+Show, add, remove or replace a document's tags.
+
+```bash
+# Print the document's tags
+chaoscypher source tag if_a1b2c3d4e5f6
+
+# Add and remove (repeat each option)
+chaoscypher source tag if_a1b2c3d4e5f6 --add research --add q3 --remove draft
+
+# Make these the whole set, or remove every tag
+chaoscypher source tag if_a1b2c3d4e5f6 --replace research
+chaoscypher source tag if_a1b2c3d4e5f6 --clear
+```
+
+### Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--add TAG` | | Add a tag (repeatable) |
+| `--remove TAG` | | Remove a tag (repeatable); one the document lacks is ignored |
+| `--replace TAG` | | Make these the document's whole set of tags (repeatable) |
+| `--clear` | | Remove every tag from the document |
+| `--database DATABASE` | `-d` | Database name (default: the current database) |
+
+Every tag follows the [tag rule](../../user-guide/sources.md#tags), and the result may hold at most 32 tags. It prints the tags after the change:
+
+``` { .text .no-copy }
+Tags of if_a1b2c3d4e5f6: q3, research
+```
+
+or `Tags of if_a1b2c3d4e5f6: none`. A refusal prints one `Error:` line and exits 1, changing nothing:
+
+- `--replace` or `--clear` with `--add` or `--remove`: `Error: replace sets the whole list; it cannot be combined with add or remove`
+- `--clear` with `--replace`: `Error: --clear cannot be combined with --replace`
+- a tag the rule refuses, or a result over 32 tags, with the rule's message.
+
+---
+
+## Source Summarize
+
+Write each document's one-line summary with the configured model. Use it to fill in summaries for documents added before 0.7.0, while `source_processing.import_summaries` was off, or while no model was configured.
+
+```bash
+# Only documents that have no summary yet
+chaoscypher source summarize --missing
+
+# Every document
+chaoscypher source summarize
+```
+
+:::warning[Without `--missing`, every summary is rewritten]
+
+Without `--missing`, `source summarize` rewrites **every** document's summary, including the ones you typed yourself. Use `--missing` to keep them.
+
+:::
+
+### Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--missing` | | Only documents that have no summary yet |
+| `--database DATABASE` | `-d` | Database name (default: the current database) |
+
+It covers every indexed document (memories excluded), oldest first, with one model call each, limited to `source_processing.import_summary_timeout_seconds` and never retried; a failed call leaves that document's summary as it was. It runs whatever `source_processing.import_summaries` says. It ends with one line:
+
+``` { .text .no-copy }
+Summaries: 12 written, 1 failed, 0 skipped.
+```
+
+With no model configured it writes nothing, prints `Error: no language model is configured, so no summaries can be written. Run "chaoscypher setup" or set llm.chat_provider.` and exits 1.
 
 ---
 
@@ -559,6 +646,8 @@ chaoscypher source search "machine learning algorithms"
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--mode MODE` | `-m` | Search mode: `hybrid` (default), `keyword` (fast), `semantic` (vector only) |
+| `--tag TAG` | | Only documents carrying this tag; repeat for several. The scope applies inside the search, before `--limit`; a tag no document carries returns nothing. |
+| `--match any\|all` | | With several `--tag`: documents carrying any of them (default) or all of them. |
 | `--limit N` | `-l` | Maximum results (default: `20`, configurable via `settings.cli.search_default_limit`) |
 | `--format FORMAT` | `-f` | Output format: `table` (default), `json` |
 | `--database DATABASE` | `-d` | Database name (default: the current database) |

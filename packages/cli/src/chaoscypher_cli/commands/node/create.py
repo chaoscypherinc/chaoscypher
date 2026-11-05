@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_caught_error
 
 
 console = Console()
@@ -127,7 +128,7 @@ def create(
                     json_properties = json.loads(json_props)
                     properties.update(json_properties)
                 except json.JSONDecodeError as e:
-                    console.print(f"[red]Invalid JSON:[/red] {e}")
+                    print_caught_error(e, label="Invalid JSON", console=console)
                     sys.exit(1)
 
         # Create the node - import model here to avoid slow startup
@@ -153,5 +154,5 @@ def create(
                 console.print(f"    • {k}: {v}")
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)

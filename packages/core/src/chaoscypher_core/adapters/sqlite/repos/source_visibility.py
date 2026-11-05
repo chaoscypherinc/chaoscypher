@@ -25,7 +25,8 @@ the membership, through one set of conditions built here:
 - :func:`attested_by_sql`: some member is in a list of sources.
 - :func:`unattested_sql`: the row has no member and names no source (a manual
   or legacy row): what the column-only reading called "no source".
-- :func:`in_source_scope_sql`: unattested, or attested by the scope.
+- :func:`in_source_scope_sql`: person-made, unattested, or attested by the scope;
+  attested by it alone for a scope that came from document tags.
 - :func:`attestations_sql`: one ``(item_id, source_id)`` row per attestation,
   for the per-source counts (a merged node counts once under each member).
 - :func:`template_visible_sql`: a template's home source is not switched off,
@@ -182,12 +183,19 @@ def attested_by_sql(table: str, in_list: str, row: str | None = None) -> str:
     )
 
 
-def in_source_scope_sql(table: str, in_list: str, row: str | None = None) -> str:
+def in_source_scope_sql(
+    table: str, in_list: str, row: str | None = None, *, attested_only: bool = False
+) -> str:
     """A SQL condition true when the row is in a source scope: a person made it, unattested, or attested by it.
 
     A row a person made (``person_made``, migration 0025) is in every lens and source
-    scope. The SQL form of :func:`chaoscypher_core.ports.search.item_in_source_scope`.
+    scope. With ``attested_only`` (a scope that came from document tags) only
+    :func:`attested_by_sql` counts: a person-made or unattested row is out
+    (owner decision 2026-11-05). The SQL form of
+    :func:`chaoscypher_core.ports.search.item_in_source_scope`.
     """
+    if attested_only:
+        return attested_by_sql(table, in_list, row)
     person = f"{row or table}.person_made = 1"
     return f"({person} OR {unattested_sql(table, row)} OR {attested_by_sql(table, in_list, row)})"
 
@@ -228,7 +236,7 @@ def visible(entity: Any) -> TextClause:
     return text(attested_visible_sql(table, row))
 
 
-def _with_ids(sql_for: Any, entity: Any, source_ids: Iterable[str]) -> TextClause:
+def _with_ids(sql_for: Any, entity: Any, source_ids: Iterable[str], **options: bool) -> TextClause:
     """``sql_for``'s condition with the ids bound as one expanding parameter.
 
     The parameter is named after the row it reads, so the same clause compiles
@@ -237,7 +245,7 @@ def _with_ids(sql_for: Any, entity: Any, source_ids: Iterable[str]) -> TextClaus
     """
     table, row = _table_and_row(entity)
     name = f"attested_ids_{row}"
-    return text(sql_for(table, f":{name}", row)).bindparams(
+    return text(sql_for(table, f":{name}", row, **options)).bindparams(
         bindparam(name, value=sorted(set(source_ids)), expanding=True)
     )
 
@@ -247,9 +255,11 @@ def attested_by(entity: Any, source_ids: Iterable[str]) -> TextClause:
     return _with_ids(attested_by_sql, entity, source_ids)
 
 
-def in_source_scope(entity: Any, source_ids: Iterable[str]) -> TextClause:
-    """``WHERE`` clause: the ``entity`` row is in the scope (:func:`in_source_scope_sql`)."""
-    return _with_ids(in_source_scope_sql, entity, source_ids)
+def in_source_scope(
+    entity: Any, source_ids: Iterable[str], *, attested_only: bool = False
+) -> TextClause:
+    """``WHERE`` clause: the ``entity`` row is in the scope (:func:`in_source_scope_sql`, ``attested_only`` too)."""
+    return _with_ids(in_source_scope_sql, entity, source_ids, attested_only=attested_only)
 
 
 def attested(entity: Any) -> TextClause:

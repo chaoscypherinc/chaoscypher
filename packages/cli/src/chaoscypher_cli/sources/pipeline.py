@@ -248,6 +248,8 @@ class SourcePipeline:
         skip_duplicates: bool = False,
         no_confirm: bool = False,
         packs: Sequence[str] | None = None,
+        tags: Sequence[str] = (),
+        summary: str | None = None,
     ) -> PipelineResult:
         """Run the source processing pipeline.
 
@@ -282,6 +284,8 @@ class SourcePipeline:
             packs: The packs to extract with, on the floor every source has
                 (``[]`` the floor alone). Every name must be a registered pack
                 (``DomainStack.resolve``); refused with ``domain`` set too.
+            tags: Tags the uploaded document gets (added to its own on a re-add).
+            summary: The uploaded document's summary (``None`` keeps it).
 
         Returns:
             PipelineResult with stats and status
@@ -346,6 +350,8 @@ class SourcePipeline:
                     filtering_mode=filtering_mode,
                     skip_duplicates=skip_duplicates,
                     no_confirm=no_confirm,
+                    tags=tags,
+                    summary=summary,
                 )
             else:
                 result = self._run_with_ui(
@@ -363,6 +369,8 @@ class SourcePipeline:
                     filtering_mode=filtering_mode,
                     skip_duplicates=skip_duplicates,
                     no_confirm=no_confirm,
+                    tags=tags,
+                    summary=summary,
                 )
 
             # Preserve gate/duplicate statuses set by the stage helpers.
@@ -512,6 +520,8 @@ class SourcePipeline:
         filtering_mode: FilteringMode | None = None,
         skip_duplicates: bool = False,
         no_confirm: bool = False,
+        tags: Sequence[str] = (),
+        summary: str | None = None,
     ) -> PipelineResult:
         """Run pipeline with minimal output."""
         # W1 (2026-05-07): collect upload-row settings once and forward
@@ -527,6 +537,9 @@ class SourcePipeline:
             "enable_vision": enable_vision,
             "content_filtering": content_filtering,
             "filtering_mode": filtering_mode or "balanced",
+            # None, not an empty edit: no tags given leaves the document's alone.
+            "tags": list(tags) or None,
+            "summary": summary,
         }
 
         # Upload
@@ -823,6 +836,8 @@ class SourcePipeline:
         filtering_mode: FilteringMode | None = None,
         skip_duplicates: bool = False,
         no_confirm: bool = False,
+        tags: Sequence[str] = (),
+        summary: str | None = None,
     ) -> PipelineResult:
         """Run pipeline with spinner-per-stage progress UI.
 
@@ -848,6 +863,9 @@ class SourcePipeline:
             "enable_vision": enable_vision,
             "content_filtering": content_filtering,
             "filtering_mode": filtering_mode or "balanced",
+            # None, not an empty edit: no tags given leaves the document's alone.
+            "tags": list(tags) or None,
+            "summary": summary,
         }
         if "upload" in stages and (file_path or url):
             step += 1
@@ -960,6 +978,8 @@ class SourcePipeline:
         enable_vision: bool = True,
         content_filtering: bool = True,
         filtering_mode: FilteringMode = "balanced",
+        tags: Sequence[str] | None = None,
+        summary: str | None = None,
     ) -> str | None:
         """Run upload stage with UI. Returns file_id or None on failure/skip."""
         stage_start = time.time()
@@ -976,6 +996,8 @@ class SourcePipeline:
                     enable_vision=enable_vision,
                     content_filtering=content_filtering,
                     filtering_mode=filtering_mode,
+                    tags=tags,
+                    summary=summary,
                 )
                 if isinstance(upload_result, dict) and upload_result.get("skipped_duplicate"):
                     self._handle_duplicate_skip(upload_result, result)
@@ -1027,6 +1049,8 @@ class SourcePipeline:
         enable_vision: bool = True,
         content_filtering: bool = True,
         filtering_mode: FilteringMode = "balanced",
+        tags: Sequence[str] | None = None,
+        summary: str | None = None,
     ) -> str | None:
         """Run URL fetch + upload stage with UI. Returns file_id or None on failure/skip."""
         stage_start = time.time()
@@ -1043,6 +1067,8 @@ class SourcePipeline:
                     enable_vision=enable_vision,
                     content_filtering=content_filtering,
                     filtering_mode=filtering_mode,
+                    tags=tags,
+                    summary=summary,
                 )
                 if isinstance(upload_result, dict) and upload_result.get("skipped_duplicate"):
                     self._handle_duplicate_skip(upload_result, result)

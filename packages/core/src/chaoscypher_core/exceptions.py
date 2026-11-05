@@ -53,16 +53,18 @@ class NotFoundError(ChaosCypherException):
 
     """
 
-    def __init__(self, resource_type: str, identifier: str):
+    def __init__(self, resource_type: str, identifier: str, *, message: str | None = None):
         """Initialize the instance.
 
         Args:
             resource_type: Type of resource that was not found.
             identifier: Unique identifier of the resource.
+            message: The sentence shown to the user, when the default
+                ``"<type> not found: <id>"`` is not the one to show.
 
         """
         super().__init__(
-            message=f"{resource_type} not found: {identifier}",
+            message=message or f"{resource_type} not found: {identifier}",
             code="NOT_FOUND",
             details={"resource_type": resource_type, "identifier": identifier},
         )

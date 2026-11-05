@@ -43,7 +43,7 @@ Fetched 71 pages: 71 new.
 Example Docs: 71 of 71 pages done
 ```
 
-`--yes` imports without asking. Every other `source add` option (`--quick`, `--pack`, `--skip-extract`, `--index-only`, …) applies to each page, except `--skip-duplicates` (see [Each page](#each-page)). A site already imported is refused with the command that checks it for updates. See [Source Commands](../reference/cli/sources.md#import-a-docs-site).
+`--yes` imports without asking. Every other `source add` option (`--quick`, `--pack`, `--skip-extract`, `--index-only`, …) applies to each page, except `--skip-duplicates` (see [Each page](#each-page)); `--json`, `--verbose` and `--resume` are refused with `--site`. A site already imported is refused with the command that checks it for updates. See [Source Commands](../reference/cli/sources.md#import-a-docs-site).
 
 </TabItem>
 <TabItem value="mcp" label="MCP">

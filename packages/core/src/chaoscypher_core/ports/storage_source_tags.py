@@ -11,7 +11,13 @@ Binds to SourceTagsMixin in the SQLite adapter.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from chaoscypher_core.models import TagMatch
 
 
 @runtime_checkable
@@ -91,6 +97,47 @@ class SourceTagStorageProtocol(Protocol):
 
         Returns:
             Deduplicated list of source IDs
+
+        """
+        ...
+
+    # ------------------------------------------------------------------
+    # By name (the tag rule, ``services/sources/tags.py``). Names passed
+    # here are already normalised; ``find_tags`` / ``get_or_create_tags``
+    # are the callers.
+    # ------------------------------------------------------------------
+
+    def get_tags_by_names(self, database_name: str, names: Sequence[str]) -> list[dict[str, Any]]:
+        """Return the tags of ``database_name`` whose name is one of ``names`` (exact match).
+
+        Names with no tag are simply absent from the result.
+        """
+        ...
+
+    def add_source_tags(self, source_id: str, tag_ids: Sequence[str], database_name: str) -> None:
+        """Assign each of ``tag_ids`` to the source; a pair already assigned is skipped."""
+        ...
+
+    def remove_source_tags(self, source_id: str, tag_ids: Sequence[str]) -> None:
+        """Unassign each of ``tag_ids`` from the source; one it does not carry is a no-op."""
+        ...
+
+    def set_source_tags(self, source_id: str, tag_ids: Sequence[str], database_name: str) -> None:
+        """Make ``tag_ids`` exactly the source's tags (``[]`` clears them), in one transaction."""
+        ...
+
+    def tagged_source_ids(
+        self, database_name: str, tags: Sequence[str], match: TagMatch
+    ) -> list[str]:
+        """Return the ids of the sources carrying ``tags`` (any of them, or all of them).
+
+        Args:
+            database_name: Only tags of this database count.
+            tags: Normalised tag names.
+            match: ``ANY`` or ``ALL`` of ``tags``.
+
+        Returns:
+            The matching source ids; empty when nothing matches.
 
         """
         ...

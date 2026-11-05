@@ -3,8 +3,8 @@ slug: local-model-extraction-leaderboard
 title: "Which Local Model Should Build Your Knowledge Graph? A Reproducible Leaderboard"
 authors: [denis]
 tags: [ollama, graphrag, ai, selfhosted]
-date: 2026-10-21
-draft: true
+date: 2026-10-30
+draft: false
 description: 22 Ollama models, scored on the two jobs a knowledge graph hands a model — following the extraction prompt and answering from the graph — with pass/fail checks, an interval on every score, and the commands that produce the board.
 ---
 

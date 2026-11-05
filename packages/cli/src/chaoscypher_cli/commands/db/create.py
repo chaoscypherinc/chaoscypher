@@ -13,7 +13,7 @@ from rich.console import Console
 
 from chaoscypher_cli.commands.db.list import get_databases_dir
 from chaoscypher_cli.context import get_context
-from chaoscypher_cli.utils.console import print_unwrapped
+from chaoscypher_cli.utils.console import print_caught_error, print_unwrapped
 
 
 console = Console()
@@ -74,5 +74,5 @@ def create(name: str) -> None:
         console.print(f"\nSwitch to it with: [cyan]chaoscypher db switch {name}[/cyan]")
 
     except Exception as e:
-        console.print(f"[red]Failed to create database:[/red] {e}")
+        print_caught_error(e, label="Failed to create database", console=console)
         sys.exit(1)

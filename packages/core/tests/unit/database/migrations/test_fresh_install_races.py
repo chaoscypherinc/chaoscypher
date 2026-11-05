@@ -270,11 +270,13 @@ def test_apply_after_an_earlier_upgrade_takes_its_own_backup() -> None:
     run_startup_migrations(db, auto_apply_destructive=True)
     earlier = get_upgrade_state(db).last_backup
     assert earlier is not None
-    downgrade_to(db, "0024")  # a release later: one migration pending again
+    downgrade_to(db, "0024")  # a release later: migrations pending again
+    pending = pending_revisions(db)  # derived, so a new head never breaks the test
+    assert pending
 
     result = UpgradeService(NAME).apply()
 
-    assert result.applied == ["0025"]
+    assert result.applied == pending
     assert result.backup_path is not None
     assert result.backup_path != earlier
     assert get_upgrade_state(db).last_backup == result.backup_path

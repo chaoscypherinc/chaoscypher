@@ -28,7 +28,11 @@ import pytest
 from sqlalchemy import text
 
 from chaoscypher_core.benchmark import retrieval_sample as rs
-from chaoscypher_core.ports.search import node_in_source_scope, source_visible
+from chaoscypher_core.ports.search import (
+    item_in_source_scope,
+    node_in_source_scope,
+    source_visible,
+)
 from tests.fakes.graph_edges import EdgesByNode
 
 
@@ -128,15 +132,29 @@ class _FakeGraph(EdgesByNode):
 
 
 class _FakeMinimalGraph(_FakeGraph):
-    def list_nodes_minimal(self, limit: int, source_ids: list[str] | None = None) -> list[Any]:
+    def list_nodes_minimal(
+        self, limit: int, source_ids: list[str] | None = None, attested_only: bool = False
+    ) -> list[Any]:
         return [
             n
             for n in self._visible()
-            if not source_ids or node_in_source_scope(n.source_id, source_ids)
+            if not source_ids
+            or (
+                item_in_source_scope(n, source_ids, attested_only=True)
+                if attested_only
+                else node_in_source_scope(n.source_id, source_ids)
+            )
         ][:limit]
 
-    def list_edges_minimal(self, limit: int, source_ids: list[str] | None = None) -> list[Any]:
-        return self._visible_edges()[:limit]
+    def list_edges_minimal(
+        self, limit: int, source_ids: list[str] | None = None, attested_only: bool = False
+    ) -> list[Any]:
+        return [
+            e
+            for e in self._visible_edges()
+            if not (source_ids and attested_only)
+            or item_in_source_scope(e, source_ids, attested_only=True)
+        ][:limit]
 
 
 class _FakeStorage:

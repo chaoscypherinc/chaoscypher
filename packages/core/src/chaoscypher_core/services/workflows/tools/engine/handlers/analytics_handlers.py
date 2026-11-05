@@ -386,12 +386,25 @@ class AnalyticsToolHandlers:
                 if nid in nodes_dict
             ]
         else:
-            # Fallback: Find nodes with same template (uses minimal - only needs id, label, template_id)
-            all_nodes = self._load_nodes()
-
-            # Filter by source scope
-            if source_ids:
-                all_nodes = [n for n in all_nodes if item_in_source_scope(n, source_ids)]
+            # Fallback: nodes of the same template. The minimal listing filters
+            # template and scope in SQL before its limit (+1 for the node
+            # itself), so a call reads ~limit rows, not the whole node table.
+            if hasattr(self.graph, "list_nodes_minimal"):
+                all_nodes = list(
+                    self.graph.list_nodes_minimal(
+                        limit=limit + 1,
+                        source_ids=source_ids or None,
+                        template_id=node.template_id,
+                    )
+                )
+            else:
+                all_nodes = list(
+                    self.graph.list_nodes(
+                        template_id=node.template_id, limit=self._node_limit, minimal=True
+                    )
+                )
+                if source_ids:
+                    all_nodes = [n for n in all_nodes if item_in_source_scope(n, source_ids)]
 
             similar = [
                 {

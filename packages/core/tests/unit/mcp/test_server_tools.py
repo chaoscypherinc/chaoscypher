@@ -13,6 +13,7 @@ that are not exercised by the processor or bridge test suites:
 """
 
 import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1553,15 +1554,16 @@ class TestFullPipelineExtractionDepth:
     """The full pipeline forwards extraction_depth as the engine's analysis_depth."""
 
     @staticmethod
-    def _make_engine() -> MagicMock:
+    def _make_engine(sandbox: Path) -> MagicMock:
         engine = MagicMock()
+        engine.settings.paths.mcp_dir = sandbox
         processing_result = MagicMock()
         processing_result.model_dump.return_value = {"source_id": "f1", "status": None}
         engine.add_document = AsyncMock(return_value=processing_result)
         return engine
 
     @pytest.mark.asyncio
-    async def test_quick_depth_forwarded_to_engine(self):
+    async def test_quick_depth_forwarded_to_engine(self, tmp_path: Path):
         """extraction_depth='quick' reaches engine.add_document as analysis_depth.
 
         Previously the full-pipeline closure dropped extraction_depth
@@ -1570,22 +1572,24 @@ class TestFullPipelineExtractionDepth:
         """
         from chaoscypher_core.mcp.server import _create_pipeline_callback
 
-        engine = self._make_engine()
+        engine = self._make_engine(tmp_path)
+        (tmp_path / "doc.txt").write_text("content")
         pipeline = _create_pipeline_callback(engine, extract_entities=True)
 
-        await pipeline(file_path="/tmp/doc.txt", file_id="f1", extraction_depth="quick")
+        await pipeline(file_path="doc.txt", file_id="f1", extraction_depth="quick")
 
         assert engine.add_document.await_args.kwargs["analysis_depth"] == "quick"
 
     @pytest.mark.asyncio
-    async def test_unknown_depth_clamped_to_full(self):
+    async def test_unknown_depth_clamped_to_full(self, tmp_path: Path):
         """A value outside the schema enum degrades to the 'full' default."""
         from chaoscypher_core.mcp.server import _create_pipeline_callback
 
-        engine = self._make_engine()
+        engine = self._make_engine(tmp_path)
+        (tmp_path / "doc.txt").write_text("content")
         pipeline = _create_pipeline_callback(engine, extract_entities=True)
 
-        await pipeline(file_path="/tmp/doc.txt", file_id="f1", extraction_depth="bogus")
+        await pipeline(file_path="doc.txt", file_id="f1", extraction_depth="bogus")
 
         assert engine.add_document.await_args.kwargs["analysis_depth"] == "full"
 

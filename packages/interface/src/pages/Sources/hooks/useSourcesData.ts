@@ -16,7 +16,7 @@ import {
 import { SITES_QUERY_KEY } from '../../../services/api/sites';
 import { useSites } from '../../../services/api/useSites';
 import type { ExtractionDomain } from '../../../services/api/sources';
-import type { Site, UnifiedSource, SourceQualityScore } from '../../../types';
+import type { Site, UnifiedSource, SourceQualityScore, TagMatch } from '../../../types';
 import { getApiErrorMessage } from '../../../utils/errors';
 
 interface UseSourcesDataOptions {
@@ -43,6 +43,10 @@ interface Filters {
   status: string;
   source_type: string;
   search: string;
+  /** Tag names to filter by (none: no tag filter). */
+  tags: string[];
+  /** With two or more tags: any of them, or all of them. */
+  match: TagMatch;
 }
 
 /** How often the sources list (and an expanded site's pages) polls while work is in flight. */
@@ -53,11 +57,17 @@ const EMPTY_SITES: Site[] = [];
 
 /**
  * Whether the list is unfiltered, so each imported site shows as one row with
- * its pages beneath it. A filtered list (search, status, type, stage) searches
+ * its pages beneath it. A filtered list (search, status, type, stage, tags) searches
  * every source, a site's pages included, and sets the site rows aside.
  */
 function groupsSites(filters: Filters): boolean {
-  return filters.stage === 'all' && !filters.status && !filters.source_type && !filters.search;
+  return (
+    filters.stage === 'all' &&
+    !filters.status &&
+    !filters.source_type &&
+    !filters.search &&
+    filters.tags.length === 0
+  );
 }
 const EMPTY_DOMAINS: ExtractionDomain[] = [];
 const EMPTY_QUALITY_SCORES = new Map<string, SourceQualityScore>();

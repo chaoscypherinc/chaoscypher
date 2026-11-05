@@ -1673,7 +1673,7 @@ with Engine(database="demo", provider="openai", api_key="sk-...") as engine:
 
 **Methods:**
 
-#### `add_document(filepath: str | Path, *, source_id: str | None = None, analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None, auto_confirm: bool = True, forced_domain: str | None = None) -> ProcessingResult`
+#### `add_document(filepath: str | Path, *, source_id: str | None = None, analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None, auto_confirm: bool = True, forced_domain: str | None = None, tags: Sequence[str] | None = None, replace_tags: bool = False, summary: str | None = None, source_fields: Mapping[str, Any] | None = None) -> ProcessingResult`
 
 Load a file and process it through the full extraction pipeline.
 
@@ -1693,6 +1693,11 @@ Args:
         `True`). Forwarded to `process_document`; the MCP
         server-extraction path passes `False` to opt into the gate.
     forced_domain: Explicit domain choice (suppresses parking).
+    tags: Tags added to the document (`None` leaves them alone).
+    replace_tags: Make `tags` the document's whole set.
+    summary: The document's summary (`""` clears it; `None` keeps it).
+    source_fields: Further columns of a new source row (the file's
+        `content_hash`, say); forwarded to `process_document`.
 
 Returns:
     ProcessingResult with source_id and lists of created node,
@@ -1715,6 +1720,10 @@ with Engine("./data/databases/demo") as engine:
 | `on_progress` | `ProgressCallback \| None` |  |
 | `auto_confirm` | `bool` |  |
 | `forced_domain` | `str \| None` |  |
+| `tags` | `Sequence[str] \| None` |  |
+| `replace_tags` | `bool` |  |
+| `summary` | `str \| None` |  |
+| `source_fields` | `Mapping[str, Any] \| None` |  |
 
 #### `add_document_sync(filepath: str | Path, *, source_id: str | None = None, analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None) -> ProcessingResult`
 
@@ -1976,7 +1985,9 @@ Chunk `text` into the source's stored chunks, index them and mark the source ind
 
 The one store step: `process_document`, the MCP index-only path and a
 memory's link (re-chunking a memory whose store failed) all run it. The
-source row must exist (the chunk rows carry a foreign key to it).
+source row must exist (the chunk rows carry a foreign key to it). Once
+the source is indexed, a document with no summary gets its one-line
+summary from the configured model (`write_import_summary`).
 
 Returns:
     The chunk result (the small chunks and the hierarchical groups) and
@@ -2371,7 +2382,7 @@ Returns:
 | `page` | `int` |  |
 | `page_size` | `int` |  |
 
-#### `process_document(text: str, *, source_id: str | None = None, filename: str = 'document.txt', analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None, auto_confirm: bool = True, forced_domain: str | None = None, seed: Sequence[Mapping[str, Any]] = (), source_type: str = 'file', source_fields: Mapping[str, Any] | None = None, extract: bool = True) -> ProcessingResult`
+#### `process_document(text: str, *, source_id: str | None = None, filename: str = 'document.txt', analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None, auto_confirm: bool = True, forced_domain: str | None = None, seed: Sequence[Mapping[str, Any]] = (), source_type: str = 'file', source_fields: Mapping[str, Any] | None = None, extract: bool = True, tags: Sequence[str] | None = None, replace_tags: bool = False, summary: str | None = None) -> ProcessingResult`
 
 Process a document through the full extraction pipeline.
 
@@ -2409,10 +2420,14 @@ Args:
     extract: False stops after indexing: the chunks are stored and
         searchable, nothing is extracted or committed, and the result's
         `status` is `indexed` (the no-extraction-model path).
+    tags: Tags added to the document (`None` leaves them alone).
+    replace_tags: Make `tags` the document's whole set.
+    summary: The document's summary (`""` clears it; `None` keeps it).
 
 Returns:
     ProcessingResult model with `source_id`, `nodes`, `edges`,
-    `templates` listing the IDs of created graph entities. When the
+    `templates` listing the IDs of created graph entities, and the
+    document's `tags` after. When the
     gate parks the source, the result's `status` is
     `awaiting_confirmation` and `nodes`/`edges`/`templates`
     are empty (extraction did not run).
@@ -2446,6 +2461,9 @@ with Engine("./data/databases/demo", initialize_db=True) as engine:
 | `source_type` | `str` |  |
 | `source_fields` | `Mapping[str, Any] \| None` |  |
 | `extract` | `bool` |  |
+| `tags` | `Sequence[str] \| None` |  |
+| `replace_tags` | `bool` |  |
+| `summary` | `str \| None` |  |
 
 #### `process_document_sync(text: str, *, source_id: str | None = None, filename: str = 'document.txt', analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None) -> ProcessingResult`
 

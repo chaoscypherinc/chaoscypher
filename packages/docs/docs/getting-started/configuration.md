@@ -187,6 +187,16 @@ the same input to the same model build is answered from disk the second time. Sa
 cached as the first answer seen, flagged unseeded, since hosted models do not honour the seed. See
 [Cache](./cache.md).
 
+```yaml
+llm:
+  client_max_retries: null      # Retries a cloud client (OpenAI, Anthropic, Gemini) makes inside one call
+```
+
+`client_max_retries` is how many times the OpenAI, Anthropic or Gemini client retries inside one
+call; `null` (the default) keeps the library's own default, and `0` means one try. Ollama ignores
+it. The one-line summary written at import always uses `0`, whatever this says, so a slow or
+failing model costs one call and no more (see [Source Processing](#source-processing)).
+
 ### Spend Caps
 
 Two opt-in token caps protect cloud-provider operators against runaway extraction spend. Both default to `null` (disabled):
@@ -307,7 +317,22 @@ source_processing:
   entity_deduplication_mode: semantic            # exact | semantic
   dedup_require_type_compatibility: true         # merge same-name entities of one core type only
   relationship_confidence_threshold: 0.5
+  summary_max_chars: 300                         # Longest summary a document keeps, typed or model-written
+  import_summaries: true                         # Write a one-line summary of each imported document
+  import_summary_timeout_seconds: 60             # The one summary call's time limit; never retried
+  import_summary_input_chars: 12000              # How much of the document's opening the model reads
+  import_summary_max_tokens: 120                 # The most tokens the model may reply with
 ```
+
+**Document summaries.** When a model is configured, each document you add (from the web UI, the API, the CLI or
+MCP `add_document`) gets a one-line summary written by that model once it is indexed:
+one call, cut off after `import_summary_timeout_seconds`, never retried, and with no fallback
+text. When the call fails or times out, the document is indexed as usual and has no summary.
+With no model configured, no summary is written. Set `import_summaries: false` to turn them
+off; `chaoscypher source summarize --missing` writes the missing ones later (it runs whatever
+this switch says). Package imports and `compose build` never call a model for a summary.
+`summary_max_chars` (at least `40`) caps every summary, whether typed or model-written; a longer
+typed summary is refused. See [Sources — Summaries](../user-guide/sources.md#summaries).
 
 :::note[Deprecated: `source_processing_max_file_size_gb`]
 
@@ -548,7 +573,7 @@ mcp:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `mode` | `read` | Tool access level. `read` exposes 25 read tools (search/query, `list_nodes`, the memory read tools and the self-benchmark tools). `write` exposes all 44 tools — adding 19 write-only tools for create, update, delete, document and site import, and client-driven extraction. |
+| `mode` | `read` | Tool access level. `read` exposes 26 read tools (search/query, `list_nodes`, `list_documents`, the memory read tools and the self-benchmark tools). `write` exposes all 46 tools — adding 20 write-only tools for create, update, delete, document tagging, document and site import, and client-driven extraction. |
 | `profile` | `full` | The served tool profile. `full` is every tool of the mode; `memory` is the memory tools (`recall`, `list_memories` and `digest` in read mode, plus `remember` and `forget` in write mode), the short list an agent memory client needs. |
 | `tools` | `[]` | An allowlist of tool names narrowing the profile. Empty serves the whole profile; a name that is not a registered tool, or not in the chosen profile, is a configuration error; in read mode a write-only name is not served. |
 | `auto_extract` | `false` | Automatically run entity extraction after indexing documents uploaded via MCP. |

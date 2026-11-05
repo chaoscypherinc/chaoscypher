@@ -20,6 +20,12 @@ CC_TIER and by the ``auto_apply_destructive`` setting:
   apply``). If the backup can't be taken safely (disk), we block without
   applying anything.
 
+Whatever ``auto_apply_destructive`` says, a migration that holds itself (its
+``cc_hold_preview`` lists changes to the data, see ``tiers.py``) is not applied:
+the run applies what comes before it, then blocks on it and everything after it
+until the owner confirms. This is stronger than the ``manual`` gate by design,
+and fires only when the preview lists changes.
+
 A database with no schema yet is not upgraded at all: a new one, or one whose
 first build did not finish (tables, no version row, no rows), is built straight
 to head with no backup and no upgrade record, so no surface offers a notice or a
@@ -37,6 +43,7 @@ import structlog
 
 from chaoscypher_core.database.backup import backup_database, free_space_ok
 from chaoscypher_core.database.migrations.runner import (
+    FIRST_BUILD_STARTS,
     SchemaStart,
     drop_unfinished_schema,
     ensure_stamped,
@@ -55,6 +62,8 @@ from chaoscypher_core.database.migrations.state import (
 from chaoscypher_core.database.migrations.tiers import (
     MigrationInfo,
     MigrationTier,
+    hold_preview,
+    preview_error,
     read_migration_info,
 )
 from chaoscypher_core.utils.filelock import lock_file, unlock_file
@@ -71,24 +80,24 @@ def _plan_apply(
     infos: list[MigrationInfo],
     *,
     auto_apply_destructive: bool,
+    held: frozenset[str] = frozenset(),
 ) -> tuple[list[str], list[str]]:
     """Split ordered pending migrations into (to_apply, blocked).
 
-    ``infos`` is in Alembic apply order. With ``auto_apply_destructive``
-    True, everything is applied. Otherwise we apply safe/data-changing
-    migrations up to — but not including — the first ``manual`` migration,
-    and block on that one plus everything after it (linear history can't
-    skip it).
+    ``infos`` is in Alembic apply order. The first migration that is in
+    ``held`` (its preview lists changes to the data), or is ``manual`` while
+    ``auto_apply_destructive`` is False, blocks itself and everything after it
+    (linear history can't skip it); everything before it applies. A hold blocks
+    whatever ``auto_apply_destructive`` says; with the flag True and nothing
+    held, everything is applied.
     """
-    if auto_apply_destructive:
-        return [info.revision for info in infos], []
-
-    to_apply: list[str] = []
     for i, info in enumerate(infos):
-        if info.tier is MigrationTier.MANUAL:
-            return to_apply, [later.revision for later in infos[i:]]
-        to_apply.append(info.revision)
-    return to_apply, []
+        gated = info.tier is MigrationTier.MANUAL and not auto_apply_destructive
+        if info.revision in held or gated:
+            return [earlier.revision for earlier in infos[:i]], [
+                later.revision for later in infos[i:]
+            ]
+    return [info.revision for info in infos], []
 
 
 def _resolve_auto_apply_destructive(value: bool | None) -> bool:
@@ -117,9 +126,12 @@ def run_startup_migrations(
 
     Default (resolved to True from settings): apply ALL pending to head after
     a verified backup. When False: apply safe/data-changing migrations up to
-    the first ``manual`` one, then block. If the backup can't be taken safely
-    (disk), block without applying. A database with no schema yet skips the
-    gate: built straight to head, no backup, no record (:func:`build_if_new`).
+    the first ``manual`` one, then block. Either way a migration whose preview
+    lists changes to the data holds: the run stops before it and blocks. If the
+    backup can't be taken safely (disk), block without applying; when nothing
+    applies before the block, no backup is taken. A database with no schema yet
+    skips the gate: built straight to head, no backup, no record
+    (:func:`build_if_new`).
 
     Args:
         db_path: Path to the SQLite database.
@@ -191,7 +203,7 @@ def build_if_new(db_path: Path) -> bool:
     builds it exactly as opening it would.
     """
     start = schema_start(db_path)
-    if start not in (SchemaStart.NEW, SchemaStart.UNFINISHED):
+    if start not in FIRST_BUILD_STARTS:
         return False
     if start is SchemaStart.UNFINISHED and not drop_unfinished_schema(db_path):
         return False
@@ -283,11 +295,108 @@ def _record_apply_failure(
         pass
 
 
+def _blocked_message(
+    blocked: list[str], infos: list[MigrationInfo], holds: dict[str, list[str]]
+) -> str:
+    """The blocked state's message: a held migration names itself and counts its changes."""
+    first = blocked[0]
+    lines = holds.get(first)
+    if not lines:
+        return (
+            f"{len(blocked)} migration(s) need confirmation before the "
+            f"app can finish upgrading. See the upgrade page for details."
+        )
+    description = next(info.description for info in infos if info.revision == first)
+    return (
+        f"Migration {first} needs your confirmation: {description}. "
+        f"Review the {len(lines)} change(s) it lists, then apply it from the upgrade "
+        'page or with "chaoscypher db migrate apply".'
+    )
+
+
+def _previews(
+    db_path: Path, infos: list[MigrationInfo], pending: list[str]
+) -> dict[str, list[str]] | None:
+    """Each held-capable migration's preview lines, read before any backup or apply.
+
+    A preview that fails records a blocked state saying so, with nothing applied and
+    no backup taken, and returns None: it gates, never crashes the boot.
+    """
+    holds: dict[str, list[str]] = {}
+    for info in infos:
+        if not info.has_hold:
+            continue
+        try:
+            holds[info.revision] = hold_preview(info.revision, db_path)
+        except Exception as exc:  # a failing preview must gate, never crash the boot
+            logger.warning(
+                "startup_migrations_preview_failed",
+                revision=info.revision,
+                error_type=type(exc).__name__,
+            )
+            set_upgrade_state(
+                db_path,
+                ready=False,
+                blocked_on=pending,
+                last_backup=None,
+                message=(
+                    f"Migration {info.revision} could not list its changes: "
+                    f"{preview_error(exc)}; nothing was applied."
+                ),
+            )
+            return None
+    return holds
+
+
+def _record_blocked(
+    db_path: Path,
+    *,
+    infos: list[MigrationInfo],
+    holds: dict[str, list[str]],
+    to_apply: list[str],
+    blocked: list[str],
+    backup_str: str | None,
+) -> None:
+    """Record the run stopping at ``blocked[0]``, after applying ``to_apply`` (maybe none)."""
+    logger.warning(
+        "startup_migrations_partial_then_blocked",
+        applied=to_apply,
+        blocked_on=blocked,
+        backup=backup_str,
+    )
+    set_upgrade_state(
+        db_path,
+        ready=False,
+        blocked_on=blocked,
+        last_backup=backup_str,
+        message=_blocked_message(blocked, infos, holds),
+        last_applied=to_apply,
+        data_changing=any(
+            info.tier is not MigrationTier.SAFE_AUTO for info in infos[: len(to_apply)]
+        ),
+    )
+
+
 def _run_locked(
     db_path: Path, pending: list[str], *, apply_destructive: bool
 ) -> None:
     infos: list[MigrationInfo] = [read_migration_info(rev) for rev in pending]
-    to_apply, blocked = _plan_apply(infos, auto_apply_destructive=apply_destructive)
+    holds = _previews(db_path, infos, pending)
+    if holds is None:
+        return
+    held = frozenset(revision for revision, lines in holds.items() if lines)
+    to_apply, blocked = _plan_apply(
+        infos, auto_apply_destructive=apply_destructive, held=held
+    )
+
+    # Nothing applies before the block: take no backup. A held database would
+    # otherwise add a full copy on every boot, and none is ever pruned; the
+    # explicit apply takes its own when the state records none.
+    if not to_apply:
+        _record_blocked(
+            db_path, infos=infos, holds=holds, to_apply=[], blocked=blocked, backup_str=None
+        )
+        return
 
     # We always back up before touching data — gate on free space first.
     if not free_space_ok(db_path):
@@ -313,43 +422,28 @@ def _run_locked(
         backup = backup_database(db_path, label=f"pre-{pending[0]}")
         backup_str = str(backup.backup_path)
 
-        if to_apply:
-            if to_apply == pending:
-                upgrade_to_head(db_path)
-            else:
-                upgrade_to(db_path, to_apply[-1])
+        if to_apply == pending:
+            upgrade_to_head(db_path)
+        else:
+            upgrade_to(db_path, to_apply[-1])
     except Exception as exc:  # any apply failure must gate, never crash the boot
         _record_apply_failure(
             db_path, original_pending=pending, backup_str=backup_str, exc=exc
         )
         return
 
-    applied_infos = infos[: len(to_apply)]
-    data_changing = any(
-        info.tier is not MigrationTier.SAFE_AUTO for info in applied_infos
-    )
-
     if blocked:
-        logger.warning(
-            "startup_migrations_partial_then_blocked",
-            applied=to_apply,
-            blocked_on=blocked,
-            backup=backup_str,
-        )
-        set_upgrade_state(
+        _record_blocked(
             db_path,
-            ready=False,
-            blocked_on=blocked,
-            last_backup=backup_str,
-            message=(
-                f"{len(blocked)} migration(s) need confirmation before the "
-                f"app can finish upgrading. See the upgrade page for details."
-            ),
-            last_applied=to_apply,
-            data_changing=data_changing,
+            infos=infos,
+            holds=holds,
+            to_apply=to_apply,
+            blocked=blocked,
+            backup_str=backup_str,
         )
         return
 
+    data_changing = any(info.tier is not MigrationTier.SAFE_AUTO for info in infos)
     logger.info("startup_migrations_applied", applied=to_apply, backup=backup_str)
     if data_changing:
         record_successful_upgrade(

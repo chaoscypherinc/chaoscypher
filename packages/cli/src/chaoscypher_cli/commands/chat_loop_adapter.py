@@ -22,6 +22,8 @@ from typing import Any
 
 from rich.prompt import Confirm
 
+from chaoscypher_cli.utils.console import print_error
+
 
 class CliMessageBuilder:
     """Loop ``chat_service`` stub: builds message dicts, persists nothing."""
@@ -122,7 +124,7 @@ class RichConsoleSink:
             self._console.print(f"[yellow]Warning:[/yellow] {payload.get('message', '')}")
         elif event_type == "error":
             self._close_writer(newline=True)
-            self._console.print(f"[red]Error:[/red] {payload.get('error', 'Unknown error')}")
+            print_error(str(payload.get("error", "Unknown error")), console=self._console)
 
     def finish(self) -> None:
         """Close any open writer at the end of the turn (final newline)."""

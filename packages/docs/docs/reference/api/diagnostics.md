@@ -133,18 +133,46 @@ curl http://localhost/api/v1/upgrade/pending
   "message": "Database is up to date.",
   "last_backup": "/data/backups/pre-upgrade-2026-05-01.db",
   "last_applied": ["a1b2c3d4e5f6"],
-  "data_changing": false
+  "data_changing": false,
+  "first_build": false
+}
+```
+
+A migration that waits for confirmation because of what is in your data lists each change it would make in `hold`:
+
+```json
+{
+  "ready": false,
+  "blocked_on": [
+    {
+      "revision": "0026",
+      "tier": "needs_confirmation",
+      "description": "Tag names become lower-case and follow the tag rule (renaming or merging any that do not); a tag name is unique within its database; a document's tag assignments are deleted with it; documents gain a one-line summary",
+      "hold": [
+        "\"Research\" → \"research\"",
+        "\"Work Docs\" → \"work-docs\"",
+        "\"work docs\" → \"work-docs\" (merged)"
+      ]
+    }
+  ],
+  "message": "Migration 0026 needs your confirmation: Tag names become lower-case and follow the tag rule (renaming or merging any that do not); a tag name is unique within its database; a document's tag assignments are deleted with it; documents gain a one-line summary. Review the 3 change(s) it lists, then apply it from the upgrade page or with \"chaoscypher db migrate apply\".",
+  "last_backup": null,
+  "last_applied": [],
+  "data_changing": false,
+  "first_build": false
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `ready` | bool | `true` if the app is ready to serve requests |
-| `blocked_on` | object[] | Pending migrations blocking the app (empty when `ready=true`) |
+| `blocked_on` | object[] | Pending migrations blocking the app (empty when `ready=true`). Each has `revision`, `tier` (`safe_auto`, `needs_confirmation` or `manual`), `description` and `hold` |
+| `blocked_on[].hold` | string[] | The changes this migration would make to your data, one line each (for `0026`, every tag rename and merge). Non-empty means it waits for confirmation, whatever `migrations.auto_apply_destructive` says. Empty for a migration with nothing to list, and on a first build |
 | `message` | string | Human-readable status message |
 | `last_backup` | string \| null | Path to the pre-upgrade backup, or `null` if none exists |
 | `last_applied` | string[] | Revision IDs the startup self-healing runner silently auto-applied (empty if none). This is the only API surface that reports what the auto-migrator just did. |
 | `data_changing` | bool | `true` if a silently auto-applied migration changed data (not just schema). Paired with a non-empty `last_applied`, this is what the UI uses to surface a dismissible notice with a rollback option. |
+| `first_build` | bool | `true` when the database has no schema yet: applying builds it to the latest revision, with no backup and nothing to confirm |
 
 ---
 

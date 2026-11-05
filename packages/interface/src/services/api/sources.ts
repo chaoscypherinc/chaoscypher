@@ -6,6 +6,7 @@ import type {
   Source,
   SourceUpdate,
   PaginatedSourcesResponse,
+  SourceTagFilter,
 } from '../../types';
 import { sourceProcessingApi } from './sourceProcessing';
 import { sourceTagsApi } from './sourceTags';
@@ -44,7 +45,7 @@ export const getRecommendedNormalization = (filename: string): boolean => {
 // ========================================
 
 const sourcesCrudApi = {
-  list: async (params?: {
+  list: async (params?: SourceTagFilter & {
     page?: number;
     page_size?: number;
     source_type?: string;

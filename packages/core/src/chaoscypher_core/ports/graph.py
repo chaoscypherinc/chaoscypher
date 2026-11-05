@@ -544,6 +544,7 @@ class GraphRepositoryProtocol(Protocol):
         outgoing: bool,
         limit_per_node: int,
         include_disabled_sources: bool = False,
+        with_members: bool = False,
     ) -> dict[str, list[Edge]]:
         """Each node's edges out of it (``outgoing``) or into it, as :meth:`list_edges` lists them.
 
@@ -552,7 +553,8 @@ class GraphRepositoryProtocol(Protocol):
         ``target_node_id`` when not ``outgoing``), in its order. Every id is a
         key; a node with no edges maps to ``[]``. An adapter answers in as few
         queries as it can: the graph context reads every seed's edges in both
-        directions.
+        directions. ``with_members`` fills each edge's ``member_source_ids`` (a
+        tag scope's filter reads them); without it they may stay ``[]``.
         """
         ...
 

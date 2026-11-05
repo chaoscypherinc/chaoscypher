@@ -11,6 +11,7 @@ from rich.prompt import Confirm, Prompt
 
 from chaoscypher_cli.commands.template.utils import PROPERTY_TYPES, parse_property
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_caught_error
 
 
 console = Console()
@@ -114,7 +115,7 @@ def create(
                     prop = parse_property(prop_str)
                     properties.append(prop)
                 except ValueError as e:
-                    console.print(f"[red]Error:[/red] {e}")
+                    print_caught_error(e, console=console)
                     sys.exit(1)
 
         # Create the template - import models here to avoid slow startup
@@ -153,5 +154,5 @@ def create(
                 console.print(f"    • {prop['name']}: {prop['property_type']}{req}")
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)

@@ -313,6 +313,8 @@ class ProviderFactory:
             "stream_chunk_timeout": llm.stream_chunk_timeout,
             # Bounded per-request LangChain timeout (non-queued call safety net)
             "llm_request_timeout": llm.llm_request_timeout,
+            # Retries inside one cloud-client call (None: the library's default)
+            "client_max_retries": llm.client_max_retries,
             # LLM Priority Semaphore settings
             "llm_max_concurrent": llm.llm_max_concurrent,
             "llm_reserved_interactive": llm.llm_reserved_interactive,

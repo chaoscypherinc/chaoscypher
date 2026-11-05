@@ -42,6 +42,7 @@ import structlog
 
 from chaoscypher_core.adapters.embedding.registry import canonical_embedding_model
 from chaoscypher_core.adapters.embedding.vectors import normalize_vector
+from chaoscypher_core.adapters.sqlite.repos.source_tag_scope import tagged_sources_sql
 from chaoscypher_core.adapters.sqlite.repos.source_visibility import (
     ANY_SOURCE_HIDDEN_SQL,
     MEMBERSHIP_TABLES,
@@ -52,6 +53,7 @@ from chaoscypher_core.adapters.sqlite.repos.source_visibility import (
 )
 from chaoscypher_core.adapters.sqlite.repos.text_indexer import extract_searchable_text
 from chaoscypher_core.exceptions import SchemaIntegrityError
+from chaoscypher_core.models import TagMatch
 from chaoscypher_core.ports.search import SearchHits
 from chaoscypher_core.utils.query_text import normalize_query
 from chaoscypher_core.utils.retrieval_faults import (
@@ -62,7 +64,7 @@ from chaoscypher_core.utils.rrf import reciprocal_rank_fusion
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
     from sqlalchemy.engine import Connection, Engine
 
@@ -379,24 +381,31 @@ A chunk's index id is ``chunk:<id>``; a node's is its id. Templates come
 from no source: they are never scoped, and no switched-off source hides them.
 """
 
-_SCOPE_CONDITION: dict[str, str] = {
-    "chunk": "scope_item.source_id IN ({ids})",
-    "node": in_source_scope_sql("graph_nodes", "({ids})", "scope_item"),
-}
 
-_SCOPE_SQL: dict[str, tuple[str, str]] = {
+def _scope_condition(item_type: str, *, attested_only: bool) -> str:
+    """The condition of :data:`_SCOPE_SQL` for ``item_type``, its source list left as ``{ids}``."""
+    if item_type == "chunk":
+        return "scope_item.source_id IN ({ids})"
+    return in_source_scope_sql("graph_nodes", "({ids})", "scope_item", attested_only=attested_only)
+
+
+_SCOPE_SQL: dict[str, tuple[str, str, str]] = {
     item_type: (
         f"JOIN {table} scope_item ON scope_item.id = {key} ",
-        _SCOPE_CONDITION[item_type],
+        _scope_condition(item_type, attested_only=False),
+        _scope_condition(item_type, attested_only=True),
     )
     for item_type, (table, key) in _ITEM_ROWS.items()
 }
-"""How a search of each item type is limited to a source scope: a join and a condition.
+"""How a search of each item type is limited to a source scope: a join, a condition, and a tag scope's condition.
 
 A chunk (``chunk:<id>``) is in scope when its ``document_chunks`` row's source
-is; a node when a source in scope attests it (its membership, #795), or it
-names none, NULL or ``''`` (:func:`~chaoscypher_core.ports.search.item_in_source_scope`,
-the GraphRAG handler's own reading of a node's scope).
+is; a node when a source in scope attests it (its membership, #795), or a
+person made it, or it names none, NULL or ``''``
+(:func:`~chaoscypher_core.ports.search.item_in_source_scope`, the GraphRAG
+handler's own reading of a node's scope). Under a tag scope a node is in
+scope only when a tagged source attests it (the third form, ``attested_only``
+of :func:`~chaoscypher_core.adapters.sqlite.repos.source_visibility.in_source_scope_sql`).
 """
 
 _SCOPE_KNN_MARGIN = 2.0
@@ -424,21 +433,31 @@ def _scope_clause(
     id_column: str,
     source_ids: Iterable[str] | None,
     *,
+    tags: Sequence[str] = (),
+    tag_match: TagMatch = TagMatch.ANY,
     hide_disabled: bool = False,
+    attested_only: bool = False,
 ) -> tuple[str, str, dict[str, str]]:
     """``(join, condition, parameters)`` limiting a search of ``item_type`` to what may answer.
 
-    With a scope, the scope's join and condition (:data:`_SCOPE_SQL`); with
-    ``hide_disabled``, a row of a switched-off source is left out too
-    (:data:`_VISIBLE_SQL`: a chunk's source, a node's member sources),
-    scoped or not. Empty strings and no parameters when neither applies, or
-    for an item type no source holds (templates). The one place a search
-    reads the scope and the visibility, so the keyword and the vector arm
-    cannot disagree on what may answer.
+    A search is scoped by ``source_ids``, by ``tags`` (the sources carrying
+    them, ``tag_match`` of them: :func:`tagged_sources_sql`), or by both
+    (the tagged sources in the list). A scoped search gets the scope's join
+    and condition (:data:`_SCOPE_SQL`); under a tag scope a node must be
+    attested by a tagged source (a person-made or unattested node is out,
+    owner decision 2026-11-05), while a plain source scope admits them
+    unless ``attested_only`` (a source scope resolved from tags). A tag set that
+    names no document's tags selects no source, so the search finds nothing
+    rather than widening. With ``hide_disabled``, a row of a switched-off
+    source is left out too (:data:`_VISIBLE_SQL`: a chunk's source, a node's
+    member sources), scoped or not. Empty strings and no parameters when
+    nothing applies, or for an item type no source holds (templates). The
+    one place a search reads the scope and the visibility, so the keyword
+    and the vector arm cannot disagree on what may answer.
     """
     if item_type not in _SCOPE_SQL:
         return "", "", {}
-    if not source_ids:
+    if not source_ids and not tags:
         if not hide_disabled:
             return "", "", {}
         table, key = _ITEM_ROWS[item_type]
@@ -448,17 +467,36 @@ def _scope_clause(
             f"AND NOT {_VISIBLE_SQL[item_type]('vis_item')})"
         )
         return "", hidden, {}
-    join, condition = _SCOPE_SQL[item_type]
-    params = {f"scope_{i}": sid for i, sid in enumerate(sorted(set(source_ids)))}
+    join, in_scope, in_tag_scope = _SCOPE_SQL[item_type]
+    conditions: list[str] = []
+    listed = sorted(set(source_ids or ()))
+    params: dict[str, str] = {f"scope_{i}": sid for i, sid in enumerate(listed)}
     ids = ", ".join(f":{name}" for name in params)
-    condition = condition.format(ids=ids)
+    if tags:
+        # the tagged sources (in the source list, when one is given): a node must be attested
+        # by one of them, never in scope for being person-made or unattested
+        tag_sql, tag_params = tagged_sources_sql(tags, tag_match, param_prefix="scope_tag")
+        params.update(tag_params)
+        if ids:
+            tag_sql = (
+                f"SELECT tagged.source_id FROM ({tag_sql}) tagged WHERE tagged.source_id IN ({ids})"
+            )
+        conditions.append(in_tag_scope.format(ids=tag_sql))
+    else:
+        conditions.append((in_tag_scope if attested_only else in_scope).format(ids=ids))
     if hide_disabled:
-        condition = f"{condition} AND {_VISIBLE_SQL[item_type]('scope_item')}"
-    return join.format(id=id_column), condition, params
+        conditions.append(_VISIBLE_SQL[item_type]("scope_item"))
+    return join.format(id=id_column), " AND ".join(conditions), params
 
 
 def _scope_count_sql(
-    item_type: str, source_ids: Iterable[str] | None, *, hide_disabled: bool
+    item_type: str,
+    source_ids: Iterable[str] | None,
+    *,
+    tags: Sequence[str] = (),
+    tag_match: TagMatch = TagMatch.ANY,
+    hide_disabled: bool,
+    attested_only: bool = False,
 ) -> tuple[str, dict[str, str]]:
     """``(sql, parameters)`` counting the rows of ``item_type`` a search in that scope may return.
 
@@ -471,8 +509,10 @@ def _scope_count_sql(
     table, _ = _ITEM_ROWS[item_type]
     conditions: list[str] = []
     params: dict[str, str] = {}
-    if source_ids:
-        _, scoped, params = _scope_clause(item_type, "", source_ids)
+    if source_ids or tags:
+        _, scoped, params = _scope_clause(
+            item_type, "", source_ids, tags=tags, tag_match=tag_match, attested_only=attested_only
+        )
         conditions.append(scoped)
     if hide_disabled:
         conditions.append(_VISIBLE_SQL[item_type]("scope_item"))
@@ -2016,6 +2056,9 @@ class SearchRepository:
         limit: int = 10,
         item_type: str | None = "node",
         source_ids: Iterable[str] | None = None,
+        tags: Sequence[str] = (),
+        tag_match: TagMatch = TagMatch.ANY,
+        attested_only: bool = False,
     ) -> list[tuple[str, float]]:
         """Perform full-text keyword search with BM25 ranking.
 
@@ -2033,6 +2076,14 @@ class SearchRepository:
                 ``limit`` (:data:`_SCOPE_SQL`); None for every source. A
                 switched-off source's items never match, scoped or not
                 (:func:`_scope_clause`).
+            tags: A tag scope (normalised tag names), applied in the query
+                before the ``limit`` and intersected with ``source_ids``; a
+                tag set no document carries matches nothing. Empty: no tag scope.
+            tag_match: ``ANY`` or ``ALL`` of ``tags``.
+            attested_only: A node is in ``source_ids`` only when one of them
+                attests it, never for being person-made or unattested: a
+                source scope that came from document tags (a tag scope is
+                always read so). Chunks are unaffected.
 
         Returns:
             List of (item_id, score) tuples sorted by relevance
@@ -2045,8 +2096,10 @@ class SearchRepository:
         source_ids = list(source_ids) if source_ids is not None else None
         if item_type is None:
             return _fuse_rankings(
-                self.keyword_search(query, limit, "node", source_ids),
-                self.keyword_search(query, limit, "chunk", source_ids),
+                self.keyword_search(
+                    query, limit, "node", source_ids, tags, tag_match, attested_only
+                ),
+                self.keyword_search(query, limit, "chunk", source_ids, tags, tag_match),
                 limit=limit,
             )
         try:
@@ -2066,7 +2119,10 @@ class SearchRepository:
                     item_type,
                     _KEYWORD_ID[item_type],
                     source_ids,
+                    tags=tags,
+                    tag_match=tag_match,
                     hide_disabled=self._hides_sources(conn),
+                    attested_only=attested_only,
                 )
                 sql = sql.format(
                     scope_join=join, scope_where=f"AND {condition} " if condition else ""
@@ -2089,6 +2145,9 @@ class SearchRepository:
         k: int = 10,
         item_type: str | None = None,
         source_ids: Iterable[str] | None = None,
+        tags: Sequence[str] = (),
+        tag_match: TagMatch = TagMatch.ANY,
+        attested_only: bool = False,
     ) -> list[tuple[str, float]]:
         """Perform vector similarity search using cosine distance.
 
@@ -2107,6 +2166,13 @@ class SearchRepository:
             k: Number of results
             item_type: Optional filter by type ("node", "chunk", "template")
             source_ids: A source scope (:data:`_SCOPE_SQL`); None for every source.
+            tags: A tag scope, applied before the ``k`` cut and intersected
+                with ``source_ids`` (:func:`_scope_clause`); empty: none.
+            tag_match: ``ANY`` or ``ALL`` of ``tags``.
+            attested_only: A node is in ``source_ids`` only when one of them
+                attests it, never for being person-made or unattested: a
+                source scope that came from document tags (a tag scope is
+                always read so). Chunks are unaffected.
 
         Returns:
             List of (item_id, similarity_score) tuples sorted by similarity
@@ -2142,9 +2208,18 @@ class SearchRepository:
             with self._engine.connect() as conn:
                 hide = self._hides_sources(conn)
                 for table, table_type in zip(tables, types, strict=True):
-                    if table_type in _SCOPE_SQL and (source_ids or hide):
+                    if table_type in _SCOPE_SQL and (source_ids or tags or hide):
                         rows = self._filtered_knn(
-                            conn, table, table_type, query_bytes, k, source_ids, hide_disabled=hide
+                            conn,
+                            table,
+                            table_type,
+                            query_bytes,
+                            k,
+                            source_ids,
+                            tags=tags,
+                            tag_match=tag_match,
+                            hide_disabled=hide,
+                            attested_only=attested_only,
                         )
                     else:
                         sql = (
@@ -2182,7 +2257,10 @@ class SearchRepository:
         k: int,
         source_ids: Iterable[str] | None,
         *,
+        tags: Sequence[str] = (),
+        tag_match: TagMatch = TagMatch.ANY,
         hide_disabled: bool,
+        attested_only: bool = False,
     ) -> list[Any]:
         """The ``k`` nearest items of ``table`` that may answer: ``(item_id, distance)`` rows, nearest first.
 
@@ -2205,14 +2283,27 @@ class SearchRepository:
         if k <= 0:
             return []
         join, condition, scope = _scope_clause(
-            item_type, "knn.item_id", source_ids, hide_disabled=hide_disabled
+            item_type,
+            "knn.item_id",
+            source_ids,
+            tags=tags,
+            tag_match=tag_match,
+            hide_disabled=hide_disabled,
+            attested_only=attested_only,
         )
-        held_sql, _ = _scope_count_sql(item_type, source_ids, hide_disabled=hide_disabled)
+        held_sql, _ = _scope_count_sql(
+            item_type,
+            source_ids,
+            tags=tags,
+            tag_match=tag_match,
+            hide_disabled=hide_disabled,
+            attested_only=attested_only,
+        )
         total, held = conn.execute(
             text(f'SELECT (SELECT count(*) FROM "{table}_rowids"), ({held_sql})'), scope
         ).one()
         total, held = int(total or 0), int(held or 0)
-        if total == 0 or (held == 0 and source_ids):
+        if total == 0 or (held == 0 and (source_ids or tags)):
             return []  # nothing indexed, or nothing in the scope (its join needs a row)
         # ``held`` counts rows: an unscoped search keeps vectors with no row
         # (the hidden test needs a row to hide one), so none held reads the table
@@ -2259,12 +2350,19 @@ class SearchRepository:
             self._visibility_tables_seen = True
         return bool(conn.execute(text(ANY_SOURCE_HIDDEN_SQL)).scalar())
 
-    def count_in_scope(self, item_type: str, source_ids: Iterable[str] | None = None) -> int:
+    def count_in_scope(
+        self,
+        item_type: str,
+        source_ids: Iterable[str] | None = None,
+        tags: Sequence[str] = (),
+        tag_match: TagMatch = TagMatch.ANY,
+    ) -> int:
         """How many items of ``item_type`` (``"chunk"``, ``"node"``) a source scope holds that may answer.
 
-        Every item without a scope; a switched-off source's items never count
-        (:func:`_scope_count_sql`, the count the scoped vector search sizes
-        its KNN from).
+        Every item without a scope; ``tags`` narrows the scope to the sources
+        carrying them (none when no source does); a switched-off source's
+        items never count (:func:`_scope_count_sql`, the count the scoped
+        vector search sizes its KNN from).
 
         Raises:
             ValueError: For an item type no source holds.
@@ -2273,9 +2371,28 @@ class SearchRepository:
 
         with self._engine.connect() as conn:
             sql, scope = _scope_count_sql(
-                item_type, source_ids, hide_disabled=self._hides_sources(conn)
+                item_type,
+                source_ids,
+                tags=tags,
+                tag_match=tag_match,
+                hide_disabled=self._hides_sources(conn),
             )
             return int(conn.execute(text(sql), scope).scalar() or 0)
+
+    def tagged_source_ids(self, tags: Sequence[str], match: TagMatch) -> list[str]:
+        """The ids of the sources carrying ``tags`` (``match``: ANY or ALL of them).
+
+        Read through the one tag-scope builder (:func:`tagged_sources_sql`),
+        for a caller that needs the scope as a source list (GraphRAG). Empty
+        ``tags`` is no tag set and names no source.
+        """
+        from sqlalchemy import text
+
+        if not tags:
+            return []
+        sql, params = tagged_sources_sql(tags, match)
+        with self._engine.connect() as conn:
+            return [row[0] for row in conn.execute(text(sql), params)]
 
     def search(self, query: str, limit: int = 10) -> list[dict]:
         """Perform keyword search and return results as dicts.
@@ -2312,6 +2429,8 @@ class SearchRepository:
         k: int = 10,
         embedding_provider_callback: Callable[[str], Any] | None = None,
         item_type: str | None = None,
+        tags: Sequence[str] = (),
+        tag_match: TagMatch = TagMatch.ANY,
     ) -> list[tuple[str, float]]:
         """Perform semantic search using query text.
 
@@ -2322,6 +2441,9 @@ class SearchRepository:
             k: Number of results to return
             embedding_provider_callback: Async callback that returns embedding
             item_type: Optional filter by type (see :meth:`vector_search`).
+            tags: A tag scope (normalised names), applied before the ``k``
+                cut (see :meth:`vector_search`); empty: no tag scope.
+            tag_match: ``ANY`` or ``ALL`` of ``tags``.
 
         Returns:
             List of (item_id, similarity_score) tuples
@@ -2339,7 +2461,9 @@ class SearchRepository:
             )
             if item_type == "template":
                 return []
-            return self.keyword_search(query_text, limit=k, item_type=item_type)
+            return self.keyword_search(
+                query_text, limit=k, item_type=item_type, tags=tags, tag_match=tag_match
+            )
 
         try:
             query_embedding = await self._query_vector(query_text, embedding_provider_callback)
@@ -2347,7 +2471,9 @@ class SearchRepository:
                 logger.warning("Failed to generate query embedding")
                 return []
 
-            return self.vector_search(query_embedding, k=k, item_type=item_type)
+            return self.vector_search(
+                query_embedding, k=k, item_type=item_type, tags=tags, tag_match=tag_match
+            )
 
         except Exception as e:
             record_retrieval_fault("semantic_search")
@@ -2366,6 +2492,8 @@ class SearchRepository:
         min_similarity: float = 0.55,
         item_type: str | None = None,
         source_ids: Iterable[str] | None = None,
+        tags: Sequence[str] = (),
+        tag_match: TagMatch = TagMatch.ANY,
     ) -> SearchHits:
         """Hybrid search: the keyword and vector rankings fused by reciprocal rank.
 
@@ -2392,6 +2520,10 @@ class SearchRepository:
             min_similarity: Minimum similarity score for semantic results
             item_type: ``"node"``, ``"chunk"``, or None for both.
             source_ids: A source scope (:data:`_SCOPE_SQL`); None for every source.
+            tags: A tag scope, applied inside both arms before their cut and
+                intersected with ``source_ids``; a tag set no document carries
+                returns nothing, never an unscoped search. Empty: no tag scope.
+            tag_match: ``ANY`` or ``ALL`` of ``tags``.
 
         Returns:
             The (id, fused score) hits, best first, with the candidates seen
@@ -2407,13 +2539,25 @@ class SearchRepository:
         try:
             if len(query_text.strip()) < 3:
                 alone = self.keyword_search(
-                    query_text, limit=k, item_type=keyword_type, source_ids=scope
+                    query_text,
+                    limit=k,
+                    item_type=keyword_type,
+                    source_ids=scope,
+                    tags=tags,
+                    tag_match=tag_match,
                 )
                 return SearchHits(alone, k=k, candidates_seen=len(alone))
 
             types = (item_type,) if item_type else _CONTENT_ITEM_TYPES
             keyword_arms = [
-                self.keyword_search(query_text, limit=k, item_type=t, source_ids=scope)
+                self.keyword_search(
+                    query_text,
+                    limit=k,
+                    item_type=t,
+                    source_ids=scope,
+                    tags=tags,
+                    tag_match=tag_match,
+                )
                 for t in types
             ]
 
@@ -2424,7 +2568,12 @@ class SearchRepository:
                 query_embedding = await self._query_vector(query_text, embedding_provider_callback)
                 if query_embedding:
                     semantic_results = self.vector_search(
-                        query_embedding, k=k, item_type=item_type, source_ids=scope
+                        query_embedding,
+                        k=k,
+                        item_type=item_type,
+                        source_ids=scope,
+                        tags=tags,
+                        tag_match=tag_match,
                     )
                 else:
                     record_retrieval_fault("hybrid_search:no_query_vector")
@@ -2456,7 +2605,12 @@ class SearchRepository:
                 error_message=str(e),
             )
             fallback = self.keyword_search(
-                query_text, limit=k, item_type=keyword_type, source_ids=scope
+                query_text,
+                limit=k,
+                item_type=keyword_type,
+                source_ids=scope,
+                tags=tags,
+                tag_match=tag_match,
             )
             return SearchHits(fallback, k=k, candidates_seen=len(fallback))
 

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import re
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Container, Iterable, Iterator, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -50,9 +50,11 @@ from chaoscypher_core.services.sources.engine.extraction.utils.relation_vocabula
     UNIVERSAL_VOCABULARY,
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import SUBTYPE_PROPERTY
+from chaoscypher_core.services.sources.tags import TagRuleError
 from chaoscypher_core.services.workflows.tools.engine.chunk_hydration import (
     assign_chunk_aliases,
     chunk_source_filenames,
+    chunk_source_titles,
     clean_chunk_metadata,
     format_chunk_content,
 )
@@ -76,6 +78,10 @@ from chaoscypher_core.services.workflows.tools.engine.handlers.question_shape im
     ShapeDecision,
     classify_by_rules,
     route,
+)
+from chaoscypher_core.services.workflows.tools.engine.tag_scope import (
+    empty_scope_result,
+    tag_source_scope,
 )
 from chaoscypher_core.utils.query_text import normalize_query
 from chaoscypher_core.utils.retrieval_faults import (
@@ -114,6 +120,24 @@ _SUMMARY_MAX_CHARS = 4000
 
 _UNHYDRATED_ROW = "_unhydrated_row"
 """The key under which an unhydrated provenance chunk carries its stored row until the merge keeps it (``_hydrate_survivors``)."""
+
+
+def _initial_retrieval_stats() -> dict[str, Any]:
+    """The ``retrieval_stats`` of a retrieval before any step has run."""
+    return {
+        "mode": "keyword_only",
+        "seed_entities_found": 0,
+        "ppr_entities_explored": 0,
+        "provenance_chunks": 0,
+        "vector_chunks": 0,
+        "evidence_chunks": 0,
+        "evidence_left_out": 0,
+        "reserve_shortfall": 0,
+        "graph_listing_capped": 0,
+        "descriptions_dropped": 0,
+        "total_chunks_returned": 0,
+        "deduplicated": 0,
+    }
 
 
 def _default_graphrag_settings() -> GraphRAGSettings:
@@ -674,10 +698,24 @@ SYMMETRIC_GENERIC_RELATIONS = frozenset({"interacts_with", "related_to", "associ
 stated both ways (A courts B, B courts A) is two facts and both lines stay."""
 
 
-def _in_scope(by_node: Mapping[str, list[Any]], in_scope: set[str]) -> dict[str, list[Any]]:
-    """Each node's edges with both ends in ``in_scope`` (a chat's source scope, audit wave 4)."""
+def _in_scope(
+    by_node: Mapping[str, list[Any]], in_scope: set[str], attested_by: Container[str] | None = None
+) -> dict[str, list[Any]]:
+    """Each node's edges with both ends in ``in_scope`` (a chat's source scope, audit wave 4).
+
+    With ``attested_by`` (a scope that came from document tags) the edge
+    itself must be attested by one of those sources too
+    (:func:`~chaoscypher_core.ports.search.item_in_source_scope`, ``attested_only``): a
+    relationship only an untagged document states is out, even between two tagged nodes.
+    """
     return {
-        nid: [e for e in edges if e.source_node_id in in_scope and e.target_node_id in in_scope]
+        nid: [
+            e
+            for e in edges
+            if e.source_node_id in in_scope
+            and e.target_node_id in in_scope
+            and (attested_by is None or item_in_source_scope(e, attested_by, attested_only=True))
+        ]
         for nid, edges in by_node.items()
     }
 
@@ -1439,6 +1477,8 @@ class GraphRAGToolHandlers:
         query_embedding: list[float],
         seed_limit: int,
         source_ids: list[str] | None = None,
+        *,
+        attested_only: bool = False,
     ) -> list[tuple[str, float]]:
         """Find seed entities via vector similarity.
 
@@ -1458,6 +1498,8 @@ class GraphRAGToolHandlers:
             query_embedding: Embedding vector for the query.
             seed_limit: Maximum number of seed entities to return.
             source_ids: The chat's source scope, or None for the whole graph.
+            attested_only: Only nodes a source of ``source_ids`` attests (a
+                scope that came from document tags).
 
         Returns:
             List of ``(node_id, similarity_score)`` tuples.
@@ -1466,7 +1508,11 @@ class GraphRAGToolHandlers:
         try:
             overfetch = seed_limit * self._graphrag.vector_overfetch_multiplier
             raw_results = self.search.vector_search(
-                query_embedding, k=overfetch, item_type="node", source_ids=source_ids
+                query_embedding,
+                k=overfetch,
+                item_type="node",
+                source_ids=source_ids,
+                attested_only=attested_only,
             )
 
             # Seeds are graph nodes only, filtered before the cut: a chunk or
@@ -1501,6 +1547,8 @@ class GraphRAGToolHandlers:
         seeds: list[tuple[str, float]],
         seed_limit: int,
         source_ids: list[str] | None = None,
+        *,
+        attested_only: bool = False,
     ) -> list[tuple[str, float]]:
         """Seeds from keyword search over the node index, ahead of the vector seeds.
 
@@ -1513,7 +1561,7 @@ class GraphRAGToolHandlers:
         whole words, titles left out, so a title alone never makes a keyword
         seed that outranks a vector seed), and only graph nodes that exist.
         A source scope is applied in the search, before its cut (as
-        :meth:`_match_seed_entities`).
+        :meth:`_match_seed_entities`, ``attested_only`` too).
 
         A flagged reference (:func:`_seedable`) is never a name match; it
         seeds when the question writes its whole label
@@ -1530,7 +1578,11 @@ class GraphRAGToolHandlers:
         try:
             overfetch = seed_limit * self._graphrag.vector_overfetch_multiplier
             hits = self.search.keyword_search(
-                query, limit=overfetch, item_type="node", source_ids=source_ids
+                query,
+                limit=overfetch,
+                item_type="node",
+                source_ids=source_ids,
+                attested_only=attested_only,
             )
             ids = [str(nid) for nid, _ in hits if _is_graph_node_id(nid)]
             fetched = self.graph.get_nodes_batch(ids, include_embedding=False) if ids else []
@@ -1555,7 +1607,11 @@ class GraphRAGToolHandlers:
         return [(nid, weight if nid in references else score) for nid, score in merged]
 
     def _load_graph(
-        self, source_ids: list[str] | None, stats: dict[str, Any] | None = None
+        self,
+        source_ids: list[str] | None,
+        stats: dict[str, Any] | None = None,
+        *,
+        attested_only: bool = False,
     ) -> tuple[list[Any], list[Any]]:
         """The whole graph PageRank and the walk read: ``(nodes, edges)`` under the chat's source scope.
 
@@ -1575,6 +1631,13 @@ class GraphRAGToolHandlers:
         Args:
             source_ids: The chat's source scope, or None for the whole graph.
             stats: The call's retrieval stats, for the listing cap (when given).
+            attested_only: Only nodes a source of ``source_ids`` attests, and
+                the edges between them a source of ``source_ids`` states (a
+                scope that came from document tags). The ``list_edges``
+                fallback (a graph without minimal listings) loads no edge
+                members, so its edge filter reads each edge's home source
+                alone: under tags it fails closed (a merged edge homed at an
+                untagged source is dropped).
         """
         try:
             max_nodes = self._graphrag.max_graph_nodes
@@ -1583,8 +1646,12 @@ class GraphRAGToolHandlers:
             # hands a scoped chat an arbitrary id-ordered slice once the
             # graph exceeds max_graph_nodes.
             if hasattr(self.graph, "list_nodes_minimal"):
-                nodes = list(self.graph.list_nodes_minimal(limit=max_nodes, source_ids=source_ids))
-            else:
+                nodes = list(
+                    self.graph.list_nodes_minimal(
+                        limit=max_nodes, source_ids=source_ids, attested_only=attested_only
+                    )
+                )
+            else:  # the plain listing reads attestation alone (``attested_by``)
                 nodes = list(self.graph.list_nodes(limit=max_nodes, source_ids=source_ids))
 
             if not nodes:
@@ -1592,13 +1659,21 @@ class GraphRAGToolHandlers:
 
             # Scope filter (belt-and-braces for repos ignoring the kwarg)
             if source_ids:
-                nodes = [n for n in nodes if item_in_source_scope(n, source_ids)]
+                nodes = [
+                    n
+                    for n in nodes
+                    if item_in_source_scope(n, source_ids, attested_only=attested_only)
+                ]
 
             # Load edges (scope in SQL too; the endpoint filter below still
             # enforces both-ends-in-scope)
             edge_limit = max_nodes * 4
             if hasattr(self.graph, "list_edges_minimal"):
-                edges = list(self.graph.list_edges_minimal(limit=edge_limit, source_ids=source_ids))
+                edges = list(
+                    self.graph.list_edges_minimal(
+                        limit=edge_limit, source_ids=source_ids, attested_only=attested_only
+                    )
+                )
             else:
                 edges = list(self.graph.list_edges(limit=edge_limit))
             if stats is not None:  # the edges past a full listing were never read
@@ -1609,7 +1684,12 @@ class GraphRAGToolHandlers:
                 edges = [
                     e
                     for e in edges
-                    if e.source_node_id in node_id_set and e.target_node_id in node_id_set
+                    if e.source_node_id in node_id_set
+                    and e.target_node_id in node_id_set
+                    # under a tag scope the relationship itself must be a tagged document's
+                    and (
+                        not attested_only or item_in_source_scope(e, source_ids, attested_only=True)
+                    )
                 ]
         except Exception:
             logger.warning("graphrag_graph_load_failed", exc_info=True)
@@ -1830,7 +1910,7 @@ class GraphRAGToolHandlers:
         return [e for e in edges if _edge_in_context(e, include_unevidenced=include)]
 
     def _node_edges(
-        self, node_ids: Sequence[str]
+        self, node_ids: Sequence[str], *, with_members: bool = False
     ) -> tuple[dict[str, list[Any]], dict[str, list[Any]], set[str]]:
         """Each node's edges, outgoing then incoming, each by id: ``(read, listed, capped)``.
 
@@ -1844,8 +1924,13 @@ class GraphRAGToolHandlers:
         edges took 40% of a retrieval sample run (9,248 queries, 2026-10-16).
         """
         limit = get_settings().batching.graphrag_edge_query_limit
-        outgoing = self.graph.list_edges_by_node(node_ids, outgoing=True, limit_per_node=limit)
-        incoming = self.graph.list_edges_by_node(node_ids, outgoing=False, limit_per_node=limit)
+        # members only for a tag scope, whose edge filter reads them (_in_scope)
+        outgoing = self.graph.list_edges_by_node(
+            node_ids, outgoing=True, limit_per_node=limit, with_members=with_members
+        )
+        incoming = self.graph.list_edges_by_node(
+            node_ids, outgoing=False, limit_per_node=limit, with_members=with_members
+        )
         read: dict[str, list[Any]] = {}
         listed: dict[str, list[Any]] = {}
         capped: set[str] = set()
@@ -1869,6 +1954,7 @@ class GraphRAGToolHandlers:
         relations: Sequence[str] = (),
         graph: tuple[Sequence[Any], Sequence[Any]] | None = None,
         stats: dict[str, Any] | None = None,
+        attested_only: bool = False,
     ) -> dict[str, Any]:
         """Build a structured graph context from PPR results.
 
@@ -1897,6 +1983,9 @@ class GraphRAGToolHandlers:
                 question naming fewer than two entities, or an ``aggregate``
                 one naming none, says so on ``shape_reason`` (the assembly is
                 then the lookup's).
+            attested_only: A neighbour is in scope only when a source of
+                ``source_ids`` attests it (a scope that came from document
+                tags: no person-made or unattested neighbour).
 
         Returns:
             Dict with ``seed_entities``, ``related_entities``,
@@ -1917,7 +2006,9 @@ class GraphRAGToolHandlers:
                 return {}
 
             # 1-hop edges of the top entities, and their neighbours to batch-fetch labels for
-            edges_by_node, listed_by_node, capped_ids = self._node_edges(sorted_ids)
+            edges_by_node, listed_by_node, capped_ids = self._node_edges(
+                sorted_ids, with_members=attested_only
+            )
             # the aggregate block reads every listed edge: fetch its endpoints too, so the scope
             # below judges them (an edge to an unfetched node would read as out of scope)
             aggregate = shape == QuestionShape.AGGREGATE
@@ -1933,10 +2024,15 @@ class GraphRAGToolHandlers:
             all_fetched = self.graph.get_nodes_batch(list(all_needed), include_embedding=False)
             if source_ids:
                 scope = set(source_ids)
-                in_scope = {n.id for n in all_fetched if item_in_source_scope(n, scope)}
+                in_scope = {
+                    n.id
+                    for n in all_fetched
+                    if item_in_source_scope(n, scope, attested_only=attested_only)
+                }
+                stated_by = scope if attested_only else None
                 edges_by_node, listed_by_node = (
-                    _in_scope(edges_by_node, in_scope),
-                    _in_scope(listed_by_node, in_scope),
+                    _in_scope(edges_by_node, in_scope, stated_by),
+                    _in_scope(listed_by_node, in_scope, stated_by),
                 )
             nodes_map: dict[str, Any] = {n.id: n for n in all_fetched}
             label_map: dict[str, str] = {n.id: n.label for n in all_fetched}
@@ -2363,7 +2459,8 @@ class GraphRAGToolHandlers:
         evidence): a row outside ``source_ids`` is skipped, the filename is
         read once per source, the content is numbered under a provisional
         alias (``C0``, ``C1``, ... in this list; the merge assigns the final
-        ones) and the origin is ``origin``.
+        ones) and the origin is ``origin``. Each chunk names its document's
+        ``filename`` and ``source_title`` (the title, else the filename).
         """
         chunks: list[dict[str, Any]] = []
         kept = [
@@ -2371,9 +2468,12 @@ class GraphRAGToolHandlers:
             for chunk_data, score in rows
             if not source_ids or chunk_data.get("source_id", "") in source_ids
         ]
+        kept_rows = [chunk_data for chunk_data, _ in kept]
         source_filenames = chunk_source_filenames(
-            (chunk_data for chunk_data, _ in kept),
-            getattr(self.indexing, "get_source_filenames_by_ids", None),
+            kept_rows, getattr(self.indexing, "get_source_filenames_by_ids", None)
+        )
+        source_titles = chunk_source_titles(
+            kept_rows, getattr(self.indexing, "get_source_titles_by_ids", None)
         )
         for chunk_data, score in kept:
             chunk_source_id = chunk_data.get("source_id", "")
@@ -2391,6 +2491,7 @@ class GraphRAGToolHandlers:
                     "original_content": original_content,
                     "source_id": chunk_source_id,
                     "filename": filename,
+                    "source_title": source_titles.get(chunk_source_id, ""),
                     "chunk_index": chunk_data.get("chunk_index"),
                     "page_number": chunk_data.get("page_number"),
                     "section": chunk_data.get("section"),
@@ -2987,6 +3088,7 @@ class GraphRAGToolHandlers:
         seed_limit: int = 10,
         source_ids: list[str] | None = None,
         router: str | None = None,
+        attested_only: bool = False,
     ) -> dict[str, Any]:
         """The retrieval pipeline's result in its shape, annotated, without ``context_text``.
 
@@ -2997,9 +3099,15 @@ class GraphRAGToolHandlers:
         ``GraphRAGSettings.router`` for this call alone (``rules`` makes no
         chat call). The caller that renders must do so inside its own scope,
         as :meth:`graphrag_search` does, since the levers are read then too.
+        ``attested_only``: :meth:`_graphrag_search_pipeline`.
         """
         result = await self._graphrag_search_pipeline(
-            query, limit=limit, seed_limit=seed_limit, source_ids=source_ids, router=router
+            query,
+            limit=limit,
+            seed_limit=seed_limit,
+            source_ids=source_ids,
+            router=router,
+            attested_only=attested_only,
         )
         if isinstance(result, dict) and result.get("success", True):
             if self.levers.relationship_evidence:
@@ -3013,10 +3121,22 @@ class GraphRAGToolHandlers:
         limit: int | None = None,
         seed_limit: int = 10,
         source_ids: list[str] | None = None,
+        tags: list[str] | None = None,
+        match: str = "any",
     ) -> dict[str, Any]:
         """The retrieval pipeline (:meth:`retrieve_shaped`) plus ``context_text``.
 
         ``limit`` (the chunk budget) defaults to ``graphrag.chunk_limit``.
+
+        ``tags`` (``match``: ``any`` or ``all`` of them) scope the retrieval to
+        the documents carrying them (:meth:`SearchRepositoryProtocol.tagged_source_ids`),
+        intersected with ``source_ids`` when given; every graph node of the
+        context (seeds and neighbours) is then attested by one of those
+        documents, never a person-made or unattested node (owner decision
+        2026-11-05; a plain ``source_ids`` scope keeps them). A scope that holds no
+        document runs no retrieval: the result has no chunks, an empty graph
+        context and ``retrieval_stats["scope_empty"]`` set; it never widens to
+        the whole graph. A tag the rule refuses is answered in plain words.
 
         ``context_text`` is the one rendering of the result a chat model reads
         (:func:`~chaoscypher_core.services.workflows.tools.engine.context_render.render_retrieved_context`):
@@ -3032,9 +3152,19 @@ class GraphRAGToolHandlers:
         embedding are then those of the stored (NFC) spelling (audit wave 5).
         """
         query = normalize_query(query)
+        try:
+            source_ids, attested_only = tag_source_scope(self.search, source_ids, tags, match)
+        except TagRuleError as exc:
+            return {"success": False, "error": exc.message}
+        if tags and not source_ids:  # a tag scope holding no document: never the whole graph
+            return empty_scope_result(query, _initial_retrieval_stats())
         with self.lever_scope():
             result = await self.retrieve_shaped(
-                query, limit=limit, seed_limit=seed_limit, source_ids=source_ids
+                query,
+                limit=limit,
+                seed_limit=seed_limit,
+                source_ids=source_ids,
+                attested_only=attested_only,
             )
             if isinstance(result, dict) and result.get("success", True):
                 levers = self.levers
@@ -3052,6 +3182,8 @@ class GraphRAGToolHandlers:
         seed_limit: int = 10,
         source_ids: list[str] | None = None,
         router: str | None = None,
+        *,
+        attested_only: bool = False,
     ) -> dict[str, Any]:
         """Execute the full GraphRAG retrieval pipeline.
 
@@ -3073,6 +3205,10 @@ class GraphRAGToolHandlers:
             seed_limit: Maximum seed entities for PPR.
             source_ids: Optional source scope filter.
             router: A router mode for this call alone (``rules``: no chat call); None: the settings'.
+            attested_only: Every graph node (seed, PageRank's graph, neighbour)
+                must be attested by a source of ``source_ids``: a scope that
+                came from document tags. False keeps a plain source scope's
+                person-made and unattested nodes.
 
         Returns:
             Dict with ``success``, ``graph_context``, ``chunks``,
@@ -3081,7 +3217,9 @@ class GraphRAGToolHandlers:
         """
         with collect_retrieval_faults() as faults:
             self._check_index_ready()
-            result = await self._pipeline_steps(query, limit, seed_limit, source_ids, router)
+            result = await self._pipeline_steps(
+                query, limit, seed_limit, source_ids, router, attested_only=attested_only
+            )
         result["retrieval_stats"]["faults"] = list(faults)
         if faults:
             logger.warning("graphrag_search_degraded", query=query, faults=list(faults))
@@ -3094,26 +3232,15 @@ class GraphRAGToolHandlers:
         seed_limit: int,
         source_ids: list[str] | None,
         router: str | None = None,
+        *,
+        attested_only: bool = False,
     ) -> dict[str, Any]:
         """The pipeline's steps, in order (see :meth:`_graphrag_search_pipeline`).
 
         Step 2b sets the shape's levers for the rest of the call
         (:attr:`levers`); :meth:`graphrag_search` owns that scope and resets it.
         """
-        stats: dict[str, Any] = {
-            "mode": "keyword_only",
-            "seed_entities_found": 0,
-            "ppr_entities_explored": 0,
-            "provenance_chunks": 0,
-            "vector_chunks": 0,
-            "evidence_chunks": 0,
-            "evidence_left_out": 0,
-            "reserve_shortfall": 0,
-            "graph_listing_capped": 0,
-            "descriptions_dropped": 0,
-            "total_chunks_returned": 0,
-            "deduplicated": 0,
-        }
+        stats = _initial_retrieval_stats()
 
         # Step 1: Embed query
         embedding = await self._embed_query(query)
@@ -3121,9 +3248,13 @@ class GraphRAGToolHandlers:
         # Step 2: Match seed entities
         seeds: list[tuple[str, float]] = []
         if embedding:
-            seeds = self._match_seed_entities(embedding, seed_limit, source_ids)
+            seeds = self._match_seed_entities(
+                embedding, seed_limit, source_ids, attested_only=attested_only
+            )
         if self._graphrag.keyword_seeds:
-            seeds = self._add_keyword_seeds(query, seeds, seed_limit, source_ids)
+            seeds = self._add_keyword_seeds(
+                query, seeds, seed_limit, source_ids, attested_only=attested_only
+            )
         stats["seed_entities_found"] = len(seeds)
 
         # Step 2b: the question's shape (rules, then the model when they abstain); its levers
@@ -3144,7 +3275,9 @@ class GraphRAGToolHandlers:
         ppr_top_ids: list[str] = []
         if seeds:
             # the whole graph, loaded once: PageRank's and the walk's
-            graph_nodes, graph_edges = self._load_graph(source_ids, stats)
+            graph_nodes, graph_edges = self._load_graph(
+                source_ids, stats, attested_only=attested_only
+            )
             ppr_scores = self._run_ppr(seeds, graph_nodes, graph_edges, source_ids)
             if ppr_scores:
                 graph_context = self._assemble_graph_context(
@@ -3156,6 +3289,7 @@ class GraphRAGToolHandlers:
                     relations=self._question_relations(query),
                     graph=(graph_nodes, graph_edges),
                     stats=stats,
+                    attested_only=attested_only,
                 )
                 ppr_top_ids = _provenance_lookup_ids(graph_context, ppr_scores)
                 stats["mode"] = "full_graphrag"

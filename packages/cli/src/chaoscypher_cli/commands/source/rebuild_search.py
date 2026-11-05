@@ -17,6 +17,7 @@ import click
 from rich.console import Console
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_error
 from chaoscypher_core.exceptions import VectorSearchOff
 
 
@@ -59,7 +60,7 @@ def rebuild_search(database: str, embed_missing: bool) -> None:
 
     if needs_regeneration and ctx.embedding_service is None:
         # create_index with no provider would clear the reindex flag without re-embedding
-        console.print(f"[red]Error:[/red] {VectorSearchOff('Re-embedding').message}")
+        print_error(VectorSearchOff("Re-embedding").message, console=console)
         sys.exit(1)
 
     if needs_regeneration:
@@ -126,7 +127,7 @@ def _embed_missing(ctx: Any) -> None:
     provider = ctx.embedding_service
     if provider is None:
         message = VectorSearchOff("rebuild-search --embed-missing").message
-        console.print(f"[red]Error:[/red] {message}")
+        print_error(message, console=console)
         sys.exit(1)
     if ctx.search_repository.needs_full_reindex:
         console.print(

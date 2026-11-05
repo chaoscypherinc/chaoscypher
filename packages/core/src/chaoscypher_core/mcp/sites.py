@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from chaoscypher_core.exceptions import ValidationError
+from chaoscypher_core.exceptions import ConflictError, ValidationError
 from chaoscypher_core.operations.sources.site_in_process import (
     find_site,
     pending_site_pages,
@@ -46,9 +46,11 @@ from chaoscypher_core.operations.sources.site_runs import (
     create_site_row,
     find_site_by_scope,
     name_pages,
+    retag_site,
     site_run_live,
 )
 from chaoscypher_core.operations.sources.url_import_options import url_upload_options
+from chaoscypher_core.services.sources.tags import TagRuleError, validate_tags
 from chaoscypher_core.services.sources.web import (
     DiscoveryBudget,
     discover_site,
@@ -59,7 +61,7 @@ from chaoscypher_core.services.sources.web import (
 
 if TYPE_CHECKING:
     from chaoscypher_core.bootstrap import Engine
-    from chaoscypher_core.ports.storage_sites import SitePageRecord
+    from chaoscypher_core.ports.storage_sites import SitePageRecord, SourceSiteRecord
 
 
 logger = structlog.get_logger(__name__)
@@ -140,17 +142,68 @@ def _start(engine: Engine, site_id: str, *, refresh: bool) -> None:
     _RUNS[site_id] = asyncio.create_task(_run_site(engine, site_id, refresh=refresh))
 
 
-async def add_site(engine: Engine, url: str) -> tuple[str, bool]:
+def _already_imported(
+    engine: Engine, site: SourceSiteRecord, tags: list[str] | None, replace: bool
+) -> tuple[str, bool]:
+    """``add_site``'s answer for a site already imported: with ``tags``, it is retagged first.
+
+    ``retag_site`` changes the site's stored tags and every page it has. A run
+    under way read the site's options when it started, so the pages it still
+    adds would miss the change: the retag waits until the run is over. A run
+    of this server (``_RUNS``) is seen here; any other live run is refused by
+    ``retag_site`` itself, under the writer lock (``ConflictError``).
+    """
+    name = _named(engine, site["url"], site["title"])
+    if tags is None:
+        return f"{name} is already imported; refresh_site checks it for updates.", False
+    busy = f"{name} is being imported or checked; add_site with its tags again once that is done."
+    if site["id"] in _RUNS:
+        return busy, True
+    try:
+        after = retag_site(
+            engine.storage_adapter,
+            site["id"],
+            engine.settings.current_database,
+            tags=tags,
+            replace_tags=replace,
+        )
+    except ConflictError:
+        return busy, True
+    except TagRuleError as exc:
+        return exc.message, True
+    carry = f"the tags {', '.join(after)}" if after else "no tags"
+    return (
+        f"{name} is already imported; its pages now carry {carry}. "
+        "refresh_site checks it for updates.",
+        False,
+    )
+
+
+async def add_site(
+    engine: Engine,
+    url: str,
+    *,
+    tags: list[str] | None = None,
+    replace_tags: bool = False,
+) -> tuple[str, bool]:
     """``add_site``: find the site's pages, answer how many, import them in the background.
 
     Args:
         engine: The server's engine.
         url: The site's address.
+        tags: Tags for every page (the site stores them, so a later refresh's
+            new pages get them too); on an already-imported site they are
+            added to the site's and its pages' (``retag_site``).
+        replace_tags: With ``tags`` on an already-imported site, make them the whole set.
 
     Returns:
         ``(answer, is_error)``: the plain-text answer and whether it is a refusal.
     """
     settings = engine.settings
+    try:
+        wanted = validate_tags(tags) if tags is not None else None
+    except TagRuleError as exc:
+        return exc.message, True
     try:
         manifest = await discover_site(
             url, settings, budget=DiscoveryBudget.for_preview(settings.web)
@@ -167,8 +220,7 @@ async def add_site(engine: Engine, url: str) -> tuple[str, bool]:
         engine.storage_adapter, database, manifest.url, page_size=_page_size(engine)
     )
     if existing is not None:
-        name = _named(engine, existing["url"], existing["title"])
-        return f"{name} is already imported; refresh_site checks it for updates.", False
+        return _already_imported(engine, existing, wanted, replace_tags)
     site = create_site_row(
         engine.storage_adapter,
         url=manifest.url,
@@ -177,6 +229,7 @@ async def add_site(engine: Engine, url: str) -> tuple[str, bool]:
             extract_entities=False,  # indexed for search; extraction is the client's
             # A site is many pages: none waits on a domain confirmation.
             auto_confirm=True,
+            tags=wanted or (),
         ),
     )
     _start(engine, site["id"], refresh=False)
@@ -248,7 +301,12 @@ async def handle_site_tool(engine: Engine, name: str, args: dict[str, Any]) -> t
         url = str(args.get("url") or "").strip()
         if not url:
             return "add_site needs the site's address (url).", True
-        return await add_site(engine, url)
+        return await add_site(
+            engine,
+            url,
+            tags=args.get("tags"),
+            replace_tags=bool(args.get("replace_tags", False)),
+        )
     ref = str(args.get("site") or "").strip()
     if not ref:
         return "refresh_site needs the site's address or title (site).", True

@@ -131,6 +131,15 @@ with adapter.transaction():
 # All committed atomically here
 ```
 
+#### `write_locked() -> AbstractContextManager[None]`
+
+A `transaction()` that holds SQLite's writer lock from its first read.
+
+For a read-then-write whose read must still hold when it writes (a tag
+edit's cap check, say): `BEGIN IMMEDIATE` before the first statement,
+so no other writer commits in between. The one implementation is
+`SafeSession.write_locked`; the graph repository's opens it too.
+
 **Attributes:**
 
 - `database_name`

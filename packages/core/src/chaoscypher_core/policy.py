@@ -38,6 +38,13 @@ OPERATION_NAME_MAX_LENGTH = 100
 DATABASE_NAME_MAX_LENGTH = 100
 CHAT_ROLE_MAX_LENGTH = 50
 
+# ---- Document tags -------------------------------------------------------
+# The one tag rule (``chaoscypher_core.services.sources.tags``) is built from
+# these. Owner-fixed, not settings: tags travel between instances inside
+# exported packages, so every instance must accept the same names.
+TAG_NAME_MAX_LENGTH = 64
+TAGS_PER_SOURCE_MAX = 32
+
 # ---- Time / unit conversion ---------------------------------------------
 SECONDS_PER_DAY = 86_400
 SECONDS_PER_HOUR = 3_600

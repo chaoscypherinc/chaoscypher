@@ -18,40 +18,27 @@ from __future__ import annotations
 
 from rich.console import Console
 
+from chaoscypher_cli.utils.console import print_caught_error
+
 
 console = Console()
 
 
 def is_llm_configured() -> bool:
-    """Check if an LLM provider is configured (settings.yaml / env).
+    """Check if a language model is configured (settings.yaml / env).
 
-    Engine config lives in data_dir/settings.yaml as of the 2026-06 config
-    unification; cli.yaml no longer carries LLM settings.
+    Core's one rule (``model_configured``): setup done, and the chat provider
+    has what it needs (a key for OpenAI, Anthropic and Gemini; none for Ollama).
 
     Returns:
         True if LLM is configured and ready to use
     """
     try:
-        from chaoscypher_cli.engine_config import is_setup_completed
+        from chaoscypher_cli.engine_config import data_dir
         from chaoscypher_core.app_config import get_settings
+        from chaoscypher_core.services.llm.configured import model_configured
 
-        if not is_setup_completed():
-            return False
-
-        settings = get_settings()
-        provider = settings.llm.chat_provider
-        if not provider:
-            return False
-
-        # Map providers to their API key check (Ollama doesn't need one)
-        api_key_checks = {
-            "openai": bool(settings.llm.openai_api_key),
-            "anthropic": bool(settings.llm.anthropic_api_key),
-            "gemini": bool(settings.llm.gemini_api_key),
-            "ollama": True,
-        }
-        return api_key_checks.get(provider, False)
-
+        return model_configured(get_settings().llm, data_dir())
     except Exception:
         return False
 
@@ -111,7 +98,7 @@ def check_llm_or_skip(operation: str = "entity extraction") -> tuple[bool, bool]
             return True, True
 
         except Exception as e:
-            console.print(f"[red]Setup failed:[/red] {e}")
+            print_caught_error(e, label="Setup failed", console=console)
             return False, False
 
     if choice == "2":

@@ -161,6 +161,15 @@ class GeminiProvider(BaseLLMProvider):
         if timeout is not None:
             kwargs["timeout"] = timeout
 
+        # Retries inside one call; None keeps the library's default.
+        # langchain-google-genai maps ``max_retries`` to
+        # ``HttpRetryOptions(attempts=...)``: total attempts, not retries, and
+        # its docs read 0 as "the Google default (5 retries)". So N retries
+        # are N + 1 attempts: 0 is one try, as for OpenAI and Anthropic.
+        max_retries = self.config.get("client_max_retries")
+        if max_retries is not None:
+            kwargs["max_retries"] = max_retries + 1
+
         logger.info("gemini_initialized", provider="gemini", model=self.chat_model)
         return ChatGoogleGenerativeAI(**kwargs)
 

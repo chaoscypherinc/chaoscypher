@@ -119,10 +119,9 @@ def _preconfigure_logging() -> None:
     test harness), swallow and let the CLI start normally.
     """
     try:
-        from chaoscypher_core.utils.logging import configure_logging
+        from chaoscypher_cli.log_setup import configure_cli_logging
 
-        configure_logging(
-            log_level=os.getenv("LOG_LEVEL", "WARNING"),
+        configure_cli_logging(
             # `mount` becomes an MCP stdio server after its import step, so
             # its stdout is reserved from the first byte too.
             stream=sys.stderr if {"mcp", "mount"} & set(sys.argv[1:]) else None,
@@ -134,9 +133,48 @@ def _preconfigure_logging() -> None:
 _preconfigure_logging()
 
 import click
+import structlog
 
 from chaoscypher_cli import __version__
 from chaoscypher_cli.lazy import LazyGroup
+
+
+logger = structlog.get_logger(__name__)
+
+
+class _MainGroup(LazyGroup):
+    """The root group: a database error escaping any command ends in one plain line.
+
+    Without this, a ``sqlite3`` or SQLAlchemy error a command did not catch
+    printed a traceback whose last line is SQLAlchemy's
+    ``(Background on this error at: https://sqlalche.me/...)`` link, which is
+    all a caller keeping only the last line of output (Tsukumo) ever saw. Only
+    database errors are caught; Click's own exits, aborts and usage errors and
+    every other exception pass through untouched.
+    """
+
+    def invoke(self, ctx: click.Context) -> object:
+        """Run the command; turn an escaping database error into one line and exit 1."""
+        import sqlite3
+
+        from sqlalchemy.exc import DBAPIError
+
+        try:
+            return super().invoke(ctx)
+        except (DBAPIError, sqlite3.Error) as exc:
+            from chaoscypher_core.database.errors import describe_database_error
+
+            # The full exception (SQL text, parameters) stays in the debug log.
+            logger.debug("cli_database_error", exc_info=True)
+            step = (
+                f"running chaoscypher {ctx.invoked_subcommand}" if ctx.invoked_subcommand else None
+            )
+            message = describe_database_error(exc, step=step) or "a database operation failed"
+            # Always stderr: errors belong there, and `mcp` / `mount` reserve stdout
+            # for JSON-RPC (a caller reading the combined output still gets it last).
+            # click.echo applies no markup, so the message prints exactly as written.
+            click.echo(f"{click.style('Error:', fg='red')} {message}", err=True)
+            ctx.exit(1)
 
 
 # =============================================================================
@@ -505,7 +543,7 @@ def _first_run_gate(ctx: click.Context) -> None:
 
 
 @click.group(
-    cls=LazyGroup,
+    cls=_MainGroup,
     lazy_subcommands=LAZY_COMMANDS,
     context_settings={"max_content_width": 120},
 )

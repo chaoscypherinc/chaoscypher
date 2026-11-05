@@ -17,6 +17,9 @@ import {
   ListItemIcon,
   ListItemText,
   InputAdornment,
+  Autocomplete,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material';
 import SortIcon from '@mui/icons-material/Sort';
 import FilterListIcon from '@mui/icons-material/FilterList';
@@ -25,6 +28,10 @@ import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import ClearIcon from '@mui/icons-material/Clear';
 import SearchIcon from '@mui/icons-material/Search';
 import { SOURCE_STATUS_FILTER_OPTIONS } from './sourceStatusFilterOptions';
+import { useAllTags } from '../../services/api/useSourceTags';
+import type { SourceTag, TagMatch } from '../../types';
+
+const NO_TAGS: SourceTag[] = [];
 
 interface SourcesFiltersProps {
   searchQuery: string;
@@ -32,11 +39,16 @@ interface SourcesFiltersProps {
   stageFilter: 'all' | 'queued' | 'processing' | 'active';
   statusFilter: string;
   typeFilter: string;
+  /** Tag names picked (none: no tag filter). */
+  tagFilter: string[];
+  /** With two or more tags picked: any of them, or all of them. */
+  tagMatch: TagMatch;
   sortField: 'created_at' | 'size';
   sortDirection: 'asc' | 'desc';
   onStageChange: (value: 'all' | 'queued' | 'processing' | 'active') => void;
   onStatusChange: (value: string) => void;
   onTypeChange: (value: string) => void;
+  onTagsChange: (tags: string[], match: TagMatch) => void;
   onSortChange: (field: 'created_at' | 'size', direction: 'asc' | 'desc') => void;
 }
 
@@ -46,13 +58,19 @@ export function SourcesFilters({
   stageFilter,
   statusFilter,
   typeFilter,
+  tagFilter,
+  tagMatch,
   sortField,
   sortDirection,
   onStageChange,
   onStatusChange,
   onTypeChange,
+  onTagsChange,
   onSortChange,
 }: SourcesFiltersProps) {
+  const { data: tags = NO_TAGS } = useAllTags();
+  const tagNames = tags.map((t) => t.name);
+
   // Sort menu state
   const [sortAnchor, setSortAnchor] = useState<HTMLElement | null>(null);
   // Filter popover state
@@ -63,6 +81,7 @@ export function SourcesFilters({
     stageFilter !== 'all',
     statusFilter !== '',
     typeFilter !== '',
+    tagFilter.length > 0,
   ].filter(Boolean).length;
 
   // Sort options
@@ -88,6 +107,7 @@ export function SourcesFilters({
     onStageChange('all');
     onStatusChange('');
     onTypeChange('');
+    onTagsChange([], 'any');
   };
 
   // Get sort direction label
@@ -257,6 +277,32 @@ export function SourcesFilters({
             <MenuItem value="html">HTML</MenuItem>
             <MenuItem value="docx">DOCX</MenuItem>
           </TextField>
+
+          <Autocomplete
+            multiple
+            size="small"
+            options={tagNames}
+            value={tagFilter}
+            onChange={(_e, value) => onTagsChange(value, tagMatch)}
+            renderInput={(params) => <TextField {...params} label="Tags" />}
+            sx={{ mb: tagFilter.length >= 2 ? 1 : 2 }}
+          />
+
+          {tagFilter.length >= 2 && (
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={tagMatch}
+              onChange={(_e, value: TagMatch | null) => {
+                if (value) onTagsChange(tagFilter, value);
+              }}
+              aria-label="Match tags"
+              sx={{ mb: 2 }}
+            >
+              <ToggleButton value="any">Any</ToggleButton>
+              <ToggleButton value="all">All</ToggleButton>
+            </ToggleButtonGroup>
+          )}
 
           {activeFilterCount > 0 && (
             <>

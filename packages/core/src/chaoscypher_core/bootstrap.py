@@ -1420,6 +1420,9 @@ class Engine:
         source_type: str = "file",
         source_fields: Mapping[str, Any] | None = None,
         extract: bool = True,
+        tags: Sequence[str] | None = None,
+        replace_tags: bool = False,
+        summary: str | None = None,
     ) -> ProcessingResult:
         """Process a document through the full extraction pipeline.
 
@@ -1457,10 +1460,14 @@ class Engine:
             extract: False stops after indexing: the chunks are stored and
                 searchable, nothing is extracted or committed, and the result's
                 ``status`` is ``indexed`` (the no-extraction-model path).
+            tags: Tags added to the document (``None`` leaves them alone).
+            replace_tags: Make ``tags`` the document's whole set.
+            summary: The document's summary (``""`` clears it; ``None`` keeps it).
 
         Returns:
             ProcessingResult model with ``source_id``, ``nodes``, ``edges``,
-            ``templates`` listing the IDs of created graph entities. When the
+            ``templates`` listing the IDs of created graph entities, and the
+            document's ``tags`` after. When the
             gate parks the source, the result's ``status`` is
             ``awaiting_confirmation`` and ``nodes``/``edges``/``templates``
             are empty (extraction did not run).
@@ -1480,9 +1487,16 @@ class Engine:
 
         """
         from chaoscypher_core.models import ChunkingResult, IndexingResult
+        from chaoscypher_core.services.sources.labels import (
+            apply_source_labels,
+            validate_source_labels,
+        )
         from chaoscypher_core.utils import generate_id
 
         source_id = source_id or generate_id()
+        # Bad labels are refused before the row is written, never after.
+        max_summary_chars = self.settings.source_processing.summary_max_chars
+        validate_source_labels(tags=tags, summary=summary, max_summary_chars=max_summary_chars)
 
         # The confirmation gate only engages when extraction was NOT pre-
         # authorised (``auto_confirm=False``) and no domain was forced. Mirrors
@@ -1504,6 +1518,17 @@ class Engine:
             forced_domain=forced_domain,
             source_type=source_type,
             source_fields=source_fields,
+        )
+        # The caller's tags and summary, before chunking: the import's own
+        # summary step reads what the caller gave.
+        tags_after = apply_source_labels(
+            self.storage_adapter,
+            self.settings.current_database,
+            source_id,
+            tags=tags,
+            replace_tags=replace_tags,
+            summary=summary,
+            max_summary_chars=max_summary_chars,
         )
 
         logger.info(
@@ -1530,7 +1555,9 @@ class Engine:
         if not extract:
             from chaoscypher_core.models import ProcessingResult, SourceStatus
 
-            return ProcessingResult(source_id=source_id, status=SourceStatus.INDEXED)
+            return ProcessingResult(
+                source_id=source_id, status=SourceStatus.INDEXED, tags=tags_after
+            )
 
         # --- Confirmation gate ------------------------------------------- #
         # Evaluate from PERSISTED SourceRow state (the same brain the worker,
@@ -1544,7 +1571,7 @@ class Engine:
             filename=filename,
         )
         if parked is not None:
-            return parked
+            return parked.model_copy(update={"tags": tags_after})
         # ----------------------------------------------------------------- #
 
         # Stages 3-5 on the groups stage 1 stored, so the citations name the
@@ -1555,7 +1582,7 @@ class Engine:
             chunked = await self.chunking_service.create_chunks(
                 full_text=text, source_id=source_id, analysis_depth=analysis_depth, store=False
             )
-        return await self.extract_and_commit(
+        result = await self.extract_and_commit(
             source_id,
             seed=seed,
             forced_domain=forced_domain,
@@ -1564,6 +1591,7 @@ class Engine:
             filename=filename,
             on_progress=on_progress,
         )
+        return result.model_copy(update={"tags": tags_after})
 
     async def chunk_and_index(
         self, source_id: str, text: str
@@ -1572,7 +1600,9 @@ class Engine:
 
         The one store step: ``process_document``, the MCP index-only path and a
         memory's link (re-chunking a memory whose store failed) all run it. The
-        source row must exist (the chunk rows carry a foreign key to it).
+        source row must exist (the chunk rows carry a foreign key to it). Once
+        the source is indexed, a document with no summary gets its one-line
+        summary from the configured model (``write_import_summary``).
 
         Returns:
             The chunk result (the small chunks and the hierarchical groups) and
@@ -1587,6 +1617,19 @@ class Engine:
             chunks_count=index_result.get("chunks_count", 0),
             embedding_model=index_result.get("embedding_model", ""),
             embedding_dimensions=index_result.get("embedding_dimensions", 0),
+        )
+        # After the indexing has committed (CC051): the summary's model call
+        # holds no write transaction. A memory, or a caller's summary, is skipped.
+        from chaoscypher_core.adapters.llm.summary import summary_chat
+        from chaoscypher_core.services.sources import summaries
+
+        await summaries.write_import_summary(
+            self.storage_adapter,
+            self.settings.current_database,
+            source_id,
+            chat=summary_chat(self.settings),
+            settings=self.settings,
+            text=text,
         )
         return chunks_result, index_result
 
@@ -1724,6 +1767,10 @@ class Engine:
         on_progress: ProgressCallback | None = None,
         auto_confirm: bool = True,
         forced_domain: str | None = None,
+        tags: Sequence[str] | None = None,
+        replace_tags: bool = False,
+        summary: str | None = None,
+        source_fields: Mapping[str, Any] | None = None,
     ) -> ProcessingResult:
         """Load a file and process it through the full extraction pipeline.
 
@@ -1743,6 +1790,11 @@ class Engine:
                 ``True``). Forwarded to :meth:`process_document`; the MCP
                 server-extraction path passes ``False`` to opt into the gate.
             forced_domain: Explicit domain choice (suppresses parking).
+            tags: Tags added to the document (``None`` leaves them alone).
+            replace_tags: Make ``tags`` the document's whole set.
+            summary: The document's summary (``""`` clears it; ``None`` keeps it).
+            source_fields: Further columns of a new source row (the file's
+                ``content_hash``, say); forwarded to :meth:`process_document`.
 
         Returns:
             ProcessingResult with source_id and lists of created node,
@@ -1767,6 +1819,10 @@ class Engine:
             on_progress=on_progress,
             auto_confirm=auto_confirm,
             forced_domain=forced_domain,
+            tags=tags,
+            replace_tags=replace_tags,
+            summary=summary,
+            source_fields=source_fields,
         )
 
     async def add_documents(

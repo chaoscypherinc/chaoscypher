@@ -67,7 +67,7 @@ curl -X POST "http://localhost/api/v1/exports?include_templates=true&include_kno
 | **Templates** | User-created node and edge templates |
 | **Knowledge** | All knowledge graph nodes and edges |
 | **Workflows** | Workflow definitions, steps, and triggers |
-| **Sources** | Document sources with chunks and metadata |
+| **Sources** | Document sources with chunks and metadata. Each source record carries its tags as `keywords` and its one-line summary as `abstract` (omitted when it has none); see [CCX format](../ccx-format.md). |
 | **Embeddings** | Embedding vectors for nodes and chunks (opt-in, excluded by default to reduce file size) |
 
 ### Response `202 Accepted` -- ExportResponse
@@ -149,6 +149,8 @@ statistics about the import:
 - Number of workflows imported
 - Any errors or warnings
 
+Each source's `keywords` become its tags, checked by the [tag rule](../../user-guide/sources.md#tags): a keyword the rule refuses is skipped, and keywords past the 32-tag cap are left off, each with a warning naming the source (`source "<name>": …`). Its `abstract` becomes its summary; one longer than `source_processing.summary_max_chars`, or not text, is skipped with a warning and the import goes on. No model is called during an import. On a re-import into the same database a source takes its title and summary from the package again, replacing a local edit (a package without an `abstract` keeps the local summary), and its keywords are added to its current tags.
+
 A package whose declared ed25519 signature does not verify against its manifest bytes is refused (the task fails with `package signature failed`); a package with no signature imports as before, and a signature kind this install cannot verify is logged and skipped.
 
 ### Errors
@@ -197,7 +199,7 @@ curl -X POST "http://localhost/api/v1/exports/by_sources?include_templates=true"
 - **Entities** attested by (members of) the specified sources
 - **Edges** where both endpoints are in the entity set (referential integrity)
 - **Templates** the sources own (`source_id`) and templates used by exported entities
-- **Source metadata**, chunks, citations, and tags
+- **Source metadata** (tags as `keywords`, the summary as `abstract`), chunks and citations
 
 ### Response `202 Accepted` -- ExportResponse
 

@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 
 import click
 
+from chaoscypher_cli.utils.console import print_caught_error
+
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -150,5 +152,5 @@ def remove(package: str, version: str | None, remove_all: bool, force: bool) -> 
         console.print("[green]✓ Package removed successfully[/green]")
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)

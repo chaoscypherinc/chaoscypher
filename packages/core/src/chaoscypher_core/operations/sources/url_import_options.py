@@ -32,6 +32,8 @@ def url_upload_options(
     enable_inverse_relationships: bool | None = None,
     max_entity_degree_override: int | None = None,
     auto_confirm: bool = False,
+    tags: Sequence[str] = (),
+    summary: str | None = None,
 ) -> dict[str, Any]:
     """The ``upload_file`` options a URL import applies to each page it imports.
 
@@ -50,6 +52,10 @@ def url_upload_options(
         enable_inverse_relationships: Per-source toggle, ``None`` the default.
         max_entity_degree_override: Per-source degree cap, or ``None``.
         auto_confirm: Skip the domain-confirmation gate for detected packs.
+        tags: Tags each imported page gets (a site stores them, so a page a
+            later refresh adds gets them too).
+        summary: The page's summary; a site's pages do not share one
+            (``site_page_options`` drops it).
 
     Returns:
         The options dict, as stored on a site and passed to ``upload_file``.
@@ -69,6 +75,8 @@ def url_upload_options(
         "enable_inverse_relationships": enable_inverse_relationships,
         "max_entity_degree_override": max_entity_degree_override,
         "auto_confirm": auto_confirm,
+        "tags": list(tags),
+        "summary": summary,
     }
 
 

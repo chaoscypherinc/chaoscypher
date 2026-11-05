@@ -449,6 +449,36 @@ describe('TagManager', () => {
       expect(await screen.findByText(/failed to save tag/i)).toBeInTheDocument();
     });
 
+    it('shows the tag rule message on a 422', async () => {
+      const rule =
+        'tag "Work Docs" is not allowed: use a-z, 0-9, \':\', \'_\' or \'-\', starting with a letter or digit, at most 64 characters';
+      mockList.mockResolvedValue([]);
+      // The shape the API client throws for a 422: the envelope's top
+      // message is generic; the rule's words are in the first detail.
+      mockCreate.mockRejectedValue(
+        Object.assign(new Error('Request body failed validation'), {
+          isApiError: true,
+          status: 422,
+          response: {
+            status: 422,
+            data: {
+              error: 'VALIDATION_FAILED',
+              message: 'Request body failed validation',
+              details: { errors: [{ type: 'tag_rule', loc: ['body', 'name'], msg: rule }] },
+            },
+          },
+        }),
+      );
+      renderTagManager();
+      await screen.findByText('No tags yet');
+
+      fireEvent.click(screen.getByRole('button', { name: /new tag/i }));
+      fireEvent.change(screen.getByLabelText(/tag name/i), { target: { value: 'Work Docs' } });
+      fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
+
+      expect(await screen.findByText(`Failed to save tag: ${rule}`)).toBeInTheDocument();
+    });
+
     it('shows an error message when tagsApi.update fails', async () => {
       mockList.mockResolvedValue([sampleTag]);
       mockUpdate.mockRejectedValue(new Error('Update failed'));

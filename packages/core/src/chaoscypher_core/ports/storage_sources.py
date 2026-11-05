@@ -13,11 +13,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from chaoscypher_core.constants import SOURCE_ROW_FILTERING_MODE
+from chaoscypher_core.models import TagMatch
 
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
+
+    from chaoscypher_core.ports.types import DocumentListing
 
 
 @runtime_checkable
@@ -270,6 +273,8 @@ class SourceStorageProtocol(Protocol):
         tag_id: str | None = None,
         site_id: str | None = None,
         in_site: bool | None = None,
+        tags: Sequence[str] = (),
+        match: TagMatch = TagMatch.ANY,
     ) -> tuple[list[dict[str, Any]], int]:
         """List sources with filtering and pagination.
 
@@ -284,12 +289,53 @@ class SourceStorageProtocol(Protocol):
             site_id: Only the pages of this imported site
             in_site: True: only pages of imported sites; False: only sources
                 outside any site
+            tags: Normalised tag names; when given, only sources carrying
+                them (filtered in SQL, before the page is cut)
+            match: ``ANY`` or ``ALL`` of ``tags``
 
         Returns:
             Tuple of (sources list, total count).  Each source dict
             includes ``stage_progress`` (same shape as ``get_source``).
             The implementation bulk-fetches stage_progress in one extra
             round trip per page to avoid N+1 queries.
+
+        """
+        ...
+
+    def list_documents(
+        self,
+        database_name: str,
+        *,
+        tags: Sequence[str] = (),
+        match: TagMatch = TagMatch.ANY,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[DocumentListing], int]:
+        """List the documents (every source but memories), newest first, then by id.
+
+        Args:
+            database_name: Database to list.
+            tags: Normalised tag names; empty lists every document.
+            match: ``ANY`` or ``ALL`` of ``tags``.
+            limit: Page size (applied in SQL).
+            offset: Rows to skip (applied in SQL).
+
+        Returns:
+            The page and the total number of matching documents.
+
+        """
+        ...
+
+    def source_ids_for_summary(self, database_name: str, *, missing_only: bool) -> list[str]:
+        """The ids of the documents a summary run visits, oldest first.
+
+        Args:
+            database_name: Database to read.
+            missing_only: Only the documents with no summary yet.
+
+        Returns:
+            The ids of the sources with chunks (``chunk_count > 0``) that are
+            not memories, oldest first.
 
         """
         ...

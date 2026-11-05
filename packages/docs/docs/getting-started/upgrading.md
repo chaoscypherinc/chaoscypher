@@ -149,6 +149,8 @@ The import maps the old types: each node is stored under its core type with the 
 chaoscypher upgrade
 ```
 
+It asks before applying a migration that needs confirmation, listing every change a migration would make to your data; pass `--yes` to skip the prompt.
+
 `chaoscypher upgrade` is the supported invocation — it locates the `alembic.ini` shipped inside `chaoscypher_core` and resolves the database path from settings. A bare `uv run alembic upgrade head` from a checkout fails (there is no `alembic.ini` at the repo root, and the shipped one resolves the database URL at runtime); contributors who need raw Alembic can use `alembic -c packages/core/src/chaoscypher_core/database/migrations/alembic.ini upgrade head`.
 
 Per [ADR-0006](../architecture/adrs/0006-re-adopt-alembic.md), Alembic is the authoritative migration tool. Cortex runs the same `alembic upgrade head` on startup, so `chaoscypher upgrade` is useful when you need to trigger migrations outside the normal startup path.

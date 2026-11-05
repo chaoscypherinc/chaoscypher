@@ -648,6 +648,14 @@ class LLMSettings(BaseModel):
             "hanging indefinitely on an upstream network stall."
         ),
     )
+    client_max_retries: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Retries the cloud LLM client (OpenAI, Anthropic, Gemini) makes inside one call. "
+            "None keeps the library's default; the import-time summary uses 0 (one try)."
+        ),
+    )
 
     # Health check
     ollama_health_check_timeout: float = Field(
@@ -1809,6 +1817,32 @@ class SourceProcessingSettings(BaseModel):
     # Web scraping
     web_scraper_max_length: int = Field(
         default=5000, gt=0, description="Maximum content length for web scraper extraction"
+    )
+
+    # Document summaries (migration 0026)
+    summary_max_chars: int = Field(
+        default=300,
+        ge=40,
+        description="Longest summary a document keeps, typed or model-written.",
+    )
+    import_summaries: bool = Field(
+        default=True,
+        description="Write a one-line summary of each imported document with the configured model.",
+    )
+    import_summary_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        description="How long the one import-summary model call may take; it is never retried.",
+    )
+    import_summary_input_chars: int = Field(
+        default=12_000,
+        ge=1_000,
+        description="How much of the document's opening the summary model reads.",
+    )
+    import_summary_max_tokens: int = Field(
+        default=120,
+        ge=16,
+        description="The most tokens the summary model may reply with.",
     )
 
     # Analysis defaults

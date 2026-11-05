@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import shutil
 import sys
 from typing import TYPE_CHECKING
 
@@ -15,6 +14,7 @@ from rich.console import Console
 from chaoscypher_cli.commands.db.create import validate_database_name
 from chaoscypher_cli.commands.db.list import get_database_info, get_databases_dir
 from chaoscypher_cli.context import get_database_name
+from chaoscypher_cli.utils.console import print_caught_error
 
 
 if TYPE_CHECKING:
@@ -98,8 +98,10 @@ def delete(name: str, yes: bool) -> None:
 
     # Delete
     try:
-        shutil.rmtree(db_path)
+        from chaoscypher_core.database.engine import remove_database_dir
+
+        remove_database_dir(db_path)
         console.print(f"[green]Deleted database '{name}'[/green]")
     except Exception as e:
-        console.print(f"[red]Failed to delete database:[/red] {e}")
+        print_caught_error(e, label="Failed to delete database", console=console)
         sys.exit(1)

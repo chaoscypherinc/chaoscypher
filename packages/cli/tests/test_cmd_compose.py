@@ -1166,6 +1166,129 @@ class TestComposeHubUnreachable:
         assert "Traceback" not in result.output
 
 
+# ---------------------------------------------------------------------------
+# database failures end with one plain line
+# ---------------------------------------------------------------------------
+
+
+def _real_missing_table_error(tmp_path: Path) -> Exception:
+    """A real SQLAlchemy OperationalError: ``no such table: sources`` on an empty file."""
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.exc import OperationalError
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'empty.db'}")
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT id FROM sources"))
+    except OperationalError as exc:
+        return exc
+    finally:
+        engine.dispose()
+    raise AssertionError("the query against an empty database should have failed")
+
+
+def _last_line(output: str) -> str:
+    return [line for line in output.splitlines() if line.strip()][-1]
+
+
+def _run_failed_build(tmp_path: Path, errors: list[str]) -> Any:
+    config_file = tmp_path / "axiomatize.yaml"
+    config_file.write_text("name: test\n")
+    service = MagicMock()
+    service.build = _make_async(_make_failure_result(errors=errors))
+    with (
+        patch(_BUILD_CONFIG) as mock_cfg_cls,
+        patch(_BUILD_SERVICE, return_value=service),
+        patch(_BUILD_AUTH, return_value=None),
+        patch(_BUILD_LEXICON, return_value="https://lexicon.example.com"),
+    ):
+        mock_cfg_cls.from_yaml.return_value = _make_compose_config()
+        return CliRunner().invoke(build, ["--config", str(config_file)])
+
+
+class TestDatabaseFailureLastLine:
+    """A caller that keeps only the last line of output must learn what failed.
+
+    Tsukumo's nightly build kept the tail of ``compose build``'s output, which was
+    SQLAlchemy's ``(Background on this error at: https://sqlalche.me/...)`` link.
+    """
+
+    def test_compose_build_failure_ends_with_one_plain_line(self, tmp_path: Path) -> None:
+        from chaoscypher_core.services.compose.merger import NamespaceMerger
+
+        merger = NamespaceMerger(output_dir=tmp_path / "out")
+        exc = _real_missing_table_error(tmp_path)
+        assert "sqlalche.me" in str(exc)  # what used to be printed
+        error = merger.package_failure_message("pack-a", exc)
+
+        result = _run_failed_build(tmp_path, [error])
+
+        assert result.exit_code == 1
+        last = _last_line(result.output)
+        assert last.startswith("Build failed:"), result.output
+        assert "pack-a" in last
+        assert str(merger.database_file) in last
+        assert "importing package" in last
+        assert "[SQL:" not in result.output
+        assert "sqlalche.me" not in result.output
+
+    def test_non_database_error_message_unchanged(self, tmp_path: Path) -> None:
+        from chaoscypher_core.services.compose.merger import NamespaceMerger
+
+        merger = NamespaceMerger(output_dir=tmp_path / "out")
+        error = merger.package_failure_message("pack-a", ValueError("manifest is missing"))
+        assert error == "Failed to merge pack-a: manifest is missing"
+
+        result = _run_failed_build(tmp_path, [error])
+
+        assert result.exit_code == 1
+        assert "  ✗ Failed to merge pack-a: manifest is missing" in result.output.splitlines()
+        assert (
+            _last_line(result.output) == "Build failed: Failed to merge pack-a: manifest is missing"
+        )
+
+    def test_uncaught_database_error_in_any_command_prints_plain_line(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        import sys
+
+        from chaoscypher_cli.__main__ import main
+
+        config_file = tmp_path / "axiomatize.yaml"
+        config_file.write_text("name: test\n")
+        argv = ["compose", "build", "--config", str(config_file)]
+        monkeypatch.setattr(sys, "argv", ["chaoscypher", *argv])
+        monkeypatch.setattr("chaoscypher_cli.engine_config.is_setup_completed", lambda: True)
+        service = MagicMock()
+        service.build = AsyncMock(side_effect=_real_missing_table_error(tmp_path))
+
+        with (
+            patch(_BUILD_CONFIG) as mock_cfg_cls,
+            patch(_BUILD_SERVICE, return_value=service),
+            patch(_BUILD_AUTH, return_value=None),
+            patch(_BUILD_LEXICON, return_value="https://lexicon.example.com"),
+            patch("chaoscypher_cli.__main__.logger") as logger,
+        ):
+            mock_cfg_cls.from_yaml.return_value = _make_compose_config()
+            result = CliRunner().invoke(main, argv)
+
+        assert result.exit_code == 1, result.output
+        assert isinstance(result.exception, SystemExit)
+        last = _last_line(result.output)
+        assert last.startswith('Error: the database has no "sources" table'), result.output
+        assert "while running chaoscypher compose" in last
+        # The line is an error: it goes to stderr, where it is also the last line.
+        assert _last_line(result.stderr) == last
+        assert "Error:" not in result.stdout
+        for stream in (result.output, result.stderr):
+            assert "Traceback" not in stream
+            assert "[SQL:" not in stream
+            assert "sqlalche.me" not in stream
+        # The full exception goes to the debug log instead.
+        logger.debug.assert_called_once()
+        assert logger.debug.call_args.kwargs.get("exc_info") is True
+
+
 # ===========================================================================
 # init command
 # ===========================================================================

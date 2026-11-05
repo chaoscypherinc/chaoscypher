@@ -22,7 +22,12 @@ from typing import Any
 import click
 
 from chaoscypher_cli.commands.lexicon.login import get_auth_config, get_lexicon_url
-from chaoscypher_cli.utils.console import get_console, print_error, print_success
+from chaoscypher_cli.utils.console import (
+    get_console,
+    print_error,
+    print_failure,
+    print_success,
+)
 from chaoscypher_core.exceptions import ExternalServiceError
 from chaoscypher_core.services.compose import ComposeConfig, ComposeError, ComposeService
 
@@ -110,9 +115,7 @@ def build(config: str, clean: bool) -> None:
             console.print("\n[dim]Next steps:[/dim]")
             console.print(f"  chaoscypher compose up -c {config}")
         else:
-            print_error("Build failed")
-            for error in result.errors:
-                console.print(f"  [red]✗[/red] {error}")
+            print_failure("Build failed", result.errors)
             sys.exit(1)
 
     except ComposeError as e:

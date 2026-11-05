@@ -20,6 +20,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_caught_error
 
 
 if TYPE_CHECKING:
@@ -126,7 +127,7 @@ def load(
             sys.exit(1)
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)
 
 
@@ -173,7 +174,7 @@ def _index_imported(ctx: Any, stats: ImportStats) -> None:
             f"{len(stats.imported_node_ids)} nodes for search[/green]"
         )
     except Exception as e:
-        console.print(f"[yellow]⚠ Search indexing skipped: {e}[/yellow]")
+        print_caught_error(e, label="⚠ Search indexing skipped", style="yellow", console=console)
 
 
 def _display_import_results(stats: ImportStats) -> None:

@@ -24,6 +24,7 @@ from chaoscypher_core.adapters.sqlite import engine as _sqlite_engine
 
 
 def _cached_paths() -> set[str]:
+    """The database paths the engine cache currently holds."""
     with _sqlite_engine._engines_lock:  # noqa: SLF001 - the cache's own lock
         return set(_sqlite_engine._engines)  # noqa: SLF001 - which engines exist is the point
 

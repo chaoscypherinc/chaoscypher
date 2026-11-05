@@ -38,6 +38,7 @@ import type { SourceTag } from '../../../types';
 import TagManager from '../../../components/TagManager';
 import { TagPalette } from '../../../theme/colors';
 import { logger } from '../../../utils/logger';
+import { getApiErrorMessage } from '../../../utils/errors';
 
 type TagOption = SourceTag | { id: '__create__'; name: string; inputValue: string };
 
@@ -55,6 +56,8 @@ export function InlineTagEditor({ sourceId }: InlineTagEditorProps) {
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const [showTagInput, setShowTagInput] = useState(false);
   const [inputValue, setInputValue] = useState('');
+  // Why the last new tag was refused (the tag rule's words), until the next try.
+  const [addError, setAddError] = useState<string | null>(null);
   const isProcessing = useRef(false);
 
   const { data: assignedTags = EMPTY_TAGS, error: assignedError } =
@@ -84,11 +87,13 @@ export function InlineTagEditor({ sourceId }: InlineTagEditorProps) {
     setInputValue('');
   };
 
+  // A refusal (the 32-tag cap, say) is logged, then rethrown so the caller shows its words.
   const handleAssignTag = async (tagId: string) => {
     try {
       await assignTag.mutateAsync(tagId);
     } catch (err) {
       logger.error('Failed to assign tag:', err);
+      throw err;
     }
   };
 
@@ -103,6 +108,7 @@ export function InlineTagEditor({ sourceId }: InlineTagEditorProps) {
   const handleTagSelected = async (_event: unknown, value: string | TagOption | null) => {
     if (!value) return;
     isProcessing.current = true;
+    setAddError(null);
 
     try {
       if (typeof value === 'string') {
@@ -121,6 +127,7 @@ export function InlineTagEditor({ sourceId }: InlineTagEditorProps) {
       }
     } catch (err) {
       logger.error('Failed to add tag:', err);
+      setAddError(getApiErrorMessage(err));
     } finally {
       isProcessing.current = false;
       closeInput();
@@ -274,6 +281,11 @@ export function InlineTagEditor({ sourceId }: InlineTagEditorProps) {
             <SettingsIcon sx={{ fontSize: 16 }} />
           </IconButton>
         </Tooltip>
+        {addError && (
+          <Typography variant="caption" role="alert" sx={{ color: 'error.main', width: '100%' }}>
+            {addError}
+          </Typography>
+        )}
       </Box>
       <TagManager
         open={tagManagerOpen}

@@ -3,6 +3,7 @@
 
 """Pydantic DTOs for Sources API."""
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
@@ -17,6 +18,12 @@ from pydantic import (
 from chaoscypher_core.models import AnalysisDepth, SiteStatus, SourceStatus
 from chaoscypher_core.operations.sources.url_import_options import url_upload_options
 from chaoscypher_core.ports.types import FilteringMode
+from chaoscypher_core.services.sources.tags import (
+    TagName,
+    TagNames,
+    as_pydantic_error,
+    check_tag_edit,
+)
 from chaoscypher_core.services.sources.web import DiscoveryMethod, SiteProgress
 from chaoscypher_cortex.features.sources.packs import PacksFields
 from chaoscypher_cortex.features.sources.progress import SourceProgress, map_status_to_progress
@@ -129,11 +136,14 @@ class UrlImportOptions(PacksFields):
     enable_inverse_relationships: bool | None = None
     max_entity_degree_override: EntityDegreeOverride | None = None
 
-    def upload_options(self) -> dict[str, Any]:
+    def upload_options(
+        self, *, tags: Sequence[str] = (), summary: str | None = None
+    ) -> dict[str, Any]:
         """The ``upload_file`` options the URL import path applies to each page it imports.
 
         Built by Core's ``url_upload_options``, the mapping the CLI's and the
-        MCP server's site imports share.
+        MCP server's site imports share; ``tags`` and ``summary`` are the
+        single-page import's (:class:`UrlImportRequest`).
         """
         return url_upload_options(
             extract_entities=self.extract_entities,
@@ -149,13 +159,30 @@ class UrlImportOptions(PacksFields):
             enable_inverse_relationships=self.enable_inverse_relationships,
             max_entity_degree_override=self.max_entity_degree_override,
             auto_confirm=self.auto_confirm,
+            tags=tags,
+            summary=summary,
         )
 
 
 class UrlImportRequest(UrlImportOptions):
-    """Request model for importing a source from a URL: the address and its upload options."""
+    """Request model for importing a source from a URL: the address and its upload options.
+
+    ``tags`` (checked by the tag rule) and ``summary`` are stored in the URL
+    job's options and given to the page's document when it is created.
+    """
 
     url: WebAddress
+    tags: TagNames = Field(default_factory=list)
+    summary: str | None = None
+
+    def upload_options(
+        self, *, tags: Sequence[str] | None = None, summary: str | None = None
+    ) -> dict[str, Any]:
+        """The page's ``upload_file`` options, this request's tags and summary included."""
+        return super().upload_options(
+            tags=self.tags if tags is None else tags,
+            summary=self.summary if summary is None else summary,
+        )
 
 
 class UrlImportResponse(BaseModel):
@@ -282,6 +309,38 @@ class SourceUpdate(BaseModel):
     processing_status: SourceStatus | None = None
     enabled: bool | None = None
     user_metadata: dict[str, Any] | None = None
+    # Omitted keeps the summary; ``""`` clears it (cleaned by Core's ``clean_summary``).
+    summary: str | None = None
+
+
+class SourceTagsEdit(BaseModel):
+    """``PATCH /sources/{source_id}/tags``: add, remove or replace a document's tags by name.
+
+    Every name goes through the tag rule. ``replace`` makes the list the whole
+    set (``[]`` clears it) and cannot be combined with ``add`` or ``remove``.
+    """
+
+    add: TagNames = Field(default_factory=list)
+    remove: TagNames = Field(default_factory=list)
+    replace: TagNames | None = None
+
+    @model_validator(mode="after")
+    def _one_kind_of_edit(self) -> SourceTagsEdit:
+        """Core's ``check_tag_edit``: ``replace`` with ``add``/``remove`` is a 422 in its words."""
+        as_pydantic_error(_check_edit)(self)
+        return self
+
+
+def _check_edit(edit: SourceTagsEdit) -> None:
+    """Run Core's ``check_tag_edit`` on a ``SourceTagsEdit`` (looked up per call)."""
+    check_tag_edit(add=edit.add, remove=edit.remove, replace=edit.replace)
+
+
+class SourceTagsResponse(BaseModel):
+    """A document's tags after a ``PATCH /sources/{source_id}/tags``, sorted."""
+
+    source_id: str
+    tags: list[str]
 
 
 class UploadOptions(BaseModel):
@@ -443,6 +502,7 @@ class SourceResponse(BaseModel):
     title: str | None = None
     source_type: str | None = None
     origin_url: str | None = None
+    summary: str | None = None
 
     # Lifecycle status
     status: SourceStatus
@@ -859,6 +919,7 @@ class SourceSummaryResponse(BaseModel):
     title: str | None = None
     source_type: str | None = None
     origin_url: str | None = None
+    summary: str | None = None
 
     # Site import: the site this page belongs to, and when a refresh first
     # found it no longer listed (kept until the user removes it);
@@ -1329,17 +1390,17 @@ class OrphanTaskCleanupResponse(BaseModel):
 
 
 class TagCreate(BaseModel):
-    """Request model for creating a tag."""
+    """Request model for creating a tag (``name`` checked and normalised by the tag rule)."""
 
-    name: str
+    name: TagName
     color: str | None = None
     description: str | None = None
 
 
 class TagUpdate(BaseModel):
-    """Request model for updating a tag."""
+    """Request model for updating a tag (renaming to a name another tag has is a 409)."""
 
-    name: str | None = None
+    name: TagName | None = None
     color: str | None = None
     description: str | None = None
 

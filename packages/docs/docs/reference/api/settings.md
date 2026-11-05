@@ -1086,7 +1086,7 @@ curl -X POST http://localhost/api/v1/settings/reset/queue
 
 ### Reset Source Processing
 
-Reset source processing history (imports, chunks, extraction jobs) while preserving committed knowledge.
+Delete every source and its processing history (imports, chunks, extraction jobs). This releases every source from the knowledge graph: nodes and edges that only sources attest are deleted with them, and only person-made nodes and edges survive. To keep your graph, delete individual sources instead.
 
 ```
 POST /api/v1/settings/reset/source_processing
@@ -1115,9 +1115,9 @@ curl -X POST http://localhost/api/v1/settings/reset/source_processing
 }
 ```
 
-**Deletes:** All source file records, staged document chunks, entity embeddings from source processing, chunk extraction jobs and tasks, uploaded import files directory.
+**Deletes:** Every source (committed ones included) with its chunks and citations, the nodes and edges only sources attest, staged document chunks, entity embeddings, chunk extraction jobs and tasks, uploaded import files directory.
 
-**Preserves:** Committed sources and their chunks, knowledge graph (nodes, edges), workflows, tools, triggers, conversations.
+**Preserves:** Person-made nodes and edges, workflows, tools, triggers, conversations.
 
 ---
 

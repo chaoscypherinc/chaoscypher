@@ -11,6 +11,7 @@
 
 import { DEFAULT_PUBLIC_SETTINGS } from '../../contexts/publicSettingsContextValue';
 import { logger } from '../../utils/logger';
+import { firstValidationMessage } from '../../utils/errors';
 
 // ========================================
 // Client Configuration
@@ -203,6 +204,8 @@ function maybeRedirectOnUnauthorized(status: number, requestUrl: string): void {
  * we fall through to the old fields as well.
  *
  * Precedence:
+ *   0. the first field message of a 422 validation envelope
+ *      (``details.errors[0].msg`` — the generic top message hides it)
  *   1. ``message`` (unified envelope — human-readable)
  *   2. ``detail.message`` (legacy nested ErrorDetail)
  *   3. ``detail`` when string (oldest FastAPI default)
@@ -211,6 +214,8 @@ function maybeRedirectOnUnauthorized(status: number, requestUrl: string): void {
 function extractDetail(data: unknown): string | undefined {
   if (!data || typeof data !== 'object') return undefined;
   const body = data as Record<string, unknown>;
+  const fieldMessage = firstValidationMessage(body);
+  if (fieldMessage) return fieldMessage;
   if (typeof body.message === 'string') return body.message;
   if (body.detail && typeof body.detail === 'object') {
     const nested = body.detail as Record<string, unknown>;

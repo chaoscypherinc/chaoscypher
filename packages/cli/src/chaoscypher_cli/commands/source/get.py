@@ -12,6 +12,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_caught_error, print_error
 from chaoscypher_cli.utils.display import get_quality_color, get_status_color
 
 
@@ -511,7 +512,8 @@ def get(source_id: str, database: str) -> None:
         if error_message:
             error_stage = file_record.get("error_stage")
             stage_suffix = f" [dim](stage: {error_stage})[/dim]" if error_stage else ""
-            console.print(f"\n[red]Error:[/red] {error_message}{stage_suffix}")
+            console.print()
+            print_error(f"{error_message}{stage_suffix}", console=console)
 
         # Show indexing stats if available (real columns: chunk_count +
         # total_content_length; the latter is outside get_file's projection
@@ -525,5 +527,5 @@ def get(source_id: str, database: str) -> None:
                 console.print(f"  Content: {content_length:,} chars")
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        print_caught_error(e, console=console)
         sys.exit(1)

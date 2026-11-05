@@ -29,8 +29,8 @@ const PENDING = {
   ready: false,
   message: 'Two migrations are waiting to be applied.',
   blocked_on: [
-    { revision: 'rev_abc123', tier: 'safe_auto', description: 'Add quality columns.' },
-    { revision: 'rev_def456', tier: 'manual', description: 'Backfill embeddings.' },
+    { revision: 'rev_abc123', tier: 'safe_auto', description: 'Add quality columns.', hold: [] },
+    { revision: 'rev_def456', tier: 'manual', description: 'Backfill embeddings.', hold: [] },
   ],
   last_backup: '/data/backups/pre-upgrade.db',
 };
@@ -70,6 +70,51 @@ describe('MaintenancePage', () => {
     expect(screen.getByText('Backfill embeddings.')).toBeTruthy();
     // Backup is present, so the rollback button shows.
     expect(screen.getByRole('button', { name: /roll back/i })).toBeTruthy();
+  });
+
+  it('renders each hold line', async () => {
+    const hold = ['"Work Docs" → "work-docs"', '"Q3" → "q3"'];
+    mockedApiClient.get.mockResolvedValue({
+      data: {
+        ...PENDING,
+        blocked_on: [
+          {
+            revision: 'rev_tags',
+            tier: 'needs_confirmation',
+            description: 'Tag names become lower-case.',
+            hold,
+          },
+        ],
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByText('Tag names become lower-case.')).toBeTruthy();
+    for (const line of hold) {
+      expect(screen.getByText(line)).toBeTruthy();
+    }
+  });
+
+  it('renders a row without hold lines, and a repeated line twice', async () => {
+    mockedApiClient.get.mockResolvedValue({
+      data: {
+        ...PENDING,
+        blocked_on: [
+          // an older server sends no hold field at all
+          { revision: 'rev_old', tier: 'safe_auto', description: 'Older row.' },
+          {
+            revision: 'rev_tags',
+            tier: 'needs_confirmation',
+            description: 'Tag names become lower-case.',
+            hold: ['same change', 'same change'],
+          },
+        ],
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByText('Older row.')).toBeTruthy();
+    expect(screen.getAllByText('same change')).toHaveLength(2);
   });
 
   it('shows an error with a retry when the pending check fails', async () => {

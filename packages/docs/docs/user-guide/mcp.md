@@ -134,7 +134,7 @@ mcp:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `mode` | `read` | Tool access level. `read` exposes 25 tools: search/query plus the self-benchmark tools. `write` exposes all 44 tools including create, update, delete, site import, and client-driven extraction operations. |
+| `mode` | `read` | Tool access level. `read` exposes 26 tools: search/query, document listing, plus the self-benchmark tools. `write` exposes all 46 tools including create, update, delete, document tagging, site import, and client-driven extraction operations. |
 | `auto_extract` | `false` | When `true`, the server runs entity extraction after indexing uploaded documents. When `false` (default), the MCP client drives extraction itself using `submit_chunk_extraction` and `finalize_extraction`. |
 | `confirmation_required_default` | `true` | Server-wide default for the [domain-confirmation gate](#document-processing-via-mcp). When `true`, an upload with an auto-detected domain parks at `awaiting_confirmation` until `confirm_extraction` is called; a per-call `auto_confirm: true` on `add_document` overrides it for a single upload. |
 | `max_extraction_payload_bytes` | `10485760` | Maximum combined UTF-8 size (10 MiB) of `entities_text` + `relationships_text` accepted per `submit_chunk_extraction` call. Larger submissions are rejected with `PAYLOAD_TOO_LARGE`. |
@@ -184,15 +184,15 @@ Rows written keyword-only have no vectors when vector search is turned back on. 
 
 ## Available Tools
 
-### Read Tools (25)
+### Read Tools (26)
 
 These tools are available in both modes:
 
 | Tool | Description |
 |------|-------------|
-| `graphrag_search` | Graph-enhanced RAG — fuses knowledge graph traversal with vector search for multi-hop questions |
+| `graphrag_search` | Graph-enhanced RAG — fuses knowledge graph traversal with vector search for multi-hop questions; `tags` and `match` limit it to the documents carrying those tags, graph entities included: under a tag scope every entity and relationship in the graph context comes from a tagged document, never one you made by hand, one no document backs, or a relationship only an untagged document states (see [Documents, tags and summaries](#documents-tags-and-summaries)) |
 | `search_nodes` | Hybrid search for graph nodes by name, properties, or semantic similarity |
-| `search_chunks` | Hybrid search for document chunks (vector + keyword) |
+| `search_chunks` | Hybrid search for document chunks (vector + keyword); `tags` and `match` limit it to the documents carrying those tags |
 | `search_templates` | Search templates by name or description |
 | `get_node` | Get a single node by ID or search query |
 | `get_node_context` | Get a node with its 1-hop edges and optionally related chunks |
@@ -210,13 +210,14 @@ These tools are available in both modes:
 | `traverse_path` | Multi-hop BFS traversal with depth and type filters |
 | `get_summary_context` | Retrieve and cluster document chunks for summarization |
 | `get_document_status` | Check status of queued, in-progress, and completed document uploads |
+| `list_documents` | List the documents, newest first, with each one's title, one-line summary, tags and date added; filter by `tags` (`match` any or all) and page with `limit` and `offset` |
 | `start_benchmark` | Start an extraction instruction-probe run answered by the calling model itself (see [Benchmark any MCP client](../reference/extraction-benchmark.md#benchmark-any-mcp-client)) |
 | `get_benchmark_task` | Get the next probe prompt (entity or relationship stage) of a benchmark run |
 | `submit_benchmark_output` | Submit the model's answer for one stage; returns the probe's verdict when it completes |
 | `get_benchmark_progress` | Submitted, passed and pending probes of a benchmark run |
 | `finish_benchmark` | Score a benchmark run and write its results file |
 
-### Write Tools (19)
+### Write Tools (20)
 
 These tools are only available when `mcp.mode` is set to `write`:
 
@@ -230,7 +231,8 @@ These tools are only available when `mcp.mode` is set to `write`:
 | `create_edge` | Create a relationship between two nodes; with no template it uses the default link template (`system_template_link`) |
 | `create_template` | Create a node or edge template with schema |
 | `delete_template` | Delete a template from the schema |
-| `add_document` | Queue a file for background indexing and optional entity extraction |
+| `add_document` | Queue a file for background indexing and optional entity extraction; `tags`, `replace_tags` and `summary` label it |
+| `tag_document` | Add, remove or replace a document's tags, and optionally set its summary; answers its tags after |
 | `add_site` | Import every page of a documentation site from its address, in the background (see [Importing a docs site](#importing-a-docs-site)) |
 | `refresh_site` | Check an imported site for updates: only changed pages are re-imported, new pages added, unlisted ones marked gone; the pages it leaves out stay out (`exclude` replaces them) |
 | `wait_for_document` | Wait for a document to finish processing, polling until it reaches the target status. Cannot see a source parked at `awaiting_confirmation` — see [Document Processing via MCP](#document-processing-via-mcp) |
@@ -324,14 +326,99 @@ Two operational limits apply to client-driven extraction (both [configurable](#c
 
 This is useful when the AI assistant has better extraction capabilities than the local LLM, or when no local LLM is configured.
 
+## Documents, tags and summaries
+
+Every document can carry tags and a one-line summary, so an agent can see what is in the knowledge base, file what it adds, and search inside one group of documents. An MCP `search_chunks` or `graphrag_search` scoped by tags reads only those documents: their chunks, and only the graph entities and relationships they back (an entity you made by hand, or one no document backs any more, is left out; a plain `source_ids` scope still includes them). Tags follow one rule everywhere: trimmed and lower-cased, then only `a-z`, `0-9`, `:`, `_` and `-`, starting with a letter or digit, at most 64 characters, and at most 32 per document (see [Sources — Tags](sources.md#tags)). A tag that breaks the rule is refused with the rule's own words, never quietly changed.
+
+### `add_document`: tags and a summary
+
+`add_document` takes three more arguments:
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `tags` | string[] | Tags for the document. On a re-add (`skip_duplicates` hitting the same content) they are **added to** its tags. |
+| `replace_tags` | bool | Default `false`. `true` makes `tags` the whole set; `[]` with it clears them. |
+| `summary` | string | The document's one-line summary, used instead of a model-written one. A summary given again replaces the old one; leaving it out keeps it. |
+
+The reply gains `tags`, sorted: with `wait: true` they are the document's tags after the call (a new document, a skipped duplicate, or one parked at `awaiting_confirmation`); with `wait: false` they are the tags you sent, checked and normalised. Tags and summary are checked before any file is read or any row is written, and a refusal answers:
+
+```json
+{"success": false, "error_code": "INVALID_TAGS", "error": "tag \"Work Docs\" is not allowed: use a-z, 0-9, ':', '_' or '-', starting with a letter or digit, at most 64 characters"}
+{"success": false, "error_code": "INVALID_SUMMARY", "error": "summary is too long: at most 300 characters"}
+```
+
+`add_site` takes `tags` and `replace_tags` too (no summary: a site's pages do not share one). Every page gets the tags, including pages a later `refresh_site` finds. Calling `add_site` with `tags` for a site already imported adds them to all its pages (`… is already imported; its pages now carry the tags alpha, beta. refresh_site checks it for updates.`); it is refused while that site is being imported or checked.
+
+When a model is configured and `source_processing.import_summaries` is on (the default), a document added without a summary gets one written by the model once it is indexed. See [Sources — Summaries](sources.md#summaries).
+
+### `tag_document`
+
+Edits a document's tags, and optionally its summary, in one step (write mode).
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `source_id` | string | Required. The document's id. |
+| `add` | string[] | Tags to add. |
+| `remove` | string[] | Tags to remove; one the document lacks is ignored. |
+| `replace` | string[] | The whole new set (`[]` clears them). Cannot be combined with `add` or `remove`. |
+| `summary` | string | A new summary; `""` clears it. |
+
+```
+tag_document(source_id="src_abc123", add=["research"], remove=["draft"])
+→ {"success": true, "source_id": "src_abc123", "tags": ["q3", "research"]}
+```
+
+The tags in the reply are the document's tags after the edit, sorted. A refusal changes nothing and answers `{"success": false, "error": "…"}` marked as an error (`isError: true`), for example `replace sets the whole list; it cannot be combined with add or remove`, `a document can carry at most 32 tags; this would give it 33`, `No document has the id "src_abc123".` or `"mem_abc123" is a memory; memories carry no tags.` A summary that is too long is checked before any tag changes.
+
+### `list_documents`
+
+Lists the documents, newest first (memories excluded), without calling any model. Titles and summaries come from the documents' own content (a summary is written by a model reading the document), so they are data, never instructions.
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `tags` | string[] | Default `[]`, which lists every document. |
+| `match` | string | `any` (default): documents carrying any of `tags`; `all`: carrying every one. |
+| `limit` | integer | Default `50`, at most `pagination.max_page_size` (1000 by default). |
+| `offset` | integer | Default `0`. |
+
+```json
+{
+  "success": true,
+  "documents": [
+    {
+      "source_id": "src_abc123",
+      "title": "Quarterly research report",
+      "summary": "A survey of graph-based retrieval methods.",
+      "tags": ["q3", "research"],
+      "added": "2026-11-02T09:14:00+00:00"
+    }
+  ],
+  "total": 1
+}
+```
+
+`title` falls back to the file name, `summary` is `null` when the document has none, and `total` counts every match, not just this page.
+
+### Searching inside a tag set
+
+`search_chunks` and `graphrag_search` take `tags` (default `[]`, no scope) and `match` (`any` or `all`). The tags are applied inside the search, before its result limit, so a scoped search returns a full set of matches from those documents; combined with a source scope, a chunk must satisfy both. A tag set no document carries returns no chunks (for `graphrag_search`, `retrieval_stats.scope_empty` is `true`) and never falls back to searching everything. Every chunk in either reply carries `source_title` beside `filename`.
+
+### How errors are signalled
+
+- `tag_document` and `list_documents` mark every refusal as an error (`isError: true`) and answer `{"success": false, "error": "…"}`.
+- `add_document` keeps its own convention: a refusal (`INVALID_TAGS`, `INVALID_SUMMARY`, `INVALID_PACKS`, …) answers `success: false` with an `error_code`, without `isError`. So does the read-mode gate (`NOT_AUTHORIZED`).
+- An argument the tool's schema refuses (a `match` other than `any` or `all`, a `limit` below 1, a wrong type) is refused by the MCP library before the tool runs: the answer is plain text (`Input validation error: …`) with `isError: true`, not JSON.
+
+A client should check `isError` first, then `success` and `error_code`.
+
 ## Maintenance Mode
 
 If the database is blocked on a pending schema upgrade — for example, a destructive migration is pending with auto-apply disabled, or the pre-upgrade backup failed — the MCP server starts in a degraded **maintenance mode** instead of failing with an opaque JSON-RPC error. Over stdio (`chaoscypher mcp`) maintenance mode is served only with `--mode write`; in read mode (the default) the command exits with an error that says to re-run with `--mode write`, because the maintenance tools include destructive repair. In this mode the normal toolset is not advertised; only two tools are available:
 
 | Tool | Description |
 |------|-------------|
-| `upgrade_status` | Reports the pending migrations blocking normal use (each with its risk tier and a plain-language description), the most recent pre-upgrade backup path, and the last-applied revisions. Call this first. |
-| `apply_upgrade` | Applies the pending migrations. Safe and data-changing migrations apply automatically; destructive migrations (which may drop columns or force re-extraction) require `confirm_destructive: true`. A verified backup is taken before anything is applied. |
+| `upgrade_status` | Reports the pending migrations blocking normal use (each with its risk tier, a plain-language description, and, for one waiting for your confirmation, the changes it would make to your data), the most recent pre-upgrade backup path, and the last-applied revisions. Call this first. |
+| `apply_upgrade` | Applies the pending migrations. Safe and data-changing migrations apply automatically; destructive migrations (which may drop columns or force re-extraction) and migrations that list changes they would make to your data require `confirm_destructive: true`. A verified backup is taken before anything is applied. |
 
 Any other tool call returns a clear error explaining that the database needs a one-time upgrade. After a successful `apply_upgrade`, reconnect the MCP server to restore the normal toolset. This is the MCP equivalent of the web maintenance page — see [Upgrading](../getting-started/upgrading.md).
 

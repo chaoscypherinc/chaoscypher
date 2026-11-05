@@ -25,13 +25,21 @@ const mockedApiClient = apiClient as unknown as ReturnType<
   typeof installApiClientMock
 >['apiClient'];
 
-const FILTERS = { stage: 'all' as const, status: '', source_type: '', search: '' };
+const FILTERS = {
+  stage: 'all' as const,
+  status: '',
+  source_type: '',
+  search: '',
+  tags: [] as string[],
+  match: 'any' as const,
+};
 
 const PAGINATED_SOURCES = {
   data: [
     {
       id: 's1',
       title: 'First Source',
+      summary: 'A short account of the first source.',
       status: 'committed',
       source_type: 'pdf',
       created_at: '2026-05-20T00:00:00Z',
@@ -194,6 +202,49 @@ describe('useSourcesData — imported sites', () => {
     await waitFor(() => expect(result.current.sources.length).toBe(2));
     expect(sourceListParams().in_site).toBeUndefined();
     expect(result.current.sites).toEqual([]);
+  });
+});
+
+describe('useSourcesData — tag filter', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedApiClient.get.mockImplementation(routeGet);
+  });
+
+  function sourceListParams(): Record<string, unknown> {
+    const call = mockedApiClient.get.mock.calls.find((c) => c[0] === '/sources');
+    return (call?.[1] as { params: Record<string, unknown> }).params;
+  }
+
+  it('passes tags and match to the API', async () => {
+    const { result } = renderHook(
+      () => useSourcesData({ ...FILTERS, tags: ['alpha', 'beta'], match: 'all' }),
+      { wrapper: makeWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.sources.length).toBe(2));
+    expect(sourceListParams().tags).toEqual(['alpha', 'beta']);
+    expect(sourceListParams().match).toBe('all');
+    // A tag filter is a filter: the site rows are set aside, as for search.
+    expect(sourceListParams().in_site).toBeUndefined();
+    expect(result.current.sites).toEqual([]);
+  });
+
+  it("carries each source's summary, and null when it has none", async () => {
+    const { result } = renderHook(() => useSourcesData(FILTERS), { wrapper: makeWrapper() });
+
+    await waitFor(() => expect(result.current.sources.length).toBe(2));
+    const byId = new Map(result.current.sources.map((s) => [s.id, s]));
+    expect(byId.get('s1')?.summary).toBe('A short account of the first source.');
+    expect(byId.get('s2')?.summary).toBeNull();
+  });
+
+  it('sends no tags or match while no tag is picked', async () => {
+    const { result } = renderHook(() => useSourcesData(FILTERS), { wrapper: makeWrapper() });
+
+    await waitFor(() => expect(result.current.sources.length).toBe(2));
+    expect(sourceListParams().tags).toBeUndefined();
+    expect(sourceListParams().match).toBeUndefined();
   });
 });
 

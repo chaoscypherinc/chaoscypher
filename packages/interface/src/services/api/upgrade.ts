@@ -17,6 +17,11 @@ export interface PendingMigration {
   revision: string;
   tier: MigrationTier;
   description: string;
+  /**
+   * The changes this migration would make to your data; non-empty means it waits
+   * for confirmation. Optional: the server's default, and absent from an older server.
+   */
+  hold?: string[];
 }
 
 export interface PendingUpgradesResponse {

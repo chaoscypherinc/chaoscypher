@@ -1198,9 +1198,11 @@ class ExtractionOrchestrator:
         # — dispatched an empty import_commit and zero-graph-committed it.
         # Failures after the commit phase stay at 'committing': the entity
         # rows are written and recovery can rebuild the commit from them.
+        # BaseException, not Exception: an MCP client timeout or disconnect
+        # cancels the handler (CancelledError), and that must roll back too.
         try:
             return await self._finalize_claimed(source_id, model, db)
-        except Exception:
+        except BaseException:
             if source_id not in self._commit_phase:
                 self.engine.storage_adapter.transition_source_status(
                     source_id,

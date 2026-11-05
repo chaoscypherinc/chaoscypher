@@ -23,6 +23,7 @@ def edges_by_node_via(list_edges: Callable[..., Any]) -> Callable[..., dict[str,
         outgoing: bool,
         limit_per_node: int,
         include_disabled_sources: bool = False,
+        with_members: bool = False,
     ) -> dict[str, list[Any]]:
         key = "source_node_id" if outgoing else "target_node_id"
         return {
@@ -43,6 +44,7 @@ class EdgesByNode:
         outgoing: bool,
         limit_per_node: int,
         include_disabled_sources: bool = False,
+        with_members: bool = False,
     ) -> dict[str, list[Any]]:
         """Each node's ``list_edges(source_node_id=...)`` (``target_node_id`` when incoming)."""
         listing: Callable[..., Any] = getattr(self, "list_edges")  # noqa: B009 - the fake's own

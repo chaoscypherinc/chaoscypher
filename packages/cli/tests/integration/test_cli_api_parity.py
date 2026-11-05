@@ -158,6 +158,10 @@ class _ParityStorage:
     ) -> dict[str, Any] | None:
         return None
 
+    def get_source_tags(self, _file_id: str) -> list[dict[str, Any]]:
+        # Both frontends read the new document's tags back for their result.
+        return []
+
     def update_file(self, file_id: str, _database_name: str, updates: dict[str, Any]) -> None:
         if file_id in self._files:
             self._files[file_id].update(updates)

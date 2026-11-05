@@ -331,6 +331,26 @@ describe('InlineTagEditor', () => {
         );
       });
     });
+    it('shows the refusal when the source already carries the most tags', async () => {
+      const user = userEvent.setup();
+      setupMocks([], [TAG_B]);
+      const cap = 'a document can carry at most 32 tags; this would give it 33';
+      mockedApiClient.post.mockRejectedValue(
+        Object.assign(new Error(cap), {
+          isApiError: true,
+          status: 400,
+          response: { status: 400, data: { error: 'VALIDATION_ERROR', message: cap } },
+        }),
+      );
+
+      renderEditor();
+      await waitFor(() => expect(screen.getByText('Add tag')).toBeInTheDocument());
+      await user.click(screen.getByText('Add tag'));
+      await user.type(screen.getByPlaceholderText(/type tag name/i), 'Be');
+      await user.click(await screen.findByText('Beta'));
+
+      expect(await screen.findByText(cap)).toBeInTheDocument();
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -424,6 +444,39 @@ describe('InlineTagEditor', () => {
         );
         expect(mockedApiClient.post).toHaveBeenCalledWith('/sources/s1/tags/tag-new');
       });
+    });
+    it('shows the tag rule message when a new tag is refused', async () => {
+      const user = userEvent.setup();
+      setupMocks([], []);
+      const rule =
+        'tag "Work Docs" is not allowed: use a-z, 0-9, \':\', \'_\' or \'-\', starting with a letter or digit, at most 64 characters';
+      mockedApiClient.post.mockImplementation((url: string) => {
+        if (url === '/sources/tags') {
+          return Promise.reject(
+            Object.assign(new Error('Request body failed validation'), {
+              isApiError: true,
+              status: 422,
+              response: {
+                status: 422,
+                data: {
+                  error: 'VALIDATION_FAILED',
+                  message: 'Request body failed validation',
+                  details: { errors: [{ type: 'tag_rule', loc: ['body', 'name'], msg: rule }] },
+                },
+              },
+            }),
+          );
+        }
+        return Promise.resolve({ data: {} });
+      });
+
+      renderEditor();
+      await waitFor(() => expect(screen.getByText('Add tag')).toBeInTheDocument());
+      await user.click(screen.getByText('Add tag'));
+      await user.type(screen.getByPlaceholderText(/type tag name/i), 'Work Docs');
+      await user.click(await screen.findByText(/Create "Work Docs"/i));
+
+      expect(await screen.findByText(rule)).toBeInTheDocument();
     });
   });
 

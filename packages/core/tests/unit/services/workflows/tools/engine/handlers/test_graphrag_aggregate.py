@@ -224,6 +224,7 @@ def _near_and_far(
         make_chunk("c6", "The count's children were many."),
     )
     h.indexing.get_source_filenames_by_ids.return_value = {}  # type: ignore[union-attr]
+    h.indexing.get_source_titles_by_ids.return_value = {}  # type: ignore[union-attr]
     h.source_storage.get_relationship_citations_batch.return_value = citations  # type: ignore[union-attr]
     return h
 

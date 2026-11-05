@@ -379,7 +379,9 @@ No pending migrations. Database is up to date.
 ```
 
 Otherwise it prints the upgrade state and a table of pending migrations
-(revision, tier, description). Pass `--json` for a machine-readable dump.
+(revision, tier, description). A migration that waits for your confirmation
+because it would change your data lists each change under its description
+(`hold` in the JSON). Pass `--json` for a machine-readable dump.
 
 ### Apply
 
@@ -390,8 +392,9 @@ chaoscypher db migrate apply [--database <name>] [--yes/-y]
 ```
 
 `safe_auto` migrations are applied immediately. If any pending migration is a
-higher tier (e.g. `needs_confirmation`), you are prompted to confirm first —
-pass `--yes`/`-y` to skip the prompt.
+higher tier (e.g. `needs_confirmation`), or lists changes it would make to your
+data, you are prompted to confirm first, with those changes listed — pass
+`--yes`/`-y` to skip the prompt.
 
 ### Rollback
 

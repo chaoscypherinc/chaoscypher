@@ -16,7 +16,6 @@ the extraction instruction probes or grounded chat (``start_benchmark`` -> ``get
 since it never touches the graph).
 """
 
-import asyncio
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
@@ -27,8 +26,10 @@ import structlog
 from mcp.server import Server
 from mcp.types import CallToolResult, TextContent, Tool
 
+from chaoscypher_core.exceptions import ValidationError
 from chaoscypher_core.mcp.benchmark import BenchmarkBridge
 from chaoscypher_core.mcp.bridge import MCPToolBridge
+from chaoscypher_core.mcp.documents import DOCUMENT_TOOLS, handle_document_tool
 from chaoscypher_core.mcp.extraction import ExtractionOrchestrator
 from chaoscypher_core.mcp.indexing import index_source_text
 from chaoscypher_core.mcp.memory_link import MemoryLinker
@@ -43,8 +44,15 @@ from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
     proposal_packs,
     requested_packs,
 )
+from chaoscypher_core.services.sources.labels import (
+    apply_source_labels,
+    clean_summary,
+    validate_source_labels,
+)
+from chaoscypher_core.services.sources.tags import TagRuleError, validate_tags
 from chaoscypher_core.services.sources.web import fetch_page, page_names
 from chaoscypher_core.services.workflows.tools.engine.executor import ToolExecutorService
+from chaoscypher_core.settings import SourceProcessingSettings
 from chaoscypher_core.utils.retry import is_sqlite_lock_error
 from chaoscypher_core.utils.tool_failure import discard_failed_work, log_tool_failure
 
@@ -61,6 +69,9 @@ MEMORY_TOOLS = frozenset({"remember", "recall", "forget", "list_memories", "dige
 
 TEXT_LINE_TOOLS = MEMORY_TOOLS | SITE_TOOLS
 """The tools that answer plain text lines, a failure included; every other tool answers JSON."""
+
+MODULE_TOOLS = MEMORY_TOOLS | SITE_TOOLS | DOCUMENT_TOOLS
+"""The tools with a handler module of their own (:func:`_handle_module_tool`)."""
 
 
 def _register_relink_on_start(
@@ -228,8 +239,11 @@ def create_mcp_server(
                 pipeline=pipeline,
                 sandbox_dir=settings.paths.mcp_dir,
                 engine=engine,
+                tags=args.pop("tags", None),
+                replace_tags=bool(args.pop("replace_tags", False)),
+                summary=args.pop("summary", None),
             )
-        if name in MEMORY_TOOLS or name in SITE_TOOLS:
+        if name in MODULE_TOOLS:
             return await _handle_module_tool(
                 name, engine, args, settings, tool_executor, memory_linker
             )
@@ -338,7 +352,15 @@ async def _handle_module_tool(
     tool_executor: ToolExecutorService,
     linker: MemoryLinker,
 ) -> CallToolResult:
-    """The tools with a handler module of their own: the sites (``mcp/sites.py``), the memory."""
+    """The tools with a handler module of their own: documents, sites, the memory.
+
+    The document tools (``mcp/documents.py``) answer JSON; the sites
+    (``mcp/sites.py``) and the memory answer plain lines.
+    """
+    if name in DOCUMENT_TOOLS:
+        document_answer, is_error = await handle_document_tool(engine, name, args)
+        text = json.dumps(document_answer, default=str)
+        return CallToolResult(content=[TextContent(type="text", text=text)], isError=is_error)
     if name in SITE_TOOLS:
         answer, is_error = await handle_site_tool(engine, name, args)
         return CallToolResult(content=[TextContent(type="text", text=answer)], isError=is_error)
@@ -485,6 +507,33 @@ def _resolve_local_ingest_path(
     return str(resolved), None
 
 
+def _checked_labels(
+    tags: object, summary: object, engine: Any
+) -> tuple[list[str] | None, list[TextContent] | None]:
+    """``add_document``'s tags by the rule and its summary checked, before any file is read.
+
+    Returns:
+        ``(tags, refusal)``: the normalised tags (``None`` when absent) and no
+        refusal, or a refusal (``INVALID_TAGS`` / ``INVALID_SUMMARY`` with the
+        rule's words).
+    """
+    try:
+        checked = validate_tags(tags) if tags is not None else None  # type: ignore[arg-type]
+    except TagRuleError as exc:
+        refusal = {"success": False, "error_code": "INVALID_TAGS", "error": exc.message}
+        return None, [TextContent(type="text", text=json.dumps(refusal))]
+    if summary is not None:
+        source_processing = (
+            engine.settings.source_processing if engine is not None else SourceProcessingSettings()
+        )
+        try:
+            clean_summary(summary, max_chars=source_processing.summary_max_chars)  # type: ignore[arg-type]
+        except ValidationError as exc:
+            refusal = {"success": False, "error_code": "INVALID_SUMMARY", "error": exc.message}
+            return None, [TextContent(type="text", text=json.dumps(refusal))]
+    return checked, None
+
+
 async def _handle_add_document(
     processor: DocumentProcessor | None,
     args: dict[str, Any],
@@ -501,6 +550,9 @@ async def _handle_add_document(
     sandbox_dir: Path | None = None,
     engine: Any = None,
     packs: list[str] | None = None,
+    tags: object = None,
+    replace_tags: bool = False,
+    summary: str | None = None,
 ) -> list[TextContent]:
     """Handle add_document tool call.
 
@@ -538,6 +590,14 @@ async def _handle_add_document(
         packs: The packs to force (``[]`` the floor alone); None with no
             ``forced_domain`` detects. Carried down the one-name pipeline as
             the ordered choice (``packs_choice``), which the row write splits.
+        tags: The document's tags as given, refused (``INVALID_TAGS``) before
+            any file is read if the rule refuses them (``None`` leaves them
+            alone); added to a re-added document's, or with ``replace_tags``
+            its whole set. The answer's ``tags`` are the
+            document's after, sorted (the request itself when ``wait`` is false).
+        replace_tags: Make ``tags`` the document's whole set.
+        summary: The document's summary (``""`` clears it; ``None`` keeps it),
+            refused (``INVALID_SUMMARY``) before any file is read if it is bad.
 
     """
     try:
@@ -545,6 +605,9 @@ async def _handle_add_document(
     except ValueError as exc:
         invalid = {"success": False, "error_code": "INVALID_PACKS", "error": str(exc)}
         return [TextContent(type="text", text=json.dumps(invalid, default=str))]
+    checked_tags, refused = _checked_labels(tags, summary, engine)
+    if refused is not None:
+        return refused
     if processor is None or pipeline is None:
         result: dict[str, Any] = {
             "success": False,
@@ -597,6 +660,9 @@ async def _handle_add_document(
                         skip_duplicates=skip_duplicates,
                         is_url=is_url,
                         auto_confirm=auto_confirm,
+                        tags=checked_tags,
+                        replace_tags=replace_tags,
+                        summary=summary,
                     )
                     result.setdefault("success", True)
                     result.setdefault("source_id", file_id)
@@ -628,6 +694,7 @@ async def _handle_add_document(
                                 "detected_domain": detected_domain,
                                 "confidence": proposal.get("confidence"),
                                 "low_confidence": proposal.get("low_confidence", False),
+                                "tags": result.get("tags", []),
                                 "next_steps": (
                                     f"Detection proposed the packs {proposed} "
                                     f"(the floor alone when empty). Call "
@@ -676,7 +743,11 @@ async def _handle_add_document(
                     content=content,
                     enable_vision=enable_vision,
                     auto_confirm=auto_confirm,
+                    tags=checked_tags,
+                    replace_tags=replace_tags,
+                    summary=summary,
                 )
+                result["tags"] = sorted(checked_tags or [])
 
         # Guide client to drive extraction when server didn't extract
         if result.get("status") == SourceStatus.INDEXED and result.get("success", True):
@@ -1019,6 +1090,9 @@ def _create_pipeline_callback(engine: Engine, *, extract_entities: bool = True) 
         skip_duplicates: bool = False,
         is_url: bool = False,
         auto_confirm: bool = False,
+        tags: Sequence[str] | None = None,
+        replace_tags: bool = False,
+        summary: str | None = None,
     ) -> dict[str, Any]:
         """Process a single document through the configured pipeline.
 
@@ -1027,7 +1101,30 @@ def _create_pipeline_callback(engine: Engine, *, extract_entities: bool = True) 
         here (the URL fetch's extraction and the duplicate-hash read use it)
         as long as no module is imported for the first time inside the thread:
         that import-lock deadlock was the April 2026 hang (``mcp/sites.py``).
+
+        The caller's ``tags`` and ``summary`` are checked before anything is
+        written, and applied to the new row, or with ``skip_duplicates`` to
+        the document already holding the file's content. A local file's
+        duplicate check runs here, before either branch, so both honour
+        ``skip_duplicates``; a URL's runs where its text is fetched.
         """
+        validate_source_labels(
+            tags=tags,
+            summary=summary,
+            max_summary_chars=engine.settings.source_processing.summary_max_chars,
+        )
+        content_hash: str | None = None
+        if not is_url:
+            content_hash = await _file_content_hash(engine, file_path)
+            if skip_duplicates:
+                existing = engine.storage_adapter.find_by_content_hash(
+                    engine.settings.current_database, content_hash
+                )
+                if existing:
+                    return _duplicate_result(
+                        engine, existing, tags=tags, replace_tags=replace_tags, summary=summary
+                    )
+
         if extract_entities:
             # Full pipeline: load, chunk, index, extract, commit. Forward
             # ``auto_confirm`` / ``forced_domain`` so the engine's confirmation
@@ -1045,6 +1142,10 @@ def _create_pipeline_callback(engine: Engine, *, extract_entities: bool = True) 
                 analysis_depth="quick" if extraction_depth == "quick" else "full",
                 auto_confirm=auto_confirm,
                 forced_domain=forced_domain,
+                tags=tags,
+                replace_tags=replace_tags,
+                summary=summary,
+                source_fields={"content_hash": content_hash},
             )
             return result.model_dump()
 
@@ -1061,9 +1162,49 @@ def _create_pipeline_callback(engine: Engine, *, extract_entities: bool = True) 
             skip_duplicates=skip_duplicates,
             is_url=is_url,
             auto_confirm=auto_confirm,
+            tags=tags,
+            replace_tags=replace_tags,
+            summary=summary,
+            content_hash=content_hash,
         )
 
     return pipeline
+
+
+async def _file_content_hash(engine: Engine, file_path: str) -> str:
+    """SHA-256 of a local file inside the MCP sandbox (streamed, off the event loop)."""
+    from chaoscypher_core.utils.file_hash import hash_file_async
+    from chaoscypher_core.utils.safe_paths import resolve_within
+
+    return await hash_file_async(resolve_within(engine.settings.paths.mcp_dir, file_path))
+
+
+def _duplicate_result(
+    engine: Engine,
+    existing: dict[str, Any],
+    *,
+    tags: Sequence[str] | None,
+    replace_tags: bool,
+    summary: str | None,
+) -> dict[str, Any]:
+    """The answer to a ``skip_duplicates`` hit: the existing document, given the caller's labels."""
+    return {
+        "source_id": existing["id"],
+        "status": existing.get("status", SourceStatus.COMMITTED),
+        "skipped_duplicate": True,
+        "nodes": [],
+        "edges": [],
+        "templates": [],
+        "tags": apply_source_labels(
+            engine.storage_adapter,
+            engine.settings.current_database,
+            existing["id"],
+            tags=tags,
+            replace_tags=replace_tags,
+            summary=summary,
+            max_summary_chars=engine.settings.source_processing.summary_max_chars,
+        ),
+    }
 
 
 async def _run_index_only_pipeline(
@@ -1077,6 +1218,10 @@ async def _run_index_only_pipeline(
     skip_duplicates: bool,
     is_url: bool,
     auto_confirm: bool,
+    tags: Sequence[str] | None = None,
+    replace_tags: bool = False,
+    summary: str | None = None,
+    content_hash: str | None = None,
 ) -> dict[str, Any]:
     """Create-source → load → chunk → index a document WITHOUT extracting.
 
@@ -1085,15 +1230,21 @@ async def _run_index_only_pipeline(
     source row so the later client-driven ``get_extraction_tasks`` gate sees
     the upload-time ``auto_confirm`` choice; this path itself never parks.
 
-    File metadata and DB operations are synchronous (millisecond-level); the
-    content read for the duplicate hash is offloaded with ``asyncio.to_thread``
-    because a file can be hundreds of MB, and embedding generation is async.
+    A local file's duplicate check is the pipeline closure's (it passes the
+    file's ``content_hash``); a URL's is here, on the fetched text. The
+    caller's ``tags`` and ``summary`` go on the new row, or on the existing
+    document of a ``skip_duplicates`` hit.
+
+    File metadata and DB operations are synchronous (millisecond-level);
+    embedding generation is async.
     """
     import hashlib
 
     from chaoscypher_core.utils import generate_id
 
     db_name = engine.settings.current_database
+    max_summary_chars = engine.settings.source_processing.summary_max_chars
+    validate_source_labels(tags=tags, summary=summary, max_summary_chars=max_summary_chars)
 
     # URL import: fetch content via web scraper.
     title = ""
@@ -1122,28 +1273,14 @@ async def _run_index_only_pipeline(
         source_type = "file"
         text = ""  # Loaded below
 
-    # Skip duplicates via content hash
-    content_hash: str | None
-    if skip_duplicates:
-        if is_url:
-            content_for_hash = text.encode("utf-8")
-        else:
-            # Offload the blocking read — files can be hundreds of MB; a sync
-            # read would block the MCP event loop for every concurrent call.
-            content_for_hash = await asyncio.to_thread(filepath.read_bytes)
-        content_hash = hashlib.sha256(content_for_hash).hexdigest()
+    # A URL's duplicate check, on the fetched text (a file's ran in the closure).
+    if is_url and skip_duplicates:
+        content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         existing = engine.storage_adapter.find_by_content_hash(db_name, content_hash)
         if existing:
-            return {
-                "source_id": existing["id"],
-                "status": existing.get("status", SourceStatus.COMMITTED),
-                "skipped_duplicate": True,
-                "nodes": [],
-                "edges": [],
-                "templates": [],
-            }
-    else:
-        content_hash = None
+            return _duplicate_result(
+                engine, existing, tags=tags, replace_tags=replace_tags, summary=summary
+            )
 
     # Create source record BEFORE chunking (FK constraint on document_chunks)
     source_data: dict[str, Any] = {
@@ -1173,10 +1310,20 @@ async def _run_index_only_pipeline(
 
     # Use lifecycle methods (same as internal pipeline). From here on a
     # failure must mark the row failed — without ``fail_indexing`` a loader
-    # or embedding error left the source stuck at 'indexing' forever.
+    # or embedding error left the source stuck at 'indexing' forever, and a
+    # labels failure (a lost tag-create race) left it pending.
     engine.storage_adapter.start_indexing(file_id)
     try:
-        return await index_source_text(
+        tags_after = apply_source_labels(
+            engine.storage_adapter,
+            db_name,
+            source_data["id"],
+            tags=tags,
+            replace_tags=replace_tags,
+            summary=summary,
+            max_summary_chars=max_summary_chars,
+        )
+        indexed = await index_source_text(
             engine,
             file_id=file_id,
             file_path=file_path,
@@ -1188,6 +1335,7 @@ async def _run_index_only_pipeline(
     except Exception as exc:
         engine.storage_adapter.fail_indexing(file_id, f"{type(exc).__name__}: {exc}")
         raise
+    return {**indexed, "tags": tags_after}
 
 
 def _extract_effective_mode(server: Server, default: str) -> str:

@@ -170,6 +170,20 @@ class SourceDict(TypedDict, total=False):
 # ============================================================================
 
 
+class DocumentListing(TypedDict):
+    """One document in ``list_documents``: what an agent needs to pick it, no more.
+
+    ``title`` falls back to the filename; ``added`` is the source's
+    ``created_at`` as ISO-8601 UTC; ``tags`` are sorted.
+    """
+
+    source_id: str
+    title: str
+    summary: str | None
+    tags: list[str]
+    added: str
+
+
 class StageProgressDict(TypedDict, total=False):
     """Dict shape returned by StageProgressStorageProtocol._fetch_stage_progress().
 

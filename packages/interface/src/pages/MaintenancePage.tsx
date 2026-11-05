@@ -6,7 +6,8 @@
  *
  * The top-level App effect redirects here when /api/v1/upgrade/pending
  * reports ready=false. This page lists the pending migrations with a
- * plain-language description and offers Apply + Rollback buttons so
+ * plain-language description (and, under it, each change a migration that
+ * waits for confirmation would make to the data) and offers Apply + Rollback buttons so
  * self-hosted users never need a terminal to finish an upgrade.
  */
 
@@ -210,6 +211,20 @@ export function MaintenancePage() {
                   <Typography variant="body1" sx={{ mt: 0.5 }}>
                     {m.description}
                   </Typography>
+                  {m.hold?.length ? (
+                    <Box component="ul" sx={{ mt: 1, mb: 0, pl: 3 }}>
+                      {m.hold.map((line, i) => (
+                        <Typography
+                          key={`${i}-${line}`}
+                          component="li"
+                          variant="body2"
+                          sx={{ fontFamily: 'monospace' }}
+                        >
+                          {line}
+                        </Typography>
+                      ))}
+                    </Box>
+                  ) : null}
                 </CardContent>
               </Card>
             ))}

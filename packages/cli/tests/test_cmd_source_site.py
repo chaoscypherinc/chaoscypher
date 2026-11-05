@@ -163,6 +163,18 @@ def test_add_site_takes_one_address(ctx: CLIContext) -> None:
     assert "--site takes one site address" in result.output
 
 
+@pytest.mark.parametrize("flag", ["--json", "--verbose", "--resume"])
+def test_add_site_refuses_an_option_its_path_would_drop(
+    ctx: CLIContext, fake_site: FakeSite, flag: str
+) -> None:
+    # accepted and dropped until 2026-11-01: a script asking for --json parsed Rich text
+    result = _invoke(ctx, ["add", ROOT, "--site", "--yes", flag, *_OFFLINE])
+
+    assert result.exit_code == 2, result.output
+    assert f"{flag} cannot be used with --site" in result.output
+    assert fake_site.requested == []
+
+
 # --------------------------------------------------------------------------- site commands
 
 

@@ -515,6 +515,17 @@ async def _run_embedding(
                 source_row=source_row,
             )
 
+        # The document's one-line summary, last: after the indexing has
+        # committed (CC051) and the analysis is queued. This handler runs on
+        # the LLM queue, so the one call keeps its one-at-a-time slot. It never
+        # raises: a summary problem cannot fail an indexed source or retry the task.
+        await _write_import_summary(
+            adapter=adapter,
+            database_name=database_name,
+            source_id=source_id,
+            indexing_service=indexing_service,
+        )
+
         return {
             "success": True,
             "source_id": source_id,
@@ -545,6 +556,31 @@ async def _run_embedding(
         raise
 
     # No finally/disconnect - singleton adapter is long-lived
+
+
+async def _write_import_summary(
+    *, adapter: Any, database_name: str, source_id: str, indexing_service: Any
+) -> None:
+    """Write the indexed document's summary (``write_import_summary``). Never raises.
+
+    Building the call and making it are both guarded: any failure is the
+    ``import_summary_failed`` warning, and the source stays indexed.
+    """
+    from chaoscypher_core.adapters.llm.summary import summary_chat
+    from chaoscypher_core.services.sources import summaries
+
+    try:
+        settings = indexing_service.settings
+        await summaries.write_import_summary(
+            adapter,
+            database_name,
+            source_id,
+            chat=summary_chat(settings),
+            settings=settings,
+            text=None,
+        )
+    except Exception as exc:
+        logger.warning("import_summary_failed", source_id=source_id, error_type=type(exc).__name__)
 
 
 async def _queue_post_indexing_analysis(
