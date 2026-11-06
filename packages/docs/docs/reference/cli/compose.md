@@ -136,7 +136,7 @@ Unauthenticated builds can still access public Lexicon packages.
 
 Build the composition (if the database does not exist) and start the knowledge server: a Cortex API bound to `127.0.0.1` on the configured port, serving the composed database. With `--detach`, the server runs in the background and the command returns immediately.
 
-A detached server's output goes to `server.log` in the output directory. `up --detach` waits until the server accepts a connection on its port (up to 60 seconds) and fails, quoting the log, if the process exits first or never binds — a port already in use is reported as a failure, not as a running server. A rebuild (`--build`, or `build` (which now rebuilds by default)) refuses to run while a recorded server is alive; stop it with `down` first.
+A detached server's output goes to `server.log` in the output directory. `up --detach` waits until the server accepts a connection on its port (up to 60 seconds) and fails, quoting the log, if the process exits first or never binds — a port already in use is reported as a failure, not as a running server. A rebuild (`compose build`, or `up --build`) refuses to run while a recorded server is alive; stop it with `down` first.
 
 ```bash
 chaoscypher compose up [OPTIONS]

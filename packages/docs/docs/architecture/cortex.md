@@ -54,12 +54,13 @@ features/{feature}/
 
 ## Features
 
-Cortex has 31 feature modules:
+Cortex's feature modules (one directory each under `features/`):
 
 | Feature | Description |
 |---------|-------------|
 | `admin_plugins` | User plugin management and trust control |
 | `backup` | Database backup, restore, and scheduled snapshots |
+| `cache` | LLM response and embedding caches (stats, clearing, the cache switch) |
 | `chats` | Conversations and AI chat |
 | `counts` | Statistics and counting |
 | `dashboard` | Aggregated cross-feature read projections for the UI dashboard |

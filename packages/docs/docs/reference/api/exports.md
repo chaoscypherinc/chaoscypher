@@ -54,9 +54,9 @@ curl -X POST "http://localhost/api/v1/exports?include_templates=true&include_kno
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `include_templates` | bool | No | `true` | Include user-created templates |
+| `include_templates` | bool | No | `true` | Include user-created templates plus every template the exported nodes and edges use (system templates included) |
 | `include_knowledge` | bool | No | `true` | Include knowledge graph nodes and edges |
-| `include_workflows` | bool | No | `true` | Include workflow definitions, steps, and triggers |
+| `include_workflows` | bool | No | `true` | Include workflow trigger rows only (no workflow definitions or steps); the importer skips them with a warning — see [CCX format § 10](../ccx-format.md#10-producer-notes-chaoscypher) |
 | `include_sources` | bool | No | `true` | Include document sources and metadata |
 | `include_embeddings` | bool | No | `false` | Include embedding vectors (for same-model migration) |
 

@@ -87,7 +87,7 @@ chaoscypher benchmark run chat-probes --reuse-graph
 | `--rebuild-graphs` | flag | off | Clear the benchmark graph cache before running. |
 | `--reuse-graph` | flag | off | Skip re-extracting a reference graph the workspace cache already holds. |
 | `--replay` | flag | off | Rebuild the graph from a reference pack's completion store with no model calls (see `reference export --llm-store`). |
-| `--replay-pack NAME` | string, repeatable | none | The reference pack(s) to replay from. |
+| `--replay-pack NAME` | string, repeatable | none | The reference pack(s) to replay from; keys the extractor's calls on the build the installed pack's manifest records (`model_build`), so no server is asked for a digest. Implies `--replay`. |
 | `--model-timeout` | seconds | none | Wall-clock cap per (model, dataset) run. A run over it is recorded as a failed row and the sweep continues; rows are also written to `partial.json` as they land. |
 
 **Output:**

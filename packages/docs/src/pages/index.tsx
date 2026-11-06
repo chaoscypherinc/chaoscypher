@@ -6,6 +6,7 @@ import CodeBlock from "@theme/CodeBlock";
 import GraphHero from "../components/GraphHero";
 import GuidedTour from "../components/GuidedTour";
 import LeaderboardTeaser from "../components/LeaderboardTeaser";
+import { FULL_RUN_CMD } from "../lib/installCommand";
 
 function ArrowRight() {
   return <span aria-hidden="true"> &#8594;</span>;
@@ -312,7 +313,7 @@ function GetStarted() {
             homepage one-liner is the quickest HTTP-only try.
           </p>
           <CodeBlock language="bash">
-            {`docker run -d --name chaoscypher \\\n  -p 80:80 \\\n  -p 443:443 \\\n  -v chaoscypher-data:/data \\\n  --add-host=host.docker.internal:host-gateway \\\n  ghcr.io/chaoscypherinc/chaoscypher:latest`}
+            {FULL_RUN_CMD}
           </CodeBlock>
           <details className="pathway-compose">
             <summary>Prefer Docker Compose?</summary>

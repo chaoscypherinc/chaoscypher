@@ -239,9 +239,39 @@ def test_load_durations_merges_a_directory_and_ignores_what_it_cannot_read(
     (tmp_path / "shard-2.json").write_text(json.dumps({"b.py": 2.5, "c.py": "slow", "d.py": -1}))
     (tmp_path / "broken.json").write_text("{not json")
     (tmp_path / "list.json").write_text("[1, 2]")
-    assert root_conftest.load_durations(tmp_path) == {"a.py": 3.0, "b.py": 2.5}
+    # b.py ran in two shards (a split file): its weight is both pieces.
+    assert root_conftest.load_durations(tmp_path) == {"a.py": 3.0, "b.py": 3.5}
     assert root_conftest.load_durations(tmp_path / "shard-1.json") == {"a.py": 3.0, "b.py": 1.0}
     assert root_conftest.load_durations(tmp_path / "missing.json") == {}
+
+
+def test_a_split_file_counts_every_piece_in_the_next_runs_packing(
+    root_conftest: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The record the shards write packs the next run as the true seconds would.
+
+    2026-11-05: each shard recorded only its piece of a split file and the larger piece won, so
+    test_pins.py (about 1,160 s) packed as 620 s, and shards that ran 6 to 21 minutes followed.
+    """
+    pins = [f"pkg/tests/test_pins.py::test_{i:03d}" for i in range(98)]
+    rest = [f"pkg/tests/test_{f:02d}.py::t{i}" for f in range(30) for i in range(20)]
+    nodeids = pins + rest
+    truth = {"pkg/tests/test_pins.py": 1572.0} | {
+        f"pkg/tests/test_{f:02d}.py": 180.0 for f in range(30)
+    }
+    per_test = {n: truth[n.split("::")[0]] / (98 if n in pins else 20) for n in nodeids}
+    owner = root_conftest.assign_shards(nodeids, 6, truth)
+    assert len({owner[n] for n in pins}) > 1  # the case at hand: the file is split
+    # Each shard writes the seconds of the tests it ran, as pytest_sessionfinish does.
+    for shard in range(1, 7):
+        record: dict[str, float] = defaultdict(float)
+        for n in nodeids:
+            if owner[n] == shard:
+                record[n.split("::")[0]] += per_test[n]
+        (tmp_path / f"durations-shard-{shard}.json").write_text(json.dumps(record))
+    recorded = root_conftest.load_durations(tmp_path)
+    assert recorded == pytest.approx(truth)
+    assert root_conftest.assign_shards(nodeids, 6, recorded) == owner
 
 
 def test_the_hook_packs_by_the_record_it_is_given_and_still_covers_the_suite_once(

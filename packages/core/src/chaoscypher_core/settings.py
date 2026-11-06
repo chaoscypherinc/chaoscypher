@@ -21,7 +21,9 @@ appear in both this file and ``chaoscypher_core.app_config``. This is by design:
 - Bridge: ``chaoscypher_core.app_config.engine_factory`` maps app_config → EngineSettings.
 """
 
+import json
 import os
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
@@ -39,6 +41,7 @@ from pydantic import (
 )
 
 from chaoscypher_core.constants import SOURCE_ROW_FILTERING_MODE
+from chaoscypher_core.exceptions import ValidationError as SettingsValueError
 from chaoscypher_core.models import MCPMode
 from chaoscypher_core.question_shapes import PRE_SHAPE_FIELDS, SHAPE_NAMES
 
@@ -382,6 +385,71 @@ def _default_ollama_base_url() -> str:
     return os.environ.get("CHAOSCYPHER_OLLAMA_URL", "http://localhost:11434")
 
 
+# RFC 9110 field-name: a non-empty token (no spaces, colons, CR or LF).
+_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+# The client sets these from the API key; a configured override would break auth.
+_RESERVED_HEADER_NAMES = frozenset({"authorization"})
+
+
+def check_default_headers(value: object, *, setting: str) -> dict[str, str]:
+    """Parse and check a map of extra HTTP header names to values.
+
+    Accepts a mapping (settings.yaml, Python) or a JSON object string (an
+    environment variable, which dynaconf hands over as text). Names must be
+    HTTP tokens, values text without CR, LF or NUL, so a setting cannot
+    inject a header line; ``Authorization`` is refused because the client
+    sends it from the API key.
+
+    Errors raise :class:`chaoscypher_core.exceptions.ValidationError`
+    rather than ``ValueError`` on purpose: pydantic would wrap a
+    ``ValueError`` in an error whose text repeats the whole input, and a
+    header value may be a token. These messages name the header, never its
+    value.
+    """
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        if not value.strip():
+            return {}
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            msg = (
+                f"{setting} must be a JSON object of header names to values, "
+                'for example {"X-Example-Route": "local"}; the text given is not valid JSON.'
+            )
+            raise SettingsValueError(msg, field=setting) from None
+    if not isinstance(value, Mapping):
+        msg = f"{setting} must be a map of header names to values, not {type(value).__name__}."
+        raise SettingsValueError(msg, field=setting)
+    headers: dict[str, str] = {}
+    for name, raw in value.items():
+        if not isinstance(name, str) or not _HEADER_NAME_RE.fullmatch(name):
+            msg = (
+                f"{setting} has an invalid header name {name!r}: a name must be "
+                "letters, digits or !#$%&'*+-.^_`|~, with no spaces, colons or line breaks."
+            )
+            raise SettingsValueError(msg, field=setting)
+        if name.lower() in _RESERVED_HEADER_NAMES:
+            msg = (
+                f"{setting} cannot set {name!r}: the client sends it from the API key, "
+                "so setting it here would break sign-in. Put the key in llm.openai_api_key."
+            )
+            raise SettingsValueError(msg, field=setting)
+        text = raw.get_secret_value() if isinstance(raw, SecretStr) else raw
+        if not isinstance(text, str):
+            msg = (
+                f"{setting} header {name!r} must have a text value; "
+                "quote it in settings.yaml if it looks like a number."
+            )
+            raise SettingsValueError(msg, field=setting)
+        if any(ch in text for ch in "\r\n\0"):
+            msg = f"{setting} header {name!r} has a line break or NUL in its value."
+            raise SettingsValueError(msg, field=setting)
+        headers[name] = text
+    return headers
+
+
 class LLMSettings(BaseModel):
     """LLM provider configuration.
 
@@ -460,6 +528,16 @@ class LLMSettings(BaseModel):
     )
     openai_max_output_tokens: int | None = Field(
         default=32768, description="OpenAI max output tokens"
+    )
+    openai_default_headers: dict[str, SecretStr] = Field(
+        default_factory=dict,
+        description=(
+            "Extra HTTP headers sent with every OpenAI chat request, e.g. a routing "
+            "header a local proxy reads. Values are treated as secrets (masked in "
+            "settings dumps, never logged). Empty sends none. From the environment, "
+            "give a JSON object: "
+            'CHAOSCYPHER_LLM__OPENAI_DEFAULT_HEADERS=\'{"X-Example-Route": "local"}\''
+        ),
     )
 
     # Anthropic configuration
@@ -737,6 +815,12 @@ class LLMSettings(BaseModel):
             raise ValueError(msg)
         return v
 
+    @field_validator("openai_default_headers", mode="before")
+    @classmethod
+    def _check_openai_default_headers(cls, v: object) -> dict[str, str]:
+        """Parse and check the extra OpenAI headers (see :func:`check_default_headers`)."""
+        return check_default_headers(v, setting="llm.openai_default_headers")
+
     @model_validator(mode="after")
     def _clamp_reserved_below_max_concurrent(self) -> LLMSettings:
         """Normalize ``llm_reserved_interactive`` below ``llm_max_concurrent``, warning if adjusted.
@@ -794,6 +878,14 @@ class LLMSettings(BaseModel):
     def _serialize_api_keys(self, v: SecretStr | None) -> str | None:
         """Unwrap SecretStr to its raw value (or None) for persistence."""
         return v.get_secret_value() if v is not None else None
+
+    # Same round-trip as the API keys: header values may be tokens, so they
+    # are SecretStr in memory (masked in repr) and plaintext on disk; API
+    # responses and dumps mask each value via app_config.mask_settings_dict.
+    @field_serializer("openai_default_headers", when_used="always")
+    def _serialize_default_headers(self, v: dict[str, SecretStr]) -> dict[str, str]:
+        """Unwrap each header value for persistence."""
+        return {name: value.get_secret_value() for name, value in v.items()}
 
     @property
     def primary_ollama_url(self) -> str:

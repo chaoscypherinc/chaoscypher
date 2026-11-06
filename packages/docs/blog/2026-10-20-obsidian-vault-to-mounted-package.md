@@ -132,7 +132,7 @@ Start Claude Code in any project and ask a question that spans several notes:
 
 The assistant calls `graphrag_search`, which walks the graph and searches the chunks together, and answers from your notes — with the sentences it used, and the notes they came from, attached. Ask it to show its sources and it will point at the actual note, because the chunks and citations travelled inside the package.
 
-The mount serves 21 read tools by default — search, traversal, shortest path, node context — and read-only is the default, so an assistant can explore the vault but never write to it.
+The mount serves 25 read tools by default — search, traversal, shortest path, node context — and read-only is the default, so an assistant can explore the vault but never write to it.
 
 ## Under the hood
 

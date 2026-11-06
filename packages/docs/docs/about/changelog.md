@@ -12,6 +12,24 @@ Entries from June 2026 onward are grouped by release so you can map them to the 
 
 ### November 2026
 
+#### v0.7.2 (2026-11-06)
+
+##### Features
+
+- **Chat can search by tag.** The chat assistant's `graphrag_search` and `search_chunks` tools now offer `tags` and `match` (`any` or `all`), with the same descriptions as the MCP tools, and the chat prompt tells the model they exist. A tag the model picks only narrows the search: in a chat scoped with `chat --tag`, `tag_ids` or `source_ids`, it searches the documents that are both in scope and tagged, and the chat's scope always applies. Without a chat scope the tags alone are the scope, and `graphrag_search` then takes its graph only from the tagged documents, as in MCP. A tag set that matches nothing returns nothing, never an unscoped search. A tag the rule refuses comes back to the model as a tool error it can read. See [Chat — Tags the assistant picks](../user-guide/chat.md#tags-the-assistant-picks).
+- **Extra headers for the OpenAI provider.** A new setting, `llm.openai_default_headers`, sends extra HTTP headers with every OpenAI chat, extraction and import-summary request, so an OpenAI-compatible proxy can route on them (for example, keep a request on the local model). Set it in `settings.yaml` or from the environment as a JSON object: `CHAOSCYPHER_LLM__OPENAI_DEFAULT_HEADERS='{"X-Example-Route": "local"}'`. Empty, the default, sends nothing. Header values are masked like API keys in the Settings page, `chaoscypher config show` and the diagnostic bundle, and never logged. Names must be plain HTTP tokens with no line breaks, and `Authorization` is refused because the client sends it from the API key. See [Configuration](../getting-started/configuration.md#openai).
+
+##### Behavior changes
+
+- **A chat's tag scope that matches nothing is refused, never unscoped.** Creating a chat or changing its scope (`POST /api/v1/chats`, `PATCH /api/v1/chats/{id}/scope`) with `tag_ids` that carry no document, and no `source_ids`, used to give a chat that searched every document. It is now refused with a 400 error naming the problem, as `chaoscypher chat --tag` already refused; a refused re-scope keeps the chat's current scope. See [Chat — Combining scopes](../user-guide/chat.md#combining-scopes).
+
+##### Dependencies
+
+- **The Docker images build on Python 3.14.9** (was 3.14.8).
+- **The web interface's build tools clear three advisories.** `minimatch`, `glob` and the docs site's `serialize-javascript` move to fixed releases. They run only when the interface and docs are built, never in a running server.
+
+> **Before upgrading, let the queue go idle.** Stop new submissions and wait until `/api/v1/queue/stats` reports 0 pending tasks on every queue, then swap the image. This release changes no queue payloads and adds no migrations. Draining first is still the safe default, because the worker cannot negotiate payload versions yet.
+
 #### v0.7.1 (2026-11-06)
 
 ##### Fixes
@@ -193,7 +211,7 @@ The agent-memory release — 176 changes landed since v0.5.0, 125 of them in the
 
 ##### CLI
 
-- **`chaoscypher memory relink` links pending memories now**, oldest first and ignoring the backoff: `--limit`/`-n`, `--dry-run` (counts per state), `--include-empty` and `--database`/`-d`. It prints one line of counts and never a memory's text, and exits `0` when nothing is left unlinked, `3` when something still is, `1` on error. To link from your own timer instead of at server start, set `mcp.memory.relink_on_start: false`.
+- **`chaoscypher memory relink` links pending memories now**, oldest first and ignoring the backoff: `--limit`/`-n`, `--dry-run` (counts per state), `--include-empty` and `--database`/`-d`. It prints one line of counts and never a memory's text, and exits `0` when nothing is left unlinked, `3` when something still is, `1` on error, `130` / `143` when Ctrl-C or SIGTERM stops it (the memory being linked is given back). To link from your own timer instead of at server start, set `mcp.memory.relink_on_start: false`.
 - **`chaoscypher source rebuild-search --embed-missing`** embeds only the chunks and nodes with no vector yet; it is refused while vector search is off and after an embedding model change.
 - **`chaoscypher mcp` stops cleanly.** SIGTERM and Ctrl-C give back the memory being linked and exit `143` / `130`, and a stopped stdio server no longer aborts with a core dump. `--profile`/`-p` picks the tool profile, and `-d default` serves the database named `default`.
 - **Retry and resume work.** A source in `error` can be retried in place (the retry checks accepted a `failed` status nothing writes), and Ctrl+C during `source add` or `source extract` returns the source to `indexed` with its chunks and embeddings intact, so the same command resumes it.

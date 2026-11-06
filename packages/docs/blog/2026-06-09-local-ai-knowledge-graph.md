@@ -4,6 +4,7 @@ title: "Build a Private AI Knowledge Graph That Never Leaves Your Machine"
 authors: [denis]
 tags: [workflows, privacy]
 date: 2026-06-09
+draft: false
 description: Run Chaos Cypher with Ollama for a fully local AI knowledge graph — no API keys, no data leaving your network, same pipeline as cloud providers.
 ---
 

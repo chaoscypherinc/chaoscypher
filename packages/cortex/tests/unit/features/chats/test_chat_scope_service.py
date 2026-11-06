@@ -21,9 +21,13 @@ from sqlmodel import SQLModel
 
 from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
 from chaoscypher_core.adapters.sqlite.engine import get_engine
+from chaoscypher_core.exceptions import ValidationError
 from chaoscypher_core.services.chat import ChatService
-from chaoscypher_cortex.features.chats.models import ChatScopeUpdate
-from chaoscypher_cortex.features.chats.repository import ChatScopeRepository
+from chaoscypher_cortex.features.chats.models import ChatCreate, ChatScopeUpdate
+from chaoscypher_cortex.features.chats.repository import (
+    NO_DOCUMENT_CARRIES_THE_TAGS,
+    ChatScopeRepository,
+)
 from chaoscypher_cortex.features.chats.service import ChatFeatureService
 
 
@@ -127,3 +131,86 @@ def test_clear_scope_after_set_removes_scope_and_announces(
 def test_scope_operations_on_missing_chat_return_none(service: ChatFeatureService) -> None:
     assert service.update_scope_with_message("nope", ChatScopeUpdate(source_ids=["s1"])) is None
     assert service.clear_scope_with_message("nope") is None
+
+
+# ------------------------------------------------------------------ #
+#  A tag scope never widens to every document
+# ------------------------------------------------------------------ #
+
+
+def _tags_matching_nothing(adapter: SqliteAdapter) -> list[str]:
+    """Two tags: one no document carries, and one id that names no tag at all."""
+    _seed_source(adapter, "s1")
+    _seed_tag(adapter, "t-empty", [])
+    return ["t-empty", "t-missing"]
+
+
+def test_creating_a_chat_with_tags_matching_nothing_is_refused(
+    adapter: SqliteAdapter, service: ChatFeatureService
+) -> None:
+    tags = _tags_matching_nothing(adapter)
+    with pytest.raises(ValidationError) as refused:
+        service.create_chat_with_scope(ChatCreate(title="Harbour", tag_ids=tags))
+    assert refused.value.message == NO_DOCUMENT_CARRIES_THE_TAGS
+    assert refused.value.field == "tag_ids"
+    assert service.engine_chat_service.list_chats() == []  # no unscoped chat was made
+
+
+def test_rescoping_to_tags_matching_nothing_is_refused_and_keeps_the_scope(
+    adapter: SqliteAdapter, service: ChatFeatureService
+) -> None:
+    tags = _tags_matching_nothing(adapter)
+    chat_id = _new_chat(service)
+    service.update_scope_with_message(chat_id, ChatScopeUpdate(source_ids=["s1"]))
+
+    with pytest.raises(ValidationError, match="No document carries the chosen tags"):
+        service.update_scope_with_message(chat_id, ChatScopeUpdate(tag_ids=tags))
+
+    persisted = service.engine_chat_service.get_chat(chat_id)
+    assert persisted is not None
+    assert persisted["source_ids"] == ["s1"]  # unchanged, not cleared to "every document"
+    assert len(_system_messages(persisted)) == 1
+
+
+def test_tags_matching_nothing_beside_sources_scope_to_the_sources(
+    adapter: SqliteAdapter, service: ChatFeatureService
+) -> None:
+    tags = _tags_matching_nothing(adapter)
+    chat = service.create_chat_with_scope(
+        ChatCreate(title="Harbour", source_ids=["s1"], tag_ids=tags)
+    )
+    assert chat["source_ids"] == ["s1"]
+
+
+def test_resolve_scope_never_answers_an_empty_list(adapter: SqliteAdapter) -> None:
+    """``[]`` would read as "no scope" downstream (``setup_chat_providers``), so it never leaves."""
+    _seed_source(adapter, "s1")
+    _seed_tag(adapter, "t1", ["s1"])
+    repo = ChatScopeRepository(adapter, DB_NAME)
+    no_scope: list[tuple[list[str] | None, list[str] | None]] = [
+        (None, None),
+        ([], None),
+        ([], []),
+        (None, []),
+    ]
+    for source_ids, tag_ids in no_scope:
+        assert repo.resolve_scope(source_ids, tag_ids) is None  # no scope asked for
+    assert repo.resolve_scope([], ["t1"]) == ["s1"]
+
+
+def test_a_tag_scoped_chat_whose_documents_are_deleted_stays_scoped(
+    adapter: SqliteAdapter, service: ChatFeatureService
+) -> None:
+    """The tags resolve once, to source ids; deleting those documents leaves the ids
+    stored, so the chat searches nothing rather than becoming unscoped.
+    """
+    for sid in ("s1", "s2"):
+        _seed_source(adapter, sid)
+    _seed_tag(adapter, "t1", ["s1"])
+    chat = service.create_chat_with_scope(ChatCreate(title="Harbour", tag_ids=["t1"]))
+
+    assert adapter.delete_source_db("s1", DB_NAME)
+
+    persisted = service.engine_chat_service.get_chat(chat["id"])
+    assert persisted is not None
+    assert persisted["source_ids"] == ["s1"]

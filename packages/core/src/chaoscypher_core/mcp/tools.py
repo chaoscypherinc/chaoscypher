@@ -21,11 +21,12 @@ from chaoscypher_core.models import (
     EdgeDirection,
     ElementKind,
     MCPMode,
-    TagMatch,
 )
 from chaoscypher_core.ports.types import FilteringMode
 from chaoscypher_core.services.workflows.tools.engine.schema_registry import (
     TEMPLATE_PROPERTY_ITEM_SCHEMA,
+    tag_list_schema,
+    tag_scope_schema,
 )
 from chaoscypher_core.settings import GraphSettings
 from chaoscypher_core.utils.tool_schema import schema_enum
@@ -33,40 +34,6 @@ from chaoscypher_core.utils.tool_schema import schema_enum
 
 _GRAPH = GraphSettings()
 """The graph defaults the tool schemas name (``create_edge``'s template and label)."""
-
-_TAG_RULE = (
-    "Tags: lower-case a-z, 0-9, ':', '_' or '-', starting with a letter or digit, "
-    "up to 64 characters; at most 32 per document."
-)
-"""The tag rule in one sentence, as every tag-taking schema states it."""
-
-
-def _tag_list(description: str, *, default: bool = False) -> dict:
-    """A JSON Schema array of tags, its description ending with the tag rule."""
-    schema: dict = {
-        "type": "array",
-        "items": {"type": "string"},
-        "description": f"{description} {_TAG_RULE}",
-    }
-    if default:
-        schema["default"] = []
-    return schema
-
-
-def _tag_scope() -> dict[str, dict]:
-    """A search's or listing's tag scope: ``tags`` and ``match``."""
-    return {
-        "tags": _tag_list(
-            "Only documents carrying these tags; [] (the default) means every document.",
-            default=True,
-        ),
-        "match": {
-            "type": "string",
-            "enum": schema_enum(TagMatch),
-            "description": "Documents carrying any (the default) or all of the tags.",
-            "default": "any",
-        },
-    }
 
 
 def _labels(*, site: bool) -> dict[str, dict]:
@@ -76,7 +43,7 @@ def _labels(*, site: bool) -> dict[str, dict]:
     """
     what = "every page of the site" if site else "the document"
     props: dict[str, dict] = {
-        "tags": _tag_list(
+        "tags": tag_list_schema(
             f"Tags for {what}. Where it is already imported they are added to its "
             "tags, unless replace_tags is true."
         ),
@@ -142,7 +109,7 @@ _graphrag_search = ToolDefinition(
                 "description": "Maximum number of seed nodes for PageRank.",
                 "default": 10,
             },
-            **_tag_scope(),
+            **tag_scope_schema(),
         },
         "required": ["query"],
     },
@@ -202,7 +169,7 @@ _search_chunks = ToolDefinition(
                 "type": "string",
                 "description": "Filter to chunks from a specific source document.",
             },
-            **_tag_scope(),
+            **tag_scope_schema(),
         },
         "required": ["query"],
     },
@@ -813,7 +780,7 @@ _list_documents = ToolDefinition(
     input_schema={
         "type": "object",
         "properties": {
-            **_tag_scope(),
+            **tag_scope_schema(),
             "limit": {
                 "type": "integer",
                 "minimum": 1,
@@ -846,9 +813,9 @@ _tag_document = ToolDefinition(
                 "type": "string",
                 "description": "The document's source_id (from list_documents or add_document).",
             },
-            "add": _tag_list("Tags to add.", default=True),
-            "remove": _tag_list("Tags to remove.", default=True),
-            "replace": _tag_list(
+            "add": tag_list_schema("Tags to add.", default=True),
+            "remove": tag_list_schema("Tags to remove.", default=True),
+            "replace": tag_list_schema(
                 "The document's whole tag list ([] clears it). Omit to add or remove instead."
             ),
             "summary": {

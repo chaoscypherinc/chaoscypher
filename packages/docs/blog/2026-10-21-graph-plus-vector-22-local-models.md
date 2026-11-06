@@ -75,9 +75,9 @@ In plain English: the questions and the rules were set before the runs, a headli
 
 We would rather you know the limits before you quote the numbers.
 
-- **One corpus, and it is a novel.** Fiction is full of people, families and look-alike names, which may be where a graph helps most. A second corpus, technical documentation, is next, and these figures say nothing about it until it is measured.
+- **These figures are one corpus, and it is a novel.** Fiction is full of people, families and look-alike names, which may be where a graph helps most. The board now also carries a second corpus, the Ollama documentation, reported on its own and never pooled with Book One: there the ordinary-question headline holds (68% fewer failed answers than plain vector RAG, on 22 of 22 models) and so does the small-model match (Qwen3 8B with the graph beats Qwen3.6 35B-A3B on plain RAG, 21 of 22 match), while the graph-shaped headline does not clear its bar against hybrid search (11 of 22 models, 12 needed). This post's numbers are Book One's.
 - **Local models only.** All 22 are open-weight models pulled from Ollama. The board says nothing about hosted models on this comparison.
-- **Measured on the board's day.** The figures are for the board dated 2026-10-21 and the build it measured. The graph + vector search measured there is on our main branch; the image you can pull today carries an earlier version of the same search.
+- **Measured on the board's day.** The figures are for the board dated 2026-10-21 and the build it measured. The graph + vector search measured there ships in v0.6.0 and later.
 - **Two headlines are against plain RAG only.** The ordinary-question figure and the small-model match are against plain vector RAG. On Book One, against hybrid search the ordinary-question gain is smaller (median 24%, and 11 of 22 models remove at least 25% of their failed answers, one short of a majority), so we claim neither against hybrid search.
 - **The graph is not free.** The extra context also makes some models answer out-of-scope questions they should decline. That one is on our list.
 
@@ -111,6 +111,6 @@ To read the comparison itself, open the [leaderboard](/leaderboard) and scroll t
 
 ## What's next
 
-The second corpus is technical documentation, a different shape: fewer people with shared names, more terms that mean different things in different sections. If graph + vector helps there too, it will show up on the same board, held to the same bars. If it does not, that will show up too.
+The second corpus, the Ollama documentation, is a different shape: fewer people with shared names, more terms that mean different things in different sections. It is on the board now, held to the same bars, with its own switch above the table: two of the three headlines hold there, and the one that does not is shown as not holding. A third corpus will get the same treatment.
 
 In the meantime, we plan to give every new model on the leaderboard the same three-way run. If you want a model on it, open a discussion on GitHub and tell us which one.

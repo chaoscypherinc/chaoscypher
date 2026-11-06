@@ -20,6 +20,18 @@
 * Every ``QualityCounter`` member has a row in the Quality Metrics API
   reference: the page carried a hand-typed count (45, then 44 + 2) and was
   four counters short.
+* Every ``QualityCounter`` member also has a "where it fires" row on the
+  architecture page (``quality-counters.md``): it was eleven counters short
+  on 2026-10-29 with only the API page guarded.
+* Every blog post declares ``draft`` as a boolean: Docusaurus publishes a post
+  whose front matter has no ``draft`` key, and five posts had none (the
+  2026-10-29 docs audit), so the publish flip (``auto-merge:publish``) had
+  nothing to flip and the drafts-class check nothing to read.
+* Every public ``docker run`` of the image carries
+  ``--add-host=host.docker.internal:host-gateway``: the homepage hero's
+  one-liner lost it while the README, the install pages and the Get Started
+  card kept it (2026-10-29), and a Linux Docker Engine user who copied the
+  hero could not reach Ollama on the host.
 * A source delete releases only what no other source attests (#795): no page
   may say it "cascades to all" graph nodes or edges. The API reference said so
   for ``DELETE /sources/{id}`` while the user guide and the code said otherwise.
@@ -176,6 +188,70 @@ def test_the_memory_profile_docs_say_which_tools_each_mode_serves() -> None:
         assert "read mode" in text, (
             f"{path.name} describes the memory profile without saying what read mode serves"
         )
+
+
+_BLOG = _ROOT / "packages" / "docs" / "blog"
+_FRONT_MATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---", re.S)
+
+
+def test_every_blog_post_declares_draft_as_a_boolean() -> None:
+    """A post with no ``draft`` key is published by default; every post says which it is."""
+    posts = sorted(_BLOG.glob("*.md"))
+    assert posts, "no blog posts found"
+    for post in posts:
+        front = _FRONT_MATTER_RE.match(post.read_text(encoding="utf-8"))
+        assert front, f"{post.name} has no front matter"
+        values = re.findall(r"^draft:\s*(\S+)\s*$", front.group(1), re.M)
+        assert values in (["true"], ["false"]), (
+            f"{post.name} must declare `draft: true` or `draft: false` once (found {values})"
+        )
+
+
+# Every public surface that quotes a `docker run` of the image; the TS module is
+# the one source the homepage's two forms are built from.
+_DOCKER_RUN_SURFACES = (
+    _ROOT / "README.md",
+    _DOCS / "getting-started" / "installation.md",
+    _DOCS / "getting-started" / "quickstart.md",
+    _ROOT / "packages" / "docs" / "src" / "lib" / "installCommand.ts",
+)
+_IMAGE = "ghcr.io/chaoscypherinc/chaoscypher"
+_HOST_GATEWAY = "--add-host=host.docker.internal:host-gateway"
+# One `docker run` through the image reference it ends on (a bash block's
+# line continuations, or the TS template's pieces).
+_DOCKER_RUN_RE = re.compile(r"docker run(?:(?!docker run).)*?" + re.escape(_IMAGE), re.S)
+
+
+def test_every_public_docker_run_of_the_image_reaches_ollama_on_the_host() -> None:
+    """Each `docker run … ghcr.io/chaoscypherinc/chaoscypher` carries the host-gateway flag.
+
+    In the TS module the flag is a constant interpolated into both exported
+    commands, so the check reads each `export const *_RUN_CMD` there and the
+    literal flag in markdown.
+    """
+    for path in _DOCKER_RUN_SURFACES:
+        text = _read(path)
+        if path.suffix == ".ts":
+            assert f'HOST_GATEWAY = "{_HOST_GATEWAY}"' in text
+            runs = re.findall(r"^export const \w+_RUN_CMD = (.*?);$", text, re.S | re.M)
+            marker = "${HOST_GATEWAY}"
+        else:
+            runs = [m.group(0) for m in _DOCKER_RUN_RE.finditer(text) if "..." not in m.group(0)]
+            marker = _HOST_GATEWAY
+        assert runs, f"{path.name} quotes no `docker run` of the image"
+        for run in runs:
+            assert marker in run, (
+                f"{path.relative_to(_ROOT)}: a `docker run` of the image lacks {_HOST_GATEWAY}:\n{run}"
+            )
+
+
+def test_the_quality_counters_architecture_page_says_where_every_counter_fires() -> None:
+    """The twin of the API-page guard: every enum member has a row in a "Where counters fire" table."""
+    text = _read(_DOCS / "architecture" / "extraction-pipeline" / "quality-counters.md")
+    where = text[text.index("## Where counters fire") :]
+    rows = {m.group(1) for m in re.finditer(r"^\| `([a-z0-9_]+)` \|", where, re.M)}
+    missing = sorted(c.value for c in QualityCounter if c.value not in rows)
+    assert not missing, f"quality-counters.md § Where counters fire has no row for: {missing}"
 
 
 _CASCADES_TO_ALL_GRAPH_ROWS = re.compile(

@@ -6,7 +6,7 @@ description: What chaoscypher backup captures, how to restore, and a worked rete
 
 # Backup and Restore
 
-Chaos Cypher stores all persistent state in a single SQLite database (`app.db`) per knowledge base. Backups are point-in-time copies of that file, written using SQLite's online backup API so you can back up a live, actively-used database without stopping the container.
+Chaos Cypher stores all persistent state in a single SQLite database (`app.db`) per knowledge base. Backups are point-in-time copies of that file, written with SQLite's `VACUUM INTO` (the migration auto-backup uses SQLite's online backup API), so you can back up a live, actively-used database without stopping the container.
 
 ## What a backup captures
 

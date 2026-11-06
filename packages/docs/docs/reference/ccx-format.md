@@ -49,6 +49,7 @@ graphs/<namespace>.<name>.jsonld      # additional named graphs (§4)
 sources.jsonl                         # source + chunk records (§5) — declared as an asset
 shapes.ttl                            # optional SHACL shapes (§7) — declared as an asset
 assets/sha256/<hex>                   # content-addressed assets (full text, embedding sidecars)
+assets/graph_preview.png              # optional ChaosCypher graph preview (§10), a fixed path
 signatures/manifest.sig               # optional detached signature (§8)
 ```
 
@@ -194,6 +195,7 @@ For consumers of ChaosCypher-produced packages specifically:
 - `chaoscypher.workflows` currently carries **workflow trigger rows only** — not full workflow definitions — and ChaosCypher's own importer skips that member with a warning. Do not expect workflows to round-trip through CCX today.
 - Source full text is retained as content-addressed assets, `sourceMode` is `derived-only`, and chunk records use offset selectors into that text.
 - A node's `@type` is its most specific type: the entity type extraction assigned, or the template name when the node has no entity type. Every template the exported knowledge references — including the generic system templates extraction files entities under — is emitted in `chaoscypher.templates`, and each node points at its template through `cc:template` (§ 4), so an import restores both the template binding and the specific type.
+- When an export is given a preview image, it is written as `assets/graph_preview.png` (`image/png`) and declared in the manifest — a fixed path, not a content-addressed `assets/sha256/` entry.
 - Embedding descriptors are emitted only when an export explicitly includes embeddings; signatures are not emitted at all today, so the `signed` class is currently unreachable from ChaosCypher-produced packages.
 
 ## 11. Versioning and compatibility

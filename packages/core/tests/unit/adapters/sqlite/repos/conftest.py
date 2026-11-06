@@ -29,14 +29,14 @@ DIM = 4
 def db(tmp_path: Path) -> Iterator[Path]:
     """A fresh app.db with every SQLModel table; its cached engine is evicted afterwards."""
     path = tmp_path / "app.db"
-    SQLModel.metadata.create_all(get_engine(str(path)), checkfirst=True)
+    SQLModel.metadata.create_all(get_engine(path), checkfirst=True)
     yield path
     evict_engine(path)
 
 
 def open_search_repo(path: Path) -> SearchRepository:
     """A search repository over ``path`` (an open runs the full-text checks)."""
-    return SearchRepository(get_engine(str(path)), vector_dim=DIM, embedding_model="m")
+    return SearchRepository(get_engine(path), vector_dim=DIM, embedding_model="m")
 
 
 def reopen_search_repo(path: Path) -> SearchRepository:

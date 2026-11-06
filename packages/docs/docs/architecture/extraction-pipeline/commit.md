@@ -358,7 +358,7 @@ Each edge is linked to its source chunk similarly:
 | `justification` | LLM-generated explanation |
 | `citation_metadata` | Contains `sent_ref` for sentence-level citation |
 
-Citations use O(1) lookups via pre-built mappings (`node_pair_to_rel`, `node_id_to_node`) to efficiently match created edges back to their original relationship data.
+Citations use O(1) lookups via pre-built mappings (`rels_by_edge_key`, `node_id_to_node`) to efficiently match created edges back to their original relationship data.
 
 Both citation types are batch-created in single transactions for performance.
 

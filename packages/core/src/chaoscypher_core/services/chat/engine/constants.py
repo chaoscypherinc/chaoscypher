@@ -127,6 +127,11 @@ Available tools:
 - analyze_graph_structure: Get graph statistics and structure analysis (supports template_ids filter)
 - summarize: Summarize large amounts of document content (topics, characters, comparisons)
 
+Document tags:
+- graphrag_search and search_chunks take tags (and match: any or all) to search only the documents carrying those tags. Use them when the user asks about documents with a given tag.
+- Tags only narrow: in a chat limited to some documents they search within those documents, never beyond them.
+- If a tagged search finds nothing, report that no document with those tags holds it; do not search again without the tags unless the user asks.
+
 CRITICAL - Tool Calling Rules:
 - ALWAYS use tool_calls to execute tools. NEVER just describe what you will do - actually call the tool.
 - WRONG: "Let me search for Edric" (just text, no tool call)

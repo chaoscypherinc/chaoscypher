@@ -155,6 +155,7 @@ The detail response also carries `data` (the operation-specific input payload) a
 | `running` | Currently being processed |
 | `completed` | Finished successfully |
 | `failed` | Processing failed (check task result for error details) |
+| `retried` | A failed attempt was re-queued for another try |
 | `cancelled` | Cancelled by user |
 
 Once a task is `completed`, retrieve its result:

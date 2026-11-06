@@ -38,7 +38,7 @@ Remembered [alice 2026-10-20] "Pierre moved to Lyon."
 Not linked yet: the model did not answer in time. Kept as a note; it links later.
 ```
 
-The other two lines are `Not linked yet: the model failed. Kept as a note; it links later.` and `Not linked yet: no extraction model is set up. Kept as a note; it links once one is.` A text that could not be stored at all is refused with `Not stored: the database is busy. Try again.`
+The other two lines are `Not linked yet: the model failed. Kept as a note; it links later.` and `Not linked yet: no extraction model is set up. Kept as a note; it links once one is.` A memory forgotten while `remember` still waits answers `Forgotten before it was linked.` A text that could not be stored at all is refused with `Not stored: the database is busy. Try again.`
 
 "It links later" means: a linking the wait gave up on goes on in the same server, and a memory left unlinked stays marked with why and is linked the next time a write-mode server starts (in the background, oldest first, once the client has connected), or at once with `chaoscypher memory relink`. A memory remembered with no extraction model set up is linked once one is, against the graph as it is then. A memory whose link keeps failing waits longer after each failure, never more than a day, and is tried again at the next server start after that; it is never dropped. `chaoscypher memory relink` tries it again at once. Set `mcp.memory.relink_on_start: false` to link only when the command runs, from a timer of your own for example. Until it is linked a memory is a note: `recall` shows it under `Notes:` and `forget` removes it.
 

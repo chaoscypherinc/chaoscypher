@@ -79,7 +79,7 @@ Core's hexagonal architecture means every external dependency is behind a Protoc
 
 ### Framework Independence
 
-Core has zero knowledge of FastAPI, SQLModel, or any web framework. If you wanted to build a Django API or a desktop app, Core works without changes.
+Core has zero knowledge of FastAPI or any web framework (its SQLite adapter is built on SQLModel, confined to the storage and runtime subpackages). If you wanted to build a Django API or a desktop app, Core works without changes.
 
 ### Dual Deployment
 
@@ -123,7 +123,7 @@ packages/
 └── docker/        # Orchestration only  — Docker Compose files
 ```
 
-Each package has its own `pyproject.toml` (Python) or `package.json` (Node.js), tests, and Dockerfiles.
+Each package has its own `pyproject.toml` (Python) or `package.json` (Node.js) and tests; every Dockerfile lives in `packages/docker/`.
 
 ## Next Steps
 

@@ -21,7 +21,7 @@ uv run chaoscypher --version
 ```
 
 ```
-chaoscypher, version 0.4.1
+chaoscypher, version X.Y.Z
 ```
 
 ## Help Output
@@ -187,7 +187,7 @@ Apply pending Alembic migrations against the configured database.
 chaoscypher upgrade
 ```
 
-This is equivalent to running `alembic upgrade head` directly. Cortex runs the same command on startup; `chaoscypher upgrade` is the operator-grade alternative for ad-hoc invocations — for example, after restoring a backup or pulling a new release in a dev environment.
+It runs Core's `UpgradeService` — the same code path Cortex runs on startup and that `chaoscypher db migrate apply` and the `/upgrade` API use — against the resolved database. `chaoscypher upgrade` is the operator-grade alternative for ad-hoc invocations — for example, after restoring a backup or pulling a new release in a dev environment. (There is no repo-level `alembic.ini`; a bare `alembic upgrade head` has no database to connect to.)
 
 ### Options
 
@@ -199,13 +199,10 @@ This is equivalent to running `alembic upgrade head` directly. Cortex runs the s
 As `chaoscypher db migrate apply` does, it first lists any pending migration that needs confirmation (a tier above `safe_auto`, or one that would change your data, with each change listed) and asks before applying. A database with no schema yet is built without asking.
 
 ```bash
-# These are equivalent — pick whichever fits your workflow:
 chaoscypher upgrade
-# or
-uv run alembic upgrade head
 ```
 
-A non-zero exit from Alembic propagates as a non-zero exit code from `chaoscypher upgrade`.
+When the schema is already at head the command prints `Schema is at head (<database>).` and exits 0; a failed migration exits non-zero.
 
 See [Upgrading](../../getting-started/upgrading.md#operator-grade-upgrade-chaoscypher-upgrade) and [ADR-0006](../../architecture/adrs/0006-re-adopt-alembic.md) for background.
 
@@ -345,7 +342,7 @@ chaoscypher compose up --build
 
 ### compose down
 
-Stop composition services started by `compose up --detach`. Known limitation: `down` runs in a new process that has no handle on the detached server, so it currently cannot stop it — see [compose down](compose.md#down) for details and workarounds.
+Stop the composition server started by `compose up --detach`. `up --detach` records the server's process id in `compose.pid` under the composition's data directory; `down` reads it and stops that process — see [compose down](compose.md#down).
 
 ```bash
 chaoscypher compose down
@@ -354,15 +351,6 @@ chaoscypher compose down
 | Option | Description |
 |--------|-------------|
 | `--config, -c` | Path to composition config file (default: `axiomatize.yaml`) |
-
-### compose mcp
-
-Serve the composition to an MCP host over stdio, building the composed database first if it does not exist yet. Put the command in your MCP client's server config. See [`compose mcp`](compose.md#mcp).
-
-```bash
-chaoscypher compose mcp
-chaoscypher compose mcp -c research.yaml --mode write
-```
 
 ### compose mcp
 

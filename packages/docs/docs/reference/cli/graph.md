@@ -205,7 +205,7 @@ chaoscypher graph node delete NODE_ID [OPTIONS]
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
 | `--force` | `-f` | `false` | Skip confirmation prompt |
-| `--cascade` | `-c` | `false` | Also delete connected links |
+| `--cascade` | `-c` | `false` | Delete connected links one by one before the node (links are always deleted with the node; this only changes how) |
 | `--database` | `-d` | current database | Database name |
 
 **Examples:**
@@ -217,16 +217,16 @@ chaoscypher graph node delete nd_a1b2c3d4e5f6
 # Skip confirmation
 chaoscypher graph node delete nd_a1b2c3d4e5f6 --force
 
-# Delete node and all connected links
+# Delete the connected links one by one, then the node
 chaoscypher graph node delete nd_a1b2c3d4e5f6 --cascade
 
 # Force delete with cascade
 chaoscypher graph node delete nd_a1b2c3d4e5f6 -f -c
 ```
 
-:::warning
+:::note
 
-Without `--cascade`, connected links become orphaned (they reference a node that no longer exists). Use `--cascade` to clean up all related links.
+Every link connected to the node is deleted with it, with or without `--cascade`. `--cascade` only deletes them one by one before the node is removed; no link is ever left pointing at a deleted node.
 
 :::
 

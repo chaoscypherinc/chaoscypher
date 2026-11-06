@@ -159,8 +159,18 @@ class OpenAIProvider(BaseLLMProvider):
         if max_retries is not None:
             kwargs["max_retries"] = max_retries
 
+        # Extra headers from llm.openai_default_headers; none when empty, so
+        # the client's own defaults stand. Only the names are ever logged.
+        default_headers = self.config.get("openai_default_headers")
+        if default_headers:
+            kwargs["default_headers"] = dict(default_headers)
+
         logger.info(
-            "openai_initialized", provider="openai", model=self.chat_model, base_url=self.base_url
+            "openai_initialized",
+            provider="openai",
+            model=self.chat_model,
+            base_url=self.base_url,
+            default_header_names=sorted(default_headers) if default_headers else [],
         )
         return ChatOpenAI(**kwargs)
 

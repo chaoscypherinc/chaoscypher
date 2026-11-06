@@ -344,7 +344,8 @@ right but cites the wrong chunk keeps its point, and is visible.
 The comparison runs through `scripts/benchmark/run_mcp_suite.py --retrieval
 <rung>` for harness rows and the `retrieval:` field of a chat config for
 local models; `export_leaderboard.py` writes it as `suites.chat.comparison`
-once a model has all three rungs.
+for the board corpus and as `corpora[<id>].chat.comparison` for every other
+corpus, once a model has all three rungs on that corpus.
 
 ## Benchmark any MCP client
 

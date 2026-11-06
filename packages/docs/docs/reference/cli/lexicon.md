@@ -27,7 +27,7 @@ Authenticates with Lexicon Hub. The default flow uses **OAuth Device Authorizati
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--url` | `-u` | Lexicon Hub URL (default: `$LEXICON_URL` or `https://lexicon.chaoscypher.com`) |
+| `--url` | `-u` | Lexicon Hub URL (default: the URL of the stored login, else `lexicon.url` from settings, which `LEXICON_URL` overrides) |
 | `--token` | `-t` | API token for CI/automation (skips interactive auth) |
 | `--no-browser` | | Don't auto-open the browser; copy URL manually |
 

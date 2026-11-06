@@ -66,8 +66,9 @@ jobs:
         run: uv run python scripts/run_ci.py --steps lint-secrets
 
   # The per-file test timings the shards pack by (the repo-root conftest, CI_TEST_DURATIONS):
-  # restored once here and handed to every shard, so all six pack from one record even when another
-  # run saves a newer one meanwhile; shards packed from two records could run a file twice or never.
+  # restored once here and handed to every shard, so all of them pack from one record even when
+  # another run saves a newer one meanwhile; shards packed from two records could run a file twice
+  # or never.
   test-timings:
     name: Test timings for the shards
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
@@ -97,9 +98,13 @@ jobs:
   python-tests:
     # Sharded (CI_TEST_SHARD, the repo-root conftest; the matrix list is the one place the count
     # lives): the whole suite took about 27 minutes on one 4-CPU home runner, past the timeout. Each
-    # shard keeps its coverage data; python-coverage combines them and holds the 80% gate. Six, not
-    # three, since the fleet grew to 12 runners across three servers (2026-10-16): a run's wall time
-    # is its slowest shard, which took 36 minutes of 40 at three.
+    # shard keeps its coverage data; python-coverage combines them and holds the 80% gate. A run's
+    # wall time is its slowest shard. Ten, not six (2026-11-05): the shards pack equal seconds, but
+    # the runners differ in size, and a shard on a small one took three times as long as on a large
+    # one (21 minutes against 6 1/2). Smaller shards bound that, and those queued past the fleet's
+    # size go to whichever runner frees first, so the large runners take more of them.
+    # Each shard also runs its share of the operations-tooling tests (internal-tool-tests: a no-op
+    # on the public tree), which held the Public Gates job for 19 minutes on one small runner.
     name: Python Unit Tests (${{ matrix.shard }}/${{ strategy.job-total }})
     needs: test-timings
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
@@ -110,7 +115,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     env:
       CI_TEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
       COVERAGE_FILE: coverage-data/shard-${{ matrix.shard }}
@@ -160,6 +165,11 @@ jobs:
             --durations=40 \
             -o faulthandler_timeout=300
 
+      # The same CI_TEST_SHARD and record give this shard its share of each suite; each suite
+      # records its own seconds beside the shard's (scripts/run_internal_tool_tests.py).
+      - name: Run this shard's share of the operations-tooling tests
+        run: uv run python scripts/run_ci.py --steps internal-tool-tests
+
       - name: Keep the shard's coverage data
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -196,7 +206,8 @@ jobs:
           path: coverage-data
           merge-multiple: true
 
-      # Each shard wrote its files' seconds; together they are the next run's record.
+      # Each shard wrote its files' seconds (the tooling suites' in files of their own); together
+      # they are the next run's record.
       - name: Gather this run's test timings
         run: |
           mkdir -p test-durations
@@ -225,8 +236,8 @@ jobs:
             --fail-under=90 \
             --markdown-report diff-cover.md
           if [ -f diff-cover.md ]; then
-            echo "## Diff coverage report" >> $GITHUB_STEP_SUMMARY
-            cat diff-cover.md >> $GITHUB_STEP_SUMMARY
+            echo "## Diff coverage report" >> "$GITHUB_STEP_SUMMARY"
+            cat diff-cover.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
   frontend:
@@ -325,9 +336,9 @@ jobs:
   public-gates:
     name: Public Gates (internal-ref scan, license policy, docs build)
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
-    # 35, not 25 (2026-10-24): the benchmark tools' tests doubled with the second corpus (697),
-    # 13-18 min of the job on a shared runner, and #860's run was cancelled in the docs build.
-    timeout-minutes: 35
+    # 25 again (2026-11-05): the operations-tooling tests that took it to 35 on 2026-10-24 (up to
+    # 19 of its 28 minutes on a small runner) moved to the unit-test shards; about 8 minutes remain.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -360,7 +371,9 @@ jobs:
         # chaoscypher.com deploys from this tree's packages/docs, so a Docusaurus
         # break passed CI green and surfaced as a site outage (#609 D3). The
         # metrics/media checks inside lint-internal-refs no-op when internal/
-        # is absent, which it is on the public tree.
+        # is absent, which it is on the public tree. The operations-tooling
+        # tests, part of lint-internal-refs until 2026-11-05, are the
+        # internal-tool-tests step, which the unit-test shards share out.
         run: uv run python scripts/run_ci.py --steps lint-internal-refs,license-check,docs-build
 
   remaining-gates:

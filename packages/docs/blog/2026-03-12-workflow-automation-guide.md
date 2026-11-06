@@ -4,6 +4,7 @@ title: "Automate Your Knowledge Pipeline: Triggers, Workflows, and AI Tools"
 authors: [denis]
 tags: [workflows, tutorials]
 date: 2026-03-12
+draft: false
 description: Build event-driven knowledge pipelines in Chaos Cypher using triggers, multi-step workflows, and composable AI tools — no manual babysitting required.
 ---
 

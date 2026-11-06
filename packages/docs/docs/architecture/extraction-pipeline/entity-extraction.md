@@ -604,11 +604,11 @@ Multiple layers of relationship limiting act as a **safety net** to prevent extr
 | Degree cap | `max_entity_degree` | 80 (the floor's) | Max relationships per entity (source + target combined) |
 | Source-type cap | `max_same_source_type` | 20 (the floor's) | Max relationships with the same (source, type) pair |
 
-These defaults are intentionally generous. Primary extraction quality comes from evidence validation, type constraints, and deduplication -- the limits above only activate when those upstream filters are insufficient. All limits can be overridden per-domain via `extraction_limits`. When trimming is needed, lower-confidence relationships are dropped first.
+These defaults are intentionally generous. Primary extraction quality comes from evidence validation, type constraints, and deduplication -- the limits above only activate when those upstream filters are insufficient. All limits can be overridden per-domain via `extraction_limits`. A relationship past a cap is **kept and flagged** `properties.capped` (keep, flag, never delete, since 2026-10-07): the highest-confidence relationships are the ones within the cap, the walk ranks a flagged one last, the canvas draws it thin, and a flagged edge counts toward no later cap. The source's `relationships_dropped_capped` counter counts the flagged ones.
 
 ### Orphan Protection
 
-Both the degree cap and the total ratio cap include **orphan protection**: if either endpoint of a relationship has fewer than 2 edges, the relationship is kept regardless of whether the other endpoint has hit the degree cap or whether the total relationship count has exceeded the ratio cap. For the total ratio cap, relationships that protect near-orphan entities are exempt from the count entirely -- they don't count toward the limit. This prevents both caps from disconnecting sparsely-connected entities that would otherwise become orphaned nodes in the graph.
+Both the degree cap and the total ratio cap include **orphan protection**: if either endpoint of a relationship has fewer than 2 edges, the relationship is exempt from the flag regardless of whether the other endpoint has hit the degree cap or whether the total relationship count has exceeded the ratio cap. For the total ratio cap, relationships that protect near-orphan entities are exempt from the count entirely -- they don't count toward the limit. This keeps a sparsely-connected entity's one or two edges unflagged, so it is not ranked last everywhere it appears.
 
 ## Distributed Extraction
 

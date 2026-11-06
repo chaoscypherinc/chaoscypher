@@ -211,8 +211,9 @@ mismatches in normalization and embedding behaviour.
 The fix: each document extracted from a multi-doc archive now carries
 its own `content_type` in metadata, derived from the individual file's
 extension (via `ContentType.from_extension()`). The archive-level
-`detection_format` is still recorded as `archive_detection_format` for
-traceability but no longer overrides per-document content-type detection.
+format is still recorded in the document's metadata as `detection_format`
+(with `detection_confidence` and `archive_file`) for traceability but no
+longer overrides per-document content-type detection.
 
 ## `LOADER_REPLACEMENT_CHARS_COUNT` rollup (Phase 2)
 

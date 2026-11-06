@@ -50,7 +50,7 @@ Steps 2 and 3 require an active network connection — they call auth-gated regi
 
 ## Logout
 
-Click your username in the top-right and choose **Log out**. This invalidates every outstanding session cookie. To wipe the credential store entirely, see [uninstalling](./uninstalling.md).
+Click your username in the top-right and choose **Logout**. This invalidates every outstanding session cookie. To wipe the credential store entirely, see [uninstalling](./uninstalling.md).
 
 ## Multi-device
 

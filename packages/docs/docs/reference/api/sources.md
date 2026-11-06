@@ -196,7 +196,7 @@ curl -X POST http://localhost/api/v1/sources/url \
 
 :::note[URL fetcher Content-Type validation]
 
-The URL fetcher validates the upstream `Content-Type` against the same allowlist used for direct file uploads (`batching.allowed_content_types`). It honors any `charset=…` parameter in the response header and routes binary responses (PDF, ZIP, DOCX, etc.) to the binary loader path so `application/pdf` URLs are no longer mishandled as HTML.
+The URL fetcher validates the upstream `Content-Type` against the same allowlist used for direct file uploads (`batching.upload_content_type_allowlist`). It honors any `charset=…` parameter in the response header and routes binary responses (PDF, ZIP, DOCX, etc.) to the binary loader path so `application/pdf` URLs are no longer mishandled as HTML.
 
 :::
 
@@ -492,7 +492,7 @@ The site's `title` is its address until the import's discovery names it.
 
 | Status | Description |
 |--------|-------------|
-| `400` | The address fails the SSRF check, or `exclude` has more than `web.site_max_pages` entries (`VALIDATION_ERROR`, field `exclude`) |
+| `400` | The address fails the SSRF check, or `exclude` has more than `web.site_max_pages` entries or an entry that names no page of the site — no scheme, a bare path, another host, or outside the site's path (`VALIDATION_ERROR`, field `exclude`) |
 | `409` | The site (the same address scope) is already imported in this database (`CONFLICT`); `details.site` is that site as a [SiteResponse](#siteresponse). Refresh it instead. |
 | `409` | LLM provider has not been verified (`LLM_NOT_VERIFIED`) |
 
@@ -644,7 +644,7 @@ curl -X POST http://localhost/api/v1/sources/sites/6f1c2a9e-4b7d-4e21-9c55-0a8d3
 
 | Status | Description |
 |--------|-------------|
-| `400` | `exclude` has more than `web.site_max_pages` entries (`VALIDATION_ERROR`) |
+| `400` | `exclude` has more than `web.site_max_pages` entries, or an entry that names no page of the site (`VALIDATION_ERROR`, field `exclude`) |
 | `404` | Site not found |
 | `409` | A live run of the site is queued or under way (`CONFLICT`; `details` carries `site_id` and `status`) |
 | `409` | LLM provider has not been verified (`LLM_NOT_VERIFIED`) |
@@ -1816,7 +1816,7 @@ curl "http://localhost/api/v1/sources/src_abc123/citations?page=1&page_size=20"
 | `page` | int | No | `1` | Page number (1-indexed) |
 | `page_size` | int | No | Server default | Items per page |
 
-**Response** `200 OK` -- [CitationListResponse](#citationlistresponse)
+**Response** `200 OK` -- [SourceCitationListResponse](#sourcecitationlistresponse)
 
 ```json
 {
@@ -2787,7 +2787,7 @@ array enriched at the API layer.
 | `summary` | string \| null | The document's one-line summary (`null` when it has none) |
 | `site_id` | string \| null | The [imported site](#docs-sites) the page belongs to (`null` otherwise) |
 | `site_gone_at` | datetime \| null | When a [refresh](#refresh-site) first found the page no longer listed on its site (`null` otherwise) |
-| `site_left_out` | bool | The site leaves this page out (unticked at import, or excluded by a refresh), so a check for updates does not check it; `false` for a page the site lists and for every other source |
+| `site_left_out` | bool | The site leaves this page out (unticked at import, or excluded by a refresh), so a check for updates does not check it. Computed only by [List Site Pages](#list-site-pages); `GET /sources` and `GET /sources/{id}` always return `false` |
 
 Refer to the [List Sources](#list-sources) response example for the full shape.
 
@@ -2858,7 +2858,7 @@ One imported site with its progress, computed from its pages.
 
 ---
 
-### CitationResponse
+### SourceCitationResponse
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -2875,11 +2875,11 @@ One imported site with its progress, computed from its pages.
 
 ---
 
-### CitationListResponse
+### SourceCitationListResponse
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `citations` | CitationResponse[] | Page of citations |
+| `citations` | SourceCitationResponse[] | Page of citations |
 | `total` | int | Total citations for this source |
 | `page` | int | Current page number |
 | `page_size` | int | Items per page |

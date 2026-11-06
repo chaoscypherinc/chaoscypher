@@ -48,11 +48,15 @@ chaoscypher chat "What are the key findings?"
 
 
 ```python
+import asyncio
 from chaoscypher_core import Engine
 
-async with Engine("./data/databases/default") as engine:
-    response = await engine.chat("What are the key findings?")
-    print(response.content)
+async def main():
+    async with Engine("./data/databases/default") as engine:
+        response = await engine.chat("What are the key findings?")
+        print(response.content)
+
+asyncio.run(main())
 ```
 
 </TabItem>
@@ -115,11 +119,15 @@ several relationship types...
 
 
 ```python
+import asyncio
 from chaoscypher_core import Engine
 
-async with Engine("./data/databases/default") as engine:
-    response = await engine.chat("How are the entities connected?")
-    print(response.content)
+async def main():
+    async with Engine("./data/databases/default") as engine:
+        response = await engine.chat("How are the entities connected?")
+        print(response.content)
+
+asyncio.run(main())
 ```
 
 :::note
@@ -182,7 +190,7 @@ By default, chat searches across all enabled sources in the current database. **
 <TabItem value="web-ui" label="Web UI">
 
 
-Open the chat dropdown on a source in the Sources list to start a source-scoped conversation. The AI will only search content from those specific documents.
+Choose **Chat with Source** in a source's action menu (the ⋮ button on its row in the Sources list) to start a source-scoped conversation. The AI will only search content from those specific documents.
 
 ![Sources list with action buttons](/img/screenshots/sources-list.png)
 
@@ -246,6 +254,18 @@ curl -X PATCH http://localhost:8080/api/v1/chats/{chat_id}/scope \
 ### Combining Scopes
 
 You can combine source IDs and tag IDs — the system merges them with deduplication.
+
+A tag scope never widens to every document. If the chosen tags carry no document and no source IDs are given, creating or re-scoping the chat is refused with a 400 error ("No document carries the chosen tags, so the chat would search nothing; choose other tags or add sources."), the same as `chaoscypher chat --tag` refusing to chat unscoped; a refused re-scope keeps the chat's current scope. With source IDs too, the chat is scoped to those sources. Tags are resolved to their documents when you set the scope: if those documents are deleted later, the chat stays scoped to them and finds nothing, rather than searching everything.
+
+### Tags the Assistant Picks
+
+The assistant's two search tools, GraphRAG Search and Semantic Search, also take `tags` and `match` (`any` or `all`), the same as the [MCP search tools](mcp.md#documents-tags-and-summaries). When you ask about documents with a given tag ("what do my `harbour` notes say about the lantern?"), the assistant can search only the documents carrying it. Tag names follow the [tag rule](sources.md#tags); a name the rule refuses comes back to the assistant as a tool error it can read.
+
+A tag the assistant picks only ever narrows the search:
+
+- **No chat scope:** the search covers only the documents carrying the tags. GraphRAG Search then takes its graph only from those documents, as the MCP tool does.
+- **A scoped chat:** the search covers the documents that are in the chat's scope *and* carry the tags. The chat's scope always applies, so a tag can never bring in a document from outside it.
+- **No match:** if no document in reach carries the tags, the search returns nothing. It never falls back to searching everything.
 
 ### Clearing Scope
 
@@ -343,7 +363,7 @@ Two automatic quality layers run on every answer:
 Chat behavior is controlled through LLM settings:
 
 - **Provider** — Ollama, OpenAI, Anthropic, or Gemini
-- **Temperature** — Controls response creativity (default: 0.3)
+- **Temperature** — Controls response creativity (default: 0)
 - **Max tokens** — Maximum response length (default: 65536)
 - **Thinking mode** — Enable to see the AI's reasoning process
 

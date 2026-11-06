@@ -4,7 +4,7 @@ import Layout from "@theme/Layout";
 import Link from "@docusaurus/Link";
 import data from "../data/leaderboard.json";
 import styles from "./leaderboard.module.css";
-import { speedFill, speedLabel } from "../lib/leaderboardScore";
+import { speedFill, speedLabel, speedTiersSentence } from "../lib/leaderboardScore";
 import { boardCorpora, boardCorpus } from "../lib/boardCorpora";
 import {
   type BoardProvenance,
@@ -846,7 +846,7 @@ function Speed({ m }: { m: Model }) {
   const lines = [
     `${label}: ${(ms / 1000).toFixed(1)} s median per probe on one 32 GB consumer GPU, ${THINKING}${run ? `; ${run}` : ""}.`,
     "One probe is a production-sized chunk group of about 3,000 characters.",
-    "Fast is under 15 s, moderate under 45 s, slow under 120 s, very slow above. Fixed thresholds, so a label never moves when other models are added.",
+    `${speedTiersSentence()}. Fixed thresholds, so a label never moves when other models are added.`,
   ];
   return (
     <td className={`${styles.gaugeCell} ${styles.hideMid}`}>
@@ -1225,7 +1225,7 @@ const HEADERS: Record<string, string[]> = {
   ],
   speed: [
     `Speed: median time per probe on one 32 GB consumer GPU, ${THINKING}`,
-    "Fast under 15 s, moderate under 45 s, slow under 120 s, very slow above. Hover a cell for the seconds.",
+    `${speedTiersSentence()}. Hover a cell for the seconds.`,
   ],
 };
 

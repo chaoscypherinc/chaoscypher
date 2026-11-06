@@ -236,6 +236,23 @@ visibility:
 | `loader_pptx_shapes_skipped` | Loading | `PPTXLoader` — shapes with no extractable text |
 | `loader_csv_rows_truncated` | Loading | `CSVLoader` — rows whose content was truncated to the per-row character cap |
 | `cleaner_plugin_load_failures` | Loading | `LoaderRegistry` — user plugin files that raised during import/instantiation |
+| `loader_epub_chapters_skipped` | Loading | `EPUBLoader` metadata rolled up by the indexing handler — spine idrefs with no manifest entry plus manifest chapters missing from the zip |
+
+### Later counters
+
+| Counter | Stage | Increment site (illustrative) |
+|---------|-------|-------------------------------|
+| `embedding_chunk_failures` | Indexing | `search/engine/index.py` — a chunk whose embedding call failed |
+| `embedding_dimension_mismatches` | Indexing | `search/engine/index.py` — a vector whose size is not `search.vector_dimensions` |
+| `vision_pages_sampled_quick_mode` | Vision | `indexing_handler` — image pages a `quick` run left undescribed (0 for `full`) |
+| `vision_pages_truncated` | Vision | The per-page vision handler when `finish_reason == 'length'` — the description hit `vision_max_output_tokens`; the partial text is kept |
+| `chunks_rerun_total` | Extraction | The source's Rerun action on a chunk row (Cortex sources feature) — manual reruns per source |
+| `relationships_type_fuzzy_matched` | Post-extraction | `extraction_finalizer` — a relationship label that was a near miss of exactly one edge template and took it |
+| `relationships_type_fell_through` | Post-extraction | `extraction_finalizer` — kept without a type check because the constraints were not strict (every plan runs strict since 2026-10-07, so 0) |
+| `llm_chunks_zero_yield` | LLM extraction | `chunk_failures.completion_counters` — a group whose model produced tokens but whose output kept no entity and no relationship |
+| `llm_chunks_rescued_by_fallback` | LLM extraction | `chunk_failures.completion_counters` — a group whose kept output came from a rung of the decode-fallback ladder |
+| `aliases_crossed_known_dropped` | Extraction (per chunk) | `ai_entities` known-entity guards — aliases dropped for naming another known entry (`properties.alias_crossed_known`) |
+| `referents_unevidenced_demoted` | Extraction (per chunk) | `ai_entities` known-entity guards — known names the cited sentences do not identify, demoted or kept flagged `properties.referent_unevidenced` |
 
 ## The increment helper
 

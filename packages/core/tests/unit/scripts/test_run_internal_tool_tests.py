@@ -47,6 +47,7 @@ def test_every_suite_runs_and_the_first_failure_is_the_steps(
         return subprocess.CompletedProcess(cmd, next(results))
 
     monkeypatch.setattr(_TOOL.subprocess, "run", fake_run)
+    monkeypatch.delenv("CI_TEST_SHARD", raising=False)
     assert _TOOL.main(["--root", str(tmp_path)]) == step
     assert [cmd[1:4] for cmd in calls] == [
         ["-m", "pytest", str(scripts.resolve())],
@@ -55,8 +56,77 @@ def test_every_suite_runs_and_the_first_failure_is_the_steps(
     assert calls[1][-2:] == ["-n", "auto"]  # the benchmark tools' suite runs in parallel
 
 
+def _two_suites(tmp_path: Path) -> None:
+    (tmp_path / "internal" / "scripts" / "tests").mkdir(parents=True)
+    (tmp_path / "internal" / "benchmarks" / "tools" / "tests").mkdir(parents=True)
+
+
+def test_each_suite_records_its_seconds_beside_the_shards_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two sessions writing the shard's one record would leave the last suite's seconds only."""
+    _two_suites(tmp_path)
+    outs: list[str | None] = []
+
+    def fake_run(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        outs.append(kw["env"].get("CI_TEST_DURATIONS_OUT"))
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(_TOOL.subprocess, "run", fake_run)
+    monkeypatch.setenv(
+        "CI_TEST_DURATIONS_OUT", str(Path("coverage-data") / "durations-shard-3.json")
+    )
+    assert _TOOL.main(["--root", str(tmp_path)]) == 0
+    assert outs == [
+        str(Path("coverage-data") / "durations-shard-3-scripts.json"),
+        str(Path("coverage-data") / "durations-shard-3-benchmarks-tools.json"),
+    ]
+    monkeypatch.delenv("CI_TEST_DURATIONS_OUT")
+    outs.clear()
+    assert _TOOL.main(["--root", str(tmp_path)]) == 0
+    assert outs == [None, None]  # no record asked for, none written
+
+
+@pytest.mark.parametrize(("shard", "step"), [("2/10", 0), (None, 5)])
+def test_an_empty_share_passes_only_in_a_shard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shard: str | None, step: int
+) -> None:
+    """A shard may get none of a small suite; unsharded, a suite that collects nothing is red."""
+    _two_suites(tmp_path)
+    monkeypatch.setattr(
+        _TOOL.subprocess, "run", lambda cmd, **_kw: subprocess.CompletedProcess(cmd, 5)
+    )
+    if shard:
+        monkeypatch.setenv("CI_TEST_SHARD", shard)
+    else:
+        monkeypatch.delenv("CI_TEST_SHARD", raising=False)
+    assert _TOOL.main(["--root", str(tmp_path)]) == step
+
+
 def test_the_ci_step_and_make_target_both_run_it() -> None:
+    """Its own step, which GitHub CI runs in every unit-test shard (each its share)."""
     root = _PATH.parents[1]
-    run_ci = (root / "scripts" / "run_ci.py").read_text(encoding="utf-8")
-    assert "scripts/run_internal_tool_tests.py" in run_ci
-    assert "scripts/run_internal_tool_tests.py" in (root / "Makefile").read_text(encoding="utf-8")
+    run_ci = _load(root / "scripts" / "run_ci.py")
+    assert run_ci._STEPS["internal-tool-tests"] == [
+        ("uv run python scripts/run_internal_tool_tests.py", None)
+    ]
+    assert not any(
+        "run_internal_tool_tests" in command for command, _ in run_ci._STEPS["lint-internal-refs"]
+    )
+    makefile = (root / "Makefile").read_text(encoding="utf-8")
+    recipe = makefile.split("\ninternal-tool-tests:\n", 1)[1].split("\n\n", 1)[0]
+    assert "uv run python scripts/run_internal_tool_tests.py" in recipe
+    import yaml
+
+    ci = yaml.safe_load((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+    shard_steps = [str(step.get("run", "")) for step in ci["jobs"]["python-tests"]["steps"]]
+    assert any("run_ci.py --steps internal-tool-tests" in run for run in shard_steps)
+    assert "CI_TEST_SHARD" in ci["jobs"]["python-tests"]["env"]
+
+
+def _load(path: Path) -> Any:
+    spec = importlib.util.spec_from_file_location(path.stem, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module

@@ -31,6 +31,11 @@ back. Which tests share an xdist worker changes with the shard packing and the s
 turns into some other test's failure in some other run: on 2026-10-16 a benchmark helper left
 ``CHAOSCYPHER_LLM_PROVIDER=mystery`` behind and three provider-factory tests failed in another shard.
 ``monkeypatch.setenv`` is restored before this check runs.
+
+The process-wide ``Settings`` singleton (``chaoscypher_core.app_config.get_settings``) is put back
+after every test the same way, without failing: many tests set it on purpose. On 2026-11-06 a
+test set ``allow_external_access=True`` and left it, and the CLI fallback's Host-header tests in
+another shard answered ``evil.example`` with a 200.
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import sys
 from collections import Counter, defaultdict
 from collections.abc import Iterator
 from pathlib import Path
@@ -145,6 +151,18 @@ def _environment_is_left_as_found() -> Iterator[None]:
         )
 
 
+@pytest.fixture(autouse=True)
+def _global_settings_are_left_as_found() -> Iterator[None]:
+    """Put back the ``get_settings()`` singleton a test replaced (``set_settings``, ``_settings``)."""
+    # The singleton has no public reader that does not load it, so read the module global.
+    app_config = sys.modules.get("chaoscypher_core.app_config")
+    before = vars(app_config).get("_settings") if app_config is not None else None
+    yield
+    app_config = sys.modules.get("chaoscypher_core.app_config")
+    if app_config is not None and vars(app_config).get("_settings") is not before:
+        app_config.set_settings(before)  # type: ignore[arg-type]  # None means "load on next use"
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_cmdline_main(config: pytest.Config) -> None:
     """``-n`` without ``--dist`` schedules with ``worksteal`` instead of xdist's ``load``."""
@@ -169,9 +187,12 @@ def _test_file(nodeid: str) -> str:
 
 
 def load_durations(path: Path) -> dict[str, float]:
-    """Per-file seconds from a JSON file, or every ``*.json`` in a directory (the larger value wins).
+    """Per-file seconds from a JSON file, or the sum over every ``*.json`` in a directory.
 
-    A missing or unreadable record is no record: the shards fall back to test counts.
+    A directory holds one run's shard records, and the shards ran disjoint tests, so a file split
+    across shards weighs the sum of its pieces. Until 2026-11-05 the larger piece won: a file cut
+    in two weighed about half its seconds, was packed light, and its shards ran long. A missing or
+    unreadable record is no record: the shards fall back to test counts.
     """
     files = sorted(path.glob("*.json")) if path.is_dir() else [path]
     merged: dict[str, float] = {}
@@ -184,7 +205,7 @@ def load_durations(path: Path) -> dict[str, float]:
             continue
         for name, seconds in data.items():
             if isinstance(seconds, int | float) and seconds >= 0:
-                merged[str(name)] = max(float(seconds), merged.get(str(name), 0.0))
+                merged[str(name)] = merged.get(str(name), 0.0) + float(seconds)
     return merged
 
 

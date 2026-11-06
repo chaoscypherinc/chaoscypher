@@ -4,6 +4,7 @@ title: "Give Any AI Assistant Direct Access to Your Knowledge Graph with MCP"
 authors: [denis]
 tags: [feature-launch]
 date: 2026-03-12
+draft: false
 description: Chaos Cypher's MCP server lets Claude Desktop, Cursor, and other AI tools query and build your knowledge graph directly — no copy-paste required.
 ---
 

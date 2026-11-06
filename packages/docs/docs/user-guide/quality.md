@@ -168,7 +168,7 @@ Get an overview of quality across your entire database:
 <TabItem value="web-ui" label="Web UI">
 
 
-The **Sources** page shows quality grades inline for each committed source. Sort by quality to see the best and worst results.
+The **Sources** page shows quality grades inline for each committed source (the list sorts by date or size; `chaoscypher source quality analyze --sort` ranks sources by grade).
 
 ![Sources list with quality score badges](/img/screenshots/sources-list.png)
 
@@ -315,8 +315,8 @@ The **Quality** grade scores how good the extracted graph is. The
 page's Overview tab — records what the pipeline silently dropped,
 deduplicated, or merged on the way to that graph.
 
-Expand the Pipeline flow panel to see a per-stage counter board with a
-counter for every silent-drop site across all pipeline stages —
+Expand the Pipeline flow panel to see a per-stage counter board — the
+counters that are non-zero for this source, grouped by pipeline stage:
 loading, normalization, chunking, LLM extraction, post-extraction, and
 commit. For the full list and per-counter semantics, see the
 [Pipeline flow & quality counters](data-quality.md) page.

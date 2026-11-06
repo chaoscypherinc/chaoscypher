@@ -75,6 +75,10 @@ packages/core/src/chaoscypher_core/
 │   └── web/           # Web adapter
 ├── services/          # Business logic
 │   └── vision/        # Vision processing (image description via LLM)
+├── cache/             # LLM response and embedding caches
+├── benchmark/         # Extraction/retrieval benchmark library shared with the CLI
+├── testing/           # Fakes and fixtures other packages' tests import
+├── data/              # Bundled data files (domain packs, presets)
 ├── streaming/         # Chat streaming subsystem
 │   └── chat/          # Shared chat tool loop, sinks, approval broker, cancellation, citations
 ├── operations/        # Queue operation handlers (importing/indexing, extraction, confirmation gate, exports)
@@ -115,6 +119,7 @@ Ports are Python `Protocol` classes that define contracts for external dependenc
 | `TriggerStorageProtocol` | Event trigger definitions |
 | `LLMMetricsStorageProtocol` | LLM usage and cost metrics |
 | `ExtractionSubmissionStorageProtocol` | MCP extraction partial results |
+| `SiteStorageProtocol` | Imported docs sites and their pages |
 
 ### Domain Protocols
 
@@ -132,7 +137,7 @@ The storage layer is **pluggable** — any class that implements the storage pro
 
 ### SQLite Adapter (Default)
 
-The default storage adapter. Implements the storage protocols (15 `storage_*` port modules) through a mixin-based architecture with ~26 specialized mixins:
+The default storage adapter. Implements the storage protocols (the `storage_*` port modules) through a mixin-based architecture of specialized mixins:
 
 - Source management (files, chunks, citations, tags)
 - Chat and message storage

@@ -75,6 +75,19 @@ def run_license_checker() -> dict:
     return json.loads(result.stdout)
 
 
+def missing_direct_dependencies(scanned: dict, package_json: dict) -> list[str]:
+    """Return the direct production deps that are absent from the scan.
+
+    Every name in package.json's `dependencies` must appear (as
+    "name@version") in the checker's output. A scanner that silently sees
+    only part of the tree would otherwise pass the gate: until 2026-11,
+    license-checker-rseidelsohn 4.x reported a single package for the whole
+    frontend production closure and the check stayed green.
+    """
+    scanned_names = {key.rsplit("@", 1)[0] if "@" in key[1:] else key for key in scanned}
+    return sorted(set(package_json.get("dependencies", {})) - scanned_names)
+
+
 def license_denied(license_text: str, denied_licenses: list[str]) -> list[str]:
     """Return the list of deny-keywords matched in `license_text`.
 
@@ -145,6 +158,17 @@ def main() -> int:
     print("Querying license-checker-rseidelsohn (frontend production deps)...")
     data = run_license_checker()
     print(f"  {len(data)} production packages to scan")
+
+    package_json = json.loads((INTERFACE_DIR / "package.json").read_text(encoding="utf-8"))
+    missing = missing_direct_dependencies(data, package_json)
+    if missing:
+        print(
+            f"ERROR: the license scan did not see {len(missing)} direct production "
+            f"dependency(ies): {', '.join(missing)}. The scanner is not reading the "
+            "whole tree, so a pass would be meaningless.",
+            file=sys.stderr,
+        )
+        return 2
 
     rows: list[dict] = []
     for full_name, info in data.items():

@@ -75,7 +75,7 @@ async def test_update_settings_propagates_to_global_get_settings(
     )
 
 
-def test_set_settings_clears_lru_cache() -> None:
+def test_set_settings_clears_lru_cache(isolated_settings: Path) -> None:
     """Smoke test for the set_settings contract used by the fix."""
     seeded = Settings()
     set_settings(seeded)

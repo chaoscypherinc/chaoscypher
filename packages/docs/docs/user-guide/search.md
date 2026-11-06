@@ -113,7 +113,7 @@ Best for: conceptual queries, finding related content, when you don't know the e
 
 ### Hybrid Search
 
-Runs keyword and semantic search together over both nodes and chunks and fuses the two rankings by reciprocal rank (rank, not score, is merged, because BM25 and cosine scores are on different scales; the top of each arm scores 1.0). Semantic matches must exceed the minimum similarity threshold (default: 0.55) to be included. Very short queries (under 3 characters) use keyword search only.
+Runs keyword and semantic search together over both nodes and chunks and fuses the two rankings by reciprocal rank (rank, not score, is merged, because BM25 and cosine scores are on different scales; a result ranked first in every arm scores 1.0, so the fused score is a rank score, not BM25 or cosine). Semantic matches must exceed the minimum similarity threshold (default: 0.55) to be included. Very short queries (under 3 characters) use keyword search only.
 
 Best for: general-purpose search that combines both approaches.
 
@@ -188,13 +188,17 @@ embedding:
   model: Qwen/Qwen3-Embedding-0.6B
 
 search:
-  enable_vector_search: true
+  enable_vector_search: true   # off: the CLI, the Python API and `chaoscypher mcp` run keyword-only (see below)
   vector_dimensions: 1024
   min_similarity_threshold: 0.55
   max_search_results: 100
   enable_rerank: true
   rerank_model_name: Alibaba-NLP/gte-reranker-modernbert-base
 ```
+
+### With vector search off
+
+`search.enable_vector_search: false` is read by the CLI, the Python `Engine` and `chaoscypher mcp`: the engine builds no embedding provider, `semantic` search is refused with a vector-search-off error, `hybrid` runs its keyword arm alone, chat embeds nothing, and the memory tools run keyword-only. Chunks and nodes written while the switch was off have no vector; `chaoscypher source rebuild-search --embed-missing` gives them one once it is back on. The web app's search does not read the switch today.
 
 ### GraphRAG Tuning
 
@@ -310,8 +314,10 @@ The Web UI has no action that embeds nodes missing an embedding. **Settings** â†
 </TabItem>
 <TabItem value="cli" label="CLI">
 
-
-Embedding generation is available via the API.
+```bash
+# Embed the chunks and nodes that have no vector yet (written while vector search was off)
+chaoscypher source rebuild-search --embed-missing
+```
 
 </TabItem>
 <TabItem value="api" label="API">

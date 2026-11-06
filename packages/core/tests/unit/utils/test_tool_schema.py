@@ -219,8 +219,11 @@ DERIVED: dict[tuple[str, str, str], list[str]] = {
     ),
     ("mcp", "get_node_edges", "properties.direction"): schema_enum(EdgeDirection),
     ("engine", "get_node_edges", "properties.direction"): schema_enum(EdgeDirection),
-    ("mcp", "graphrag_search", "properties.match"): schema_enum(TagMatch),
-    ("mcp", "search_chunks", "properties.match"): schema_enum(TagMatch),
+    **{
+        (surface, tool, "properties.match"): schema_enum(TagMatch)
+        for surface in ("mcp", "engine")
+        for tool in ("graphrag_search", "search_chunks")
+    },
     ("mcp", "list_documents", "properties.match"): schema_enum(TagMatch),
     ("mcp", "add_document", "properties.extraction_depth"): schema_enum(AnalysisDepth),
     ("mcp", "confirm_extraction", "properties.analysis_depth"): schema_enum(AnalysisDepth),
@@ -299,11 +302,9 @@ def _tool_parameter_schemas() -> Iterator[tuple[str, str, dict[str, Any]]]:
 INJECTED = {"source_ids"}
 """Handler parameters the executor fills from its scope, never a client."""
 
-NOT_ADVERTISED: dict[tuple[str, str], set[str]] = {
-    ("engine", "graphrag_search"): {"tags", "match"},
-    ("engine", "search_chunks"): {"tags", "match"},
-}
-"""Handler parameters a schema leaves out on purpose: the chat model is not offered tag scope."""
+NOT_ADVERTISED: dict[tuple[str, str], set[str]] = {}
+"""Handler parameters a schema leaves out on purpose (none today: since 0.7.2 the chat model is
+offered tag scope too, narrowing the chat's own scope)."""
 
 
 @pytest.mark.parametrize(

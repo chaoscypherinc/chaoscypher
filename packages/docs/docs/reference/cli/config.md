@@ -20,7 +20,7 @@ chaoscypher setup
 | `--provider, -p {ollama,openai,anthropic,gemini}` | LLM provider (skip selection prompt) |
 | `--vram INTEGER` | VRAM size in GB for Ollama presets |
 | `--non-interactive` | Non-interactive mode (for CI/scripts) |
-| `--test/--no-test` | Test provider connectivity (default: `--test`) |
+| `--test/--no-test` | Test provider connectivity (default: `--test`; interactive mode only — `--non-interactive` never tests) |
 | `--force, -f` | Reconfigure even if already configured |
 
 ### Example: Interactive Setup with Ollama
@@ -56,7 +56,7 @@ How much GPU VRAM do you have?
 
 Select VRAM tier [1/2/3/4/5/6/7/8] (3): 3
 Applying 24GB VRAM preset...
-  Chat model: qwen3:30b
+  Chat model: qwen3.8:27b
   Extraction model: gemma4:26b
   Vision model: qwen3-vl:30b
   Context window: 16384
@@ -413,20 +413,28 @@ The location can be overridden with the `CHAOSCYPHER_DATA_DIR` environment varia
 
 ```yaml
 # settings.yaml — unified configuration (shared with the web UI)
-current_database: default
-
-lexicon:
-  url: https://lexicon.chaoscypher.com
-  timeout: 30
+setup_completed: true
 
 llm:
   chat_provider: ollama
-  ollama_chat_model: qwen3:30b
-  ollama_extraction_model: qwen3:30b-instruct
+  ollama_instances:
+    - id: default
+      name: Default
+      base_url: http://localhost:11434
+      enabled: true
+      healthy: true
+  ollama_chat_model: qwen3.8:27b
+  ollama_extraction_model: gemma4:26b
+  ollama_vision_model: qwen3-vl:30b
+  ollama_num_ctx: 16384
 
 embedding:
-  provider: local
-  model: Qwen/Qwen3-Embedding-0.6B
+  provider: ollama
+  model: qwen3-embedding:4b
+  is_configured: true
+
+search:
+  vector_dimensions: 2560
 ```
 
 See the [Configuration guide](../../getting-started/configuration.md) for the full list of settings groups. Use `chaoscypher config set` (or `chaoscypher setup`) to change LLM/embedding/lexicon settings and `chaoscypher db switch <name>` to change `current_database`.

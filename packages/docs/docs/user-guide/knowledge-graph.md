@@ -315,11 +315,11 @@ For schema details, code examples, and trade-offs, see the architecture page: [K
 
 ## Source Groups
 
-When you import standalone images and extract entities, the resulting nodes can appear disconnected in the graph — the LLM may not produce relationships between them. **Source groups** solve this by visually grouping entities that were extracted from the same image.
+Entities extracted from one document can appear scattered across the graph — the LLM may not produce relationships between them. **Source groups** visually gather the entities that were extracted from the same source document under one root node. The nodes a source's extraction flagged as unresolved hang off that root in an **Unresolved (N)** hub; see [The Unresolved Node](domains.md#the-unresolved-node).
 
 ### How It Works
 
-- Each committed image source with extracted entities gets a **virtual source group node** in the graph canvas
+- Each committed source with extracted entities, whatever its type, gets a **virtual source group node** in the graph canvas
 - Source group nodes are **not stored** in the database — they exist only in the visualization layer
 - They don't affect search, GraphRAG, or any graph traversal operations
 

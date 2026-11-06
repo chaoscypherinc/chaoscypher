@@ -4,6 +4,7 @@ title: "Why Your RAG Chat is Missing Half the Answers (And How GraphRAG Fixes It
 authors: [denis]
 tags: [feature-launch, ai]
 date: 2026-03-12
+draft: false
 description: Why vector-only RAG fails multi-hop questions — and how Chaos Cypher's GraphRAG fuses graph traversal with semantic search to find the full chain of evidence.
 ---
 

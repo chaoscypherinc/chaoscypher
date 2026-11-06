@@ -11,7 +11,8 @@ from typing import Any
 
 import structlog
 
-from chaoscypher_core.models import EdgeDirection, ElementKind, PropertyDefinition
+from chaoscypher_core.models import EdgeDirection, ElementKind, PropertyDefinition, TagMatch
+from chaoscypher_core.policy import TAG_NAME_MAX_LENGTH, TAGS_PER_SOURCE_MAX
 from chaoscypher_core.settings import GraphRAGSettings, GraphSettings
 from chaoscypher_core.utils.tool_schema import schema_enum, schema_object
 
@@ -37,6 +38,56 @@ more were refused), did not mark ``name`` and ``display_name`` required and left
 optional field (``enum_values``, ``description``, ``default_value``, ...).
 """
 
+TAG_RULE = (
+    "Tags: lower-case a-z, 0-9, ':', '_' or '-', starting with a letter or digit, "
+    f"up to {TAG_NAME_MAX_LENGTH} characters; at most {TAGS_PER_SOURCE_MAX} per document."
+)
+"""The tag rule in one sentence, as every tag-taking schema states it (its limits from ``policy``)."""
+
+
+def tag_list_schema(description: str, *, default: bool = False) -> dict[str, Any]:
+    """A JSON Schema array of tags, its description ending with :data:`TAG_RULE`."""
+    schema: dict[str, Any] = {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": f"{description} {TAG_RULE}",
+    }
+    if default:
+        schema["default"] = []
+    return schema
+
+
+def tag_scope_schema() -> dict[str, dict[str, Any]]:
+    """A search's or listing's tag scope: ``tags`` and ``match``.
+
+    The one definition the MCP tools (``graphrag_search``, ``search_chunks``,
+    ``list_documents``) and the chat tools (``graphrag_search``,
+    ``search_chunks``) spread into their properties, so both surfaces offer
+    the same words. In chat a tag scope narrows the chat's own source scope
+    (the executor injects it as ``source_ids``; the handlers intersect), never
+    widens it.
+    """
+    return {
+        "tags": tag_list_schema(
+            "Only documents carrying these tags; [] (the default) means every document.",
+            default=True,
+        ),
+        "match": {
+            "type": "string",
+            "enum": schema_enum(TagMatch),
+            "description": "Documents carrying any (the default) or all of the tags.",
+            "default": "any",
+        },
+    }
+
+
+_CHAT_TAG_SCOPE_SENTENCE = (
+    "Pass tags to search only the documents carrying them (match: any or all); "
+    "in a chat limited to some documents, tags narrow those documents and never add others."
+)
+"""What the chat search tools say about their tag scope (the chat's own scope always applies)."""
+
+
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     # ========================================================================
     # GraphRAG Search (Primary)
@@ -50,7 +101,8 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "text simultaneously. Uses graph structure to find multi-hop connections "
                 "and related entities that pure text search would miss. Returns graph "
                 "context (entities, relationships) and relevant document chunks with "
-                "citations. Use this as your FIRST search tool for any question."
+                "citations. Use this as your FIRST search tool for any question. "
+                f"{_CHAT_TAG_SCOPE_SENTENCE}"
             ),
             "parameters": {
                 "type": "object",
@@ -69,6 +121,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "description": "Maximum seed entities to match from query",
                         "default": 10,
                     },
+                    **tag_scope_schema(),
                 },
                 "required": ["query"],
             },
@@ -113,7 +166,12 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "function",
         "function": {
             "name": "search_chunks",
-            "description": "Search document text for specific content from a particular source. Prefer graphrag_search for general questions — it searches both graph and documents. Use search_chunks only when you need to search within a specific source document by ID.",
+            "description": (
+                "Search document text for specific content from a particular source. Prefer "
+                "graphrag_search for general questions — it searches both graph and documents. "
+                "Use search_chunks only when you need to search within a specific source "
+                f"document by ID. {_CHAT_TAG_SCOPE_SENTENCE}"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -135,6 +193,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "items": {"type": "string"},
                         "description": "Optional: filter to specific source documents by ID",
                     },
+                    **tag_scope_schema(),
                 },
                 "required": ["query"],
             },
@@ -686,8 +745,12 @@ def get_essential_tool_schemas(essential_names: list[str]) -> list[dict[str, Any
 
 
 __all__ = [
+    "TAG_RULE",
+    "TEMPLATE_PROPERTY_ITEM_SCHEMA",
     "TOOL_SCHEMAS",
     "get_essential_tool_schemas",
     "get_tool_schema",
     "get_tool_schemas",
+    "tag_list_schema",
+    "tag_scope_schema",
 ]

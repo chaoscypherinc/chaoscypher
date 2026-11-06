@@ -128,6 +128,25 @@ llm:
   openai_chat_model: gpt-4.1
 ```
 
+`openai_base_url` points the OpenAI provider at any OpenAI-compatible server. To send extra
+HTTP headers with every chat request (for example a routing header a local proxy reads), set
+`openai_default_headers`:
+
+```yaml
+llm:
+  openai_default_headers:       # Extra headers on every OpenAI chat request; empty sends none
+    X-Example-Route: local
+```
+
+From the environment, give a JSON object:
+`CHAOSCYPHER_LLM__OPENAI_DEFAULT_HEADERS='{"X-Example-Route": "local"}'`. The values are treated
+as secrets: the Settings page, `chaoscypher config show` and the diagnostic bundle show each
+header's name with its value masked, and logs name the headers only. A name must be an HTTP token
+(letters, digits and `` !#$%&'*+-.^_`|~ ``, no spaces, colons or line breaks), a value must not hold a
+line break, and `Authorization` is refused, since the client sends it from `openai_api_key`. The
+headers go to the chat, extraction and import-summary calls; OpenAI embeddings are configured
+separately under `embedding` and do not get them.
+
 ### Anthropic
 
 ```yaml

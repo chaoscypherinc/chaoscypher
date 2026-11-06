@@ -86,6 +86,11 @@ _STEPS: dict[str, list[Command] | str] = {
         ("uv run python scripts/check_spdx_headers.py", None),
         ("uv run python scripts/check_metrics_artifacts.py", None),
         ("uv run python scripts/check_media_manifest.py", None),
+    ],
+    # The dev repo's operations-tooling tests (a no-op on the public tree). Part of
+    # lint-internal-refs until 2026-11-05, which put them, about ten CPU-minutes, in one GitHub CI
+    # job; the unit-test shards now run this step, each its share (CI_TEST_SHARD).
+    "internal-tool-tests": [
         ("uv run python scripts/run_internal_tool_tests.py", None),
     ],
     "docstrings": [
@@ -234,6 +239,7 @@ _COMMON = [
     "lint-claude",
     "lint-secrets",
     "lint-internal-refs",
+    "internal-tool-tests",
     "docstrings",
     "deadcode",
     "bundle-size",

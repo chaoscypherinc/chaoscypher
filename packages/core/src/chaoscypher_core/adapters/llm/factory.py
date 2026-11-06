@@ -288,6 +288,10 @@ class ProviderFactory:
             "openai_chat_model": llm.openai_chat_model,
             "openai_context_window": llm.openai_context_window,
             "openai_max_output_tokens": llm.openai_max_output_tokens,
+            # Extra headers (e.g. a local proxy's routing header); values may be tokens
+            "openai_default_headers": {
+                name: value.get_secret_value() for name, value in llm.openai_default_headers.items()
+            },
             # Anthropic
             "anthropic_api_key": (
                 llm.anthropic_api_key.get_secret_value() if llm.anthropic_api_key else None

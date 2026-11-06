@@ -382,3 +382,15 @@ def test_help_lists_tag_and_summarize() -> None:
     tag_help = CliRunner().invoke(tag, ["--help"])
     for option in ("--add", "--remove", "--replace", "--clear", "--database"):
         assert option in tag_help.output
+
+
+def test_tag_help_states_the_policy_limits() -> None:
+    """The help's limits come from ``policy``, so they cannot fall behind the rule."""
+    from chaoscypher_core.policy import TAG_NAME_MAX_LENGTH, TAGS_PER_SOURCE_MAX
+
+    result = CliRunner().invoke(tag, ["--help"])
+    assert result.exit_code == 0, result.output
+    text = " ".join(result.output.split())
+    assert f"at most {TAG_NAME_MAX_LENGTH} characters" in text
+    assert f"a document carries at most {TAGS_PER_SOURCE_MAX}." in text
+    assert "chaoscypher source tag if_abc123 --clear" in result.output

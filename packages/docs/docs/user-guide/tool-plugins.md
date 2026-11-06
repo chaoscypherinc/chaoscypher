@@ -1,7 +1,7 @@
 ---
 id: tool-plugins
 title: Tool Plugins
-description: Workflow step implementations for Chaos Cypher's automation engine — built-in AI tools, graph tools, and notification tools, plus custom Python plugins with no registration needed.
+description: Workflow step implementations for Chaos Cypher's automation engine — built-in AI, data, logic, HTTP and template tools, plus custom Python plugins with no registration needed.
 ---
 
 # Tool Plugins
@@ -15,9 +15,9 @@ Tool plugins are workflow step implementations for the automation system. Each t
 | Tool ID | Name | Description |
 |---------|------|-------------|
 | `ai.prompt` | AI Prompt | Execute LLM prompts with chunking support for long text |
-| `ai.extract_json` | AI Extract JSON | Structured data extraction using LLM with schema validation |
-| `ai.generate_embedding` | AI Generate Embedding | Generate vector embeddings for text or entities |
-| `ai.vector_search` | AI Vector Search | Semantic similarity search across indexed content |
+| `ai.extract_json` | Extract JSON | Structured data extraction using LLM with schema validation |
+| `ai.generate_embedding` | Generate Embedding | Generate vector embeddings for text or entities (fails with a vector-search-off error while `search.enable_vector_search` is off) |
+| `ai.vector_search` | Vector Search | Semantic similarity search across indexed content |
 
 ### Data Tools
 
@@ -43,7 +43,7 @@ Tool plugins are workflow step implementations for the automation system. Each t
 
 | Tool ID | Name | Description |
 |---------|------|-------------|
-| `templates.list` | Templates List | List available graph templates |
+| `templates.list` | List Templates | List available graph templates |
 
 ---
 
@@ -60,11 +60,12 @@ Execute LLM prompts with optional chunking for long documents.
 | `prompt` | string | Yes | | Main prompt text |
 | `system_prompt` | string | No | | System prompt for the LLM |
 | `context` | string | No | | Additional context text |
+| `file_id` | string | No | | Optional file ID recorded in the output metadata |
 | `output_format` | string | No | `"text"` | `"text"` or `"json"` |
 | `temperature` | float | No | From settings | LLM temperature (0.0--2.0) |
 | `max_tokens` | int | No | From settings | Max response tokens |
 | `chunk_strategy` | string | No | `"none"` | `"none"`, `"quick"`, or `"full"` |
-| `chunk_overlap` | int | No | 500 | Character overlap between chunks |
+| `chunk_overlap` | int | No | From settings (`chunking.small_chunk_overlap`) | Character overlap between chunks |
 | `thinking_mode` | string | No | | Override LLM thinking mode |
 
 **Output:** `result` (string), `model` (string), `tokens_used` (int)
@@ -79,9 +80,9 @@ Structured data extraction from text using LLM with schema validation.
 | `json_schema` | object | Yes | | JSON Schema defining expected structure |
 | `system_prompt` | string | No | Generic extraction prompt | System prompt |
 | `user_instructions` | string | No | | Additional instructions |
-| `temperature` | float | No | 0.1 | Low temperature for consistency |
+| `temperature` | float | No | From settings (`llm.extraction_temperature`, 0) | Low temperature for consistency |
 | `max_retries` | int | No | From settings | Retry count on validation failure |
-| `max_tokens` | int | No | 16384 | Max response tokens |
+| `max_tokens` | int | No | From settings (`llm.extraction_max_tokens`) | Max response tokens |
 | `enable_quality_check` | bool | No | `true` | Validate output against schema |
 
 **Output:** `extracted_data` (object matching schema)

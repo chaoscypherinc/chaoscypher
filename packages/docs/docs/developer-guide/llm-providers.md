@@ -220,6 +220,24 @@ settings = EngineSettings(
 )
 ```
 
+**Routing through a local proxy.** Any OpenAI-compatible server works through `openai_base_url`,
+including a local router that decides where each request goes. If the router reads a header (say,
+"keep this request on the local model"), set it in `openai_default_headers` and every chat,
+extraction and import-summary call carries it:
+
+```python
+settings = EngineSettings(
+    llm={
+        "chat_provider": "openai",
+        "openai_base_url": "http://127.0.0.1:8000/v1",
+        "openai_default_headers": {"X-Example-Route": "local"},
+    },
+)
+```
+
+Header values are masked like API keys wherever settings are shown, and `Authorization` cannot be
+set this way (see [Configuration](../getting-started/configuration.md#openai)).
+
 ### Anthropic
 
 ```python

@@ -23,9 +23,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from chaoscypher_core.exceptions import ValidationError
+
 
 if TYPE_CHECKING:
     from chaoscypher_core.adapters.sqlite import SqliteAdapter
+
+
+NO_DOCUMENT_CARRIES_THE_TAGS = (
+    "No document carries the chosen tags, so the chat would search nothing; "
+    "choose other tags or add sources."
+)
+"""The refusal for a chat scope whose tags carry no document (never an unscoped chat)."""
 
 
 class ChatScopeRepository:
@@ -49,31 +58,42 @@ class ChatScopeRepository:
     ) -> list[str] | None:
         """Combine explicit ``source_ids`` with tag-derived source ids.
 
-        Returns ``None`` when the combined, deduplicated set is empty
-        (this is the API contract for "no scope"). Preserves the
-        existing handler semantics, which is:
+        Returns ``None`` when neither is given or both are empty (this is
+        the API contract for "no scope"). Otherwise:
 
         - Start with ``source_ids`` as given (empty list if ``None``).
         - If ``tag_ids`` is truthy, ask the adapter for the source ids
           associated with those tags and union them in.
         - Dedupe the combined list.
 
+        A tag scope never widens to every document: when ``tag_ids`` carry
+        no document and no ``source_ids`` are given, the scope would be
+        empty, and an empty scope reads as "no scope" downstream, so the
+        request is refused instead (as ``chaoscypher chat --tag`` and the
+        MCP search tools refuse to fall back to an unscoped search). With
+        ``source_ids`` too, the scope is those sources.
+
         Note: order is NOT stable across calls because ``set`` is used
-        for dedup. The handlers that previously inlined this logic had
-        the same behavior.
+        for dedup.
 
         Args:
             source_ids: Explicit source ids from the caller.
             tag_ids: Optional tag ids whose sources should be included.
 
         Returns:
-            A deduplicated list of source ids, or ``None`` if empty.
+            A non-empty deduplicated list of source ids, or ``None`` for no scope.
+
+        Raises:
+            ValidationError: ``tag_ids`` carry no document and no
+                ``source_ids`` are given.
 
         """
         resolved: list[str] = list(source_ids) if source_ids else []
 
         if tag_ids:
             tag_source_ids = self.adapter.get_source_ids_by_tag_ids(tag_ids, self.database_name)
+            if not tag_source_ids and not resolved:
+                raise ValidationError(NO_DOCUMENT_CARRIES_THE_TAGS, field="tag_ids")
             resolved = list(set(resolved + tag_source_ids))
 
         return resolved if resolved else None

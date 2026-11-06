@@ -84,7 +84,7 @@ Add to Cursor MCP settings:
 
 ## How It Works
 
-The MCP server creates an `Engine` instance connected to your local database and exposes Chaos Cypher tools via the stdio transport. The server runs until interrupted (Ctrl+C).
+The MCP server creates an `Engine` instance connected to your local database and exposes Chaos Cypher tools via the stdio transport. The server runs until it is stopped: SIGTERM or Ctrl+C stop it cleanly, giving back a memory it was linking, and exit `143` / `130`.
 
 No Docker or Valkey required — the CLI connects directly to the SQLite database via the Core library.
 

@@ -4,7 +4,7 @@
 #
 # Run 'make' or 'make help' to see available commands
 
-.PHONY: help install lint lint-fix format typecheck test test-unit test-all test-cov test-cov-internal test-cov-interface coverage-diff coverage-diff-interface coverage-diff-advisory security docstrings deadcode deadcode-all ci ci-local ci-extended docker-test docker-ci docs docs-serve docker-dev docker-prod docker-down docker-up docker-rebuild clean clean-worktrees lint-claude lint-claude-selftest lint-secrets lint-internal-refs benchmark-list benchmark-quick benchmark-cards check-api-docs license-check license-check-python license-check-interface bundle-size mutate mutate-python mutate-interface types e2e e2e-cli e2e-docker e2e-fresh e2e-resume e2e-report-summary e2e-browser e2e-cleanup
+.PHONY: help install lint lint-fix format typecheck test test-unit test-all test-cov test-cov-internal test-cov-interface coverage-diff coverage-diff-interface coverage-diff-advisory security docstrings deadcode deadcode-all ci ci-local ci-extended docker-test docker-ci docs docs-serve docker-dev docker-prod docker-down docker-up docker-rebuild clean clean-worktrees lint-claude lint-claude-selftest lint-secrets lint-internal-refs internal-tool-tests benchmark-list benchmark-quick benchmark-cards check-api-docs license-check license-check-python license-check-interface bundle-size mutate mutate-python mutate-interface types e2e e2e-cli e2e-docker e2e-fresh e2e-resume e2e-report-summary e2e-browser e2e-cleanup
 
 # Default target
 help:
@@ -482,11 +482,14 @@ lint-secrets:
 	@echo "Secret scan passed"
 
 lint-internal-refs:
-	@echo "=== Public-export hygiene (private-docs refs + SPDX headers + metrics artifacts + media manifest + operations-tooling tests) ==="
+	@echo "=== Public-export hygiene (private-docs refs + SPDX headers + metrics artifacts + media manifest) ==="
 	uv run python scripts/check_no_internal_refs.py
 	uv run python scripts/check_spdx_headers.py
 	uv run python scripts/check_metrics_artifacts.py
 	uv run python scripts/check_media_manifest.py
+
+internal-tool-tests:
+	@echo "=== Operations-tooling tests (a no-op on the public tree) ==="
 	uv run python scripts/run_internal_tool_tests.py
 
 check-api-docs:

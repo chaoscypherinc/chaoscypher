@@ -1939,6 +1939,12 @@ _SECRET_FIELD_PATHS: set[str] = {
     "local_auth.edge_auth_token",
 }
 
+# Map-valued settings whose *values* are secrets (header values may be
+# tokens): the keys stay visible, each value is masked like an API key.
+_SECRET_MAPPING_PATHS: set[str] = {
+    "llm.openai_default_headers",
+}
+
 _MASKED_PLACEHOLDER = "configured"
 
 _DEFAULT_SECRET_KEYS: tuple[str, ...] = (
@@ -1987,6 +1993,19 @@ def is_masked_value(value: str | None) -> bool:
     return value == _MASKED_PLACEHOLDER
 
 
+def _resolve_parent(settings_dict: dict[str, Any], path: str) -> tuple[dict[str, Any], str] | None:
+    """Return ``(parent_dict, last_key)`` for a dotted ``path``, or ``None`` when absent."""
+    parts = path.split(".")
+    obj: Any = settings_dict
+    for part in parts[:-1]:
+        if not (isinstance(obj, dict) and part in obj):
+            return None
+        obj = obj[part]
+    if isinstance(obj, dict) and parts[-1] in obj:
+        return obj, parts[-1]
+    return None
+
+
 def mask_settings_dict(
     settings_dict: dict[str, Any],
     *,
@@ -2017,19 +2036,14 @@ def mask_settings_dict(
     """
     # --- Pass 1: explicit path-based masking ---
     for path in _SECRET_FIELD_PATHS:
-        parts = path.split(".")
-        obj = settings_dict
-        found = True
-        for part in parts[:-1]:
-            if isinstance(obj, dict) and part in obj:
-                obj = obj[part]
-            else:
-                found = False
-                break
-        if found:
-            key = parts[-1]
-            if isinstance(obj, dict) and key in obj:
-                obj[key] = mask_secret_value(obj[key])
+        if (found := _resolve_parent(settings_dict, path)) is not None:
+            parent, key = found
+            parent[key] = mask_secret_value(parent[key])
+    for path in _SECRET_MAPPING_PATHS:
+        if (found := _resolve_parent(settings_dict, path)) is not None:
+            parent, key = found
+            if isinstance(parent[key], dict):
+                parent[key] = {name: mask_secret_value(v) for name, v in parent[key].items()}
 
     # --- Pass 2: recursive keyword-based masking for custom secret_keys ---
     # Only string-like values are masked here. Integer/float/bool fields whose
@@ -2062,21 +2076,20 @@ def mask_settings_dict(
 
 
 def strip_masked_values(updates: dict[str, Any]) -> dict[str, Any]:
-    """Remove masked placeholder values from updates so they dont overwrite real secrets."""
+    """Remove masked placeholder values from updates so they dont overwrite real secrets.
+
+    For a map of secrets (``_SECRET_MAPPING_PATHS``) each masked entry is
+    dropped, so the settings merge keeps that entry's stored value.
+    """
     for path in _SECRET_FIELD_PATHS:
-        parts = path.split(".")
-        obj = updates
-        found = True
-        for part in parts[:-1]:
-            if isinstance(obj, dict) and part in obj:
-                obj = obj[part]
-            else:
-                found = False
-                break
-        if found:
-            key = parts[-1]
-            if isinstance(obj, dict) and key in obj and is_masked_value(obj[key]):
-                del obj[key]
+        found = _resolve_parent(updates, path)
+        if found is not None and is_masked_value(found[0][found[1]]):
+            del found[0][found[1]]
+    for path in _SECRET_MAPPING_PATHS:
+        found = _resolve_parent(updates, path)
+        if found is not None and isinstance(mapping := found[0][found[1]], dict):
+            for name in [n for n, v in mapping.items() if is_masked_value(v)]:
+                del mapping[name]
     return updates
 
 

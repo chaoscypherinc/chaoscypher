@@ -37,14 +37,15 @@ Select provider [1]:
 
 How much GPU VRAM do you have?
 
- [1]  16GB  (RTX 4080, 5080)    → qwen3.5:9b
- [2]  20GB  (RTX A4000, A4500)  → qwen3.5:9b
- [3]  24GB  (RTX 4090, 3090)    → qwen3.8:27b
- [4]  32GB  (RTX 5090)          → qwen3.6:35b-a3b
- [5]  48GB  (A6000, 2x 4090)    → qwen3.6:35b-a3b
- [6]  96GB  (RTX 6000 Pro)      → gpt-oss:120b
- [7]  128GB (DGX Spark, Ryzen AI Max+ 395) → gpt-oss:120b
- [8]  Custom                    I'll specify models manually
+  [1]  16GB  (RTX 4080, 5080)        → qwen3.5:9b     → qwen2.5:14b-instruct
+  [2]  20GB  (RTX A4000, A4500)      → qwen3.5:9b     → qwen2.5:14b-instruct
+  [3]  24GB  (RTX 4090, 3090)        → qwen3.8:27b    → gemma4:26b
+  [4]  32GB  (RTX 5090)              → qwen3.6:35b-a3b → gemma4:31b
+  [5]  48GB  (A6000, 2x 4090)        → qwen3.6:35b-a3b → gemma4:31b
+  [6]  96GB  (RTX 6000 Pro)          → gpt-oss:120b   → gemma4:31b
+  [7]  128GB (DGX Spark, Ryzen AI Max+ 395) → gpt-oss:120b → gemma4:31b
+  [8]  Custom                        I'll specify models manually
+  How these models were chosen: https://chaoscypher.com/leaderboard
 
 Select VRAM tier [3]:
 
@@ -110,7 +111,7 @@ When using Ollama, select a VRAM tier to automatically apply the optimal model c
 | 96 GB | RTX 6000 Pro | gpt-oss:120b | gemma4:31b | qwen3-vl:30b | 49152 |
 | 128 GB | DGX Spark, Ryzen AI Max+ 395 | gpt-oss:120b | gemma4:31b | qwen3-vl:30b | 65536 |
 
-Beyond the models, each preset also tunes per-tier LLM limits — Ollama batch size, `llm.ai_context_window` (matching the Ollama context window), `llm.ai_max_tokens`, and `llm.extraction_max_tokens` — and disables chat "thinking" (`llm.thinking_for_chat: false`). The presets ship as JSON plugins in `chaoscypher_core/services/presets/plugins/vram_*.json`; every value they set can be adjusted afterwards with [`chaoscypher config set`](config.md#set-a-value).
+The CLI wizard applies a preset's models and its Ollama context window (`llm.ollama_chat_model`, `ollama_extraction_model`, `ollama_vision_model`, `ollama_num_ctx`). The preset JSON plugins in `chaoscypher_core/services/presets/plugins/vram_*.json` also carry per-tier LLM limits (`ollama_num_batch`, `llm.ai_context_window`, `llm.ai_max_tokens`, `llm.extraction_max_tokens`, `llm.thinking_for_chat: false`) which the web setup wizard applies; the CLI leaves them at their defaults. Every value can be adjusted afterwards with [`chaoscypher config set`](config.md#set-a-value).
 
 Choose **Custom** to specify models manually if your hardware is not listed or you prefer different models.
 
@@ -141,17 +142,17 @@ chaoscypher setup --non-interactive
 # Explicit provider + VRAM preset in one command
 chaoscypher setup --non-interactive --provider ollama --vram 32
 
-# Skip connectivity test (useful in CI where Ollama may not be running)
-chaoscypher setup --non-interactive --provider ollama --no-test
+# Non-interactive mode never tests connectivity, so it works in CI where Ollama is not running
+chaoscypher setup --non-interactive --provider ollama
 ```
 
 **Auto-detection priority:** `OPENAI_API_KEY` → `ANTHROPIC_API_KEY` → `GEMINI_API_KEY` → `ollama`
 
-In non-interactive mode the wizard reads the API key from the provider environment variable and persists it into `settings.yaml` (same as interactive setup). Keep the env var unset at runtime only if you intend the file copy to be the source of truth, and protect the settings file accordingly.
+In non-interactive mode the wizard reads the API key from the provider environment variable and persists it into `settings.yaml` (same as interactive setup). Keep the env var unset at runtime only if you intend the file copy to be the source of truth, and protect the settings file accordingly. Non-interactive mode runs no connection test (`--test`/`--no-test` has no effect there) and configures no embedding provider; on an install that is already set up it prints `Use --force to reconfigure.` and exits 0 without changing anything.
 
 ## Reconfiguring
 
-If you have already run setup, the wizard will ask before overwriting the existing configuration. Use `--force` to bypass this prompt:
+If you have already run setup, the interactive wizard asks before overwriting the existing configuration (non-interactive mode changes nothing without `--force`). Use `--force` to bypass this prompt:
 
 ```bash
 chaoscypher setup --force
@@ -166,7 +167,7 @@ By default, the wizard tests connectivity before saving:
 - **Anthropic** — sends a minimal test message to verify the key
 - **Gemini** — validates the API key against the models list endpoint
 
-Pass `--no-test` to skip testing (for example, when setting up ahead of installing a model):
+Pass `--no-test` to skip testing in interactive mode (for example, when setting up ahead of installing a model):
 
 ```bash
 chaoscypher setup --provider ollama --no-test
@@ -176,6 +177,8 @@ If the connection test fails, you are prompted whether to continue anyway.
 
 ## Embedding Provider
 
-After LLM configuration, the wizard optionally configures the embedding provider used for semantic search and RAG. If you are using Ollama and skip this step, the embedding provider is automatically set to Ollama with the default embedding model.
+After LLM configuration, the interactive wizard optionally configures the embedding provider used for semantic search and RAG. If you are using Ollama, skip this step and no embedding provider is configured yet, the embedding provider is automatically set to Ollama with the default embedding model (a configured provider is kept).
+
+On a first setup, or when the embedding model changes, setup also writes `search.vector_dimensions` to the chosen model's native size. A re-run that keeps the model keeps the configured size and prints `Kept search.vector_dimensions …` with the two commands that move to the native size on purpose (`chaoscypher config set search.vector_dimensions N`, then `chaoscypher source rebuild-search`, which re-embeds everything).
 
 Available embedding providers: **Local CPU** (sentence-transformers), **Ollama** (GPU-accelerated), **OpenAI**, **Google Gemini**.

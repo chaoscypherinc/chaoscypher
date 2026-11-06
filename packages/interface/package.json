@@ -72,7 +72,7 @@
     "eslint-plugin-react-refresh": "^0.5.7",
     "jsdom": "^29.1.1",
     "knip": "^6.44.0",
-    "license-checker-rseidelsohn": "^4.4.2",
+    "license-checker-rseidelsohn": "^5.0.1",
     "openapi-typescript": "^7.13.0",
     "size-limit": "^12.1.0",
     "typescript": "^6.0.3",
@@ -90,6 +90,8 @@
     "undici": "^7.30.0",
     "source-map-js": "^1.2.2",
     "seroval": "^1.6.3",
-    "handlebars": "^4.7.10"
+    "handlebars": "^4.7.10",
+    "minimatch@>=7.0.0 <11.0.1": "^11.0.1",
+    "glob@>=9.0.0 <14.0.2": "^14.0.2"
   }
 }

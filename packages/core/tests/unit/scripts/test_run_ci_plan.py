@@ -35,6 +35,7 @@ _COMMON = [
     "lint-claude",
     "lint-secrets",
     "lint-internal-refs",
+    "internal-tool-tests",
     "docstrings",
     "deadcode",
     "bundle-size",

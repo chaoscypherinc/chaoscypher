@@ -1,5 +1,5 @@
 # Chaos Cypher Cortex - Full-featured backend API
-FROM python:3.14.8-slim@sha256:fbecd461fc72d21b2143c6eaba25143738079154a6d0ea3da3aec724f50eed4a AS wheels-builder
+FROM python:3.14.9-slim@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8 AS wheels-builder
 
 ENV PIP_ROOT_USER_ACTION=ignore \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -33,7 +33,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         /wheels/chaoscypher_core-*.whl \
         /wheels/chaoscypher_cortex-*.whl
 
-FROM python:3.14.8-slim@sha256:fbecd461fc72d21b2143c6eaba25143738079154a6d0ea3da3aec724f50eed4a
+FROM python:3.14.9-slim@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8
 
 WORKDIR /app
 

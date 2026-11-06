@@ -176,7 +176,8 @@ Secret fields (API keys, tokens, passwords) are always masked in responses — a
   },
   "workers": { "operations_max_concurrent": 8, "health_report_interval": 2 },
   "cors": {
-    "allowed_origins": ["http://localhost:3000", "http://localhost:8080"]
+    "allowed_origins": []
+    // empty: localhost origins are allowed automatically (dev_fallback_origins)
     // + allow_credentials, allow_methods, allow_headers
   },
   "custom_settings": {}
@@ -187,7 +188,7 @@ Secret fields (API keys, tokens, passwords) are always masked in responses — a
 
 ## Update Settings
 
-Partially update application settings. Changes are persisted to `settings.yaml`. When LLM or search settings change, workers are notified via Valkey pub/sub to hot-reload their providers without restart.
+Partially update application settings. Changes are persisted to `settings.yaml`. When the `llm`, `search`, `embedding`, `cache` or `graphrag` section changes, workers are notified via Valkey pub/sub to hot-reload their providers without restart.
 
 ```
 PATCH /api/v1/settings
@@ -227,13 +228,14 @@ curl -X PATCH http://localhost/api/v1/settings \
       "openai_api_key": "configured"
     },
     "search": {
-      "min_similarity_threshold": 0.6
+      "min_similarity_threshold": 0.6,
+      "vector_dimensions": 2560
     }
   },
   "warnings": [
     {
       "field": "search.vector_dimensions",
-      "message": "Vector dimensions changed. Existing embeddings may be orphaned and should be regenerated.",
+      "message": "Vector dimensions changed from 1024 to 2560. You have 3,400 existing embeddings that were generated at 1024 dimensions. These will be cleared and only newly indexed data will appear in vector search. To restore search for existing sources, re-extract or re-import them after this change.",
       "severity": "warning"
     }
   ]
@@ -1003,11 +1005,14 @@ curl -X POST http://localhost/api/v1/settings/reset/workflows
 {
   "success": true,
   "data": {
+    "status": "success",
     "workflows_deleted": 5,
-    "tools_deleted": 42,
+    "workflow_executions_deleted": 17,
+    "user_tools_deleted": 2,
     "triggers_deleted": 4,
+    "trigger_executions_deleted": 9,
     "workflows_created": 3,
-    "tools_created": 40,
+    "system_tools_created": 40,
     "triggers_created": 2
   }
 }
@@ -1041,8 +1046,8 @@ curl -X POST http://localhost/api/v1/settings/reset/chats
 {
   "success": true,
   "data": {
-    "chats_deleted": 12,
-    "messages_deleted": 347
+    "status": "success",
+    "chats_deleted": 12
   }
 }
 ```
@@ -1071,9 +1076,12 @@ curl -X POST http://localhost/api/v1/settings/reset/queue
 {
   "success": true,
   "data": {
-    "jobs_cancelled": 2,
-    "tasks_cleared": 58,
-    "stats_cleared": true
+    "status": "success",
+    "message": "Queue system reset successfully",
+    "tasks_cancelled": 2,
+    "tasks_deleted": 58,
+    "results_deleted": 58,
+    "queues_cleared": 3
   }
 }
 ```
@@ -1106,11 +1114,13 @@ curl -X POST http://localhost/api/v1/settings/reset/source_processing
 {
   "success": true,
   "data": {
+    "status": "success",
     "source_files_deleted": 15,
-    "chunks_deleted": 2340,
-    "embeddings_deleted": 2340,
+    "staged_chunks_deleted": 2340,
+    "entity_embeddings_deleted": 180,
+    "extraction_tasks_deleted": 15,
     "extraction_jobs_deleted": 15,
-    "imports_dir_cleared": true
+    "imports_directory_deleted": true
   }
 }
 ```
@@ -1266,9 +1276,8 @@ curl -X POST http://localhost/api/v1/settings/seed/templates
 {
   "success": true,
   "data": {
-    "templates_created": 5,
-    "templates_skipped": 20,
-    "total_templates": 25
+    "status": "success",
+    "message": "Default templates seeded successfully"
   }
 }
 ```
@@ -1546,6 +1555,7 @@ The full catalog spans these field groups:
 | `intervals_*` | Polling intervals (logs, status, chat fallback), SSE skip-poll window, MCP staleness threshold, spotlight hover debounce |
 | `cache_*` | React Query staleTime/gcTime defaults and graph-snapshot refetch intervals |
 | `http_*` | Frontend HTTP client default timeout |
+| `web_*` | Site import: page cap, preview debounce, how many left-out pages a message names |
 | (validation lengths) | `chat_title_max_length`, `chat_message_max_length`, `pause_reason_max_chars` |
 
 ---

@@ -22,7 +22,7 @@ chaoscypher memory export [OPTIONS] OUTPUT
 | `OUTPUT` | The `.ccx` file to write |
 | `--scope, -s` | Scope to export (default: every memory) |
 | `--title, -t` | Display title for the pack (default: `memory:SCOPE`, or `memory:all` without `--scope`) |
-| `--database, -d` | Database name (default: `default`) |
+| `--database, -d` | Database name (default: the current database from settings) |
 | `--help` | Show help message |
 
 ### Examples
@@ -51,10 +51,10 @@ chaoscypher memory relink [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--database, -d` | Database name (default: `default`) |
+| `--database, -d` | Database name (default: the current database from settings) |
 | `--limit, -n` | Link at most N memories, oldest first (default: every one) |
 | `--dry-run` | Print how many memories are not linked yet, by state, and link nothing |
-| `--include-empty` | Also link again the memories that linked with no facts (after a model change, say) |
+| `--include-empty` | Also link again the memories that linked with no facts (after a model change, say); with no extraction model set up it links nothing again |
 | `--help` | Show help message |
 
 ### Output
@@ -77,7 +77,7 @@ Not linked yet: 2 (0 pending, 0 linking now, 0 interrupted, 1 no model, 1 failed
 |------|---------|
 | `0` | Nothing is left unlinked (always, with `--dry-run`) |
 | `1` | An error (printed as `Error: ...`) |
-| `3` | Some memory is still not linked: its model failed, none is set up, or another process is linking it |
+| `3` | Some memory is still not linked: its model failed, none is set up, another process is linking it, or `--limit` left some for a later run |
 | `130`, `143` | Stopped by Ctrl-C (130) or SIGTERM (143); the memory it was linking is given back and links on the next run |
 
 ### Examples

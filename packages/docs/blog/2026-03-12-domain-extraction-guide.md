@@ -4,6 +4,7 @@ title: "Extract Smarter: How Domain-Aware AI Builds Better Knowledge Graphs"
 authors: [denis]
 tags: [tutorials, ai]
 date: 2026-03-12
+draft: false
 description: How domain-specific extraction in Chaos Cypher produces typed entities and meaningful relationships instead of generic, queryless knowledge graphs.
 ---
 

@@ -190,7 +190,7 @@ chaoscypher lexicon list --format json
 # Simple format (names only)
 chaoscypher lexicon list --format simple
 
-# Show all cached versions
+# Show each package's file path
 chaoscypher lexicon list --all
 ```
 

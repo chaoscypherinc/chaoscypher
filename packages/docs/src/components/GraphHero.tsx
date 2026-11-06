@@ -3,9 +3,8 @@ import Link from '@docusaurus/Link';
 import CodeBlock from '@theme/CodeBlock';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import HeroStats from './HeroStats';
+import { QUICK_RUN_CMD } from '../lib/installCommand';
 import '../css/hero.css';
-
-const RUN_CMD = `docker run -d -p 80:80 -v chaoscypher-data:/data \\\nghcr.io/chaoscypherinc/chaoscypher`;
 
 export default function GraphHero(): JSX.Element {
   const cursorRef = useRef<HTMLSpanElement>(null);
@@ -69,7 +68,7 @@ export default function GraphHero(): JSX.Element {
           </Link>
 
           <div className="hero-oneliner">
-            <CodeBlock language="bash">{RUN_CMD}</CodeBlock>
+            <CodeBlock language="bash">{QUICK_RUN_CMD}</CodeBlock>
           </div>
 
           <div className="hero-altrow">

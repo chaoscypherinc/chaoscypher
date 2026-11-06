@@ -175,7 +175,9 @@ To import every page of a documentation site at once, see [Import a Docs Site](s
 | **Images** | JPEG, PNG, GIF, WebP, TIFF, BMP (described by the vision LLM) |
 | **Audio** | MP3, WAV, M4A, FLAC, OGG, WMA, AAC (transcribed to text) |
 | **Video** | MP4, MKV, AVI, MOV, WebM, WMV, FLV (audio extracted and transcribed) |
-| **Archives** | ZIP, TAR.GZ (files extracted and processed individually) |
+| **Archives** | ZIP, TAR.GZ / TGZ (files extracted and processed individually) |
+
+The complete list of extensions each loader accepts is in [Loaders](loaders.md).
 
 :::info[File size limit]
 
@@ -280,7 +282,7 @@ Uses an LLM to extract entities (people, organizations, concepts, etc.) and rela
 **Controls:**
 
 - **Extraction depth** — `full` (comprehensive, default) or `quick` (faster, fewer entities)
-- **Domain selection** — Auto-detect or force a specific domain (e.g., technical, medical, legal)
+- **Packs** — detected automatically (you confirm the picks) or chosen by hand; every source gets the floor, see [Domains](domains.md)
 - **Cancel** — Extraction can be cancelled mid-process. Completed chunks are preserved and the source reverts to `indexed` status (RAG still works).
 
 ### Stage 3: Committing
@@ -511,7 +513,7 @@ Toggle a source's `enabled` flag to include or exclude it from:
 <TabItem value="web-ui" label="Web UI">
 
 
-Toggle the enable/disable switch on any source in the Sources list.
+Choose **Disable** (or **Enable**) in a source's action menu (the ⋮ button on its row in the Sources list).
 
 ![Sources list showing Active status chips and entity counts](/img/screenshots/sources-list.png)
 

@@ -172,7 +172,7 @@ chaoscypher source add research-paper.pdf
 │   Chunks          42                     │
 │   Entities        84                     │
 │   Relationships   112                    │
-│   Quality         92/100 (Excellent)     │
+│   Quality         92/100 (Outstanding)   │
 │   Nodes           84                     │
 │   Edges           112                    │
 │   Duration        142.8s                 │
@@ -302,7 +302,7 @@ Example Docs: 71 of 71 pages done (1 gone from the site)
 |---|---|
 | `site list` | `--format table\|json`, `--database` |
 | `site show SITE` | `--database` |
-| `site refresh SITE` | `--quick/--full`, `--skip-extract/--extract` (default: as imported), `--skip-embeddings`, `--exclude URL` (repeatable; replaces the pages left out), `--include-all` (no page left out), `--database` |
+| `site refresh SITE` | `--quick/--full`, `--skip-extract/--extract` (default: as imported), `--skip-embeddings`, `--exclude URL` (repeatable; replaces the pages left out), `--include-all` (no page left out; not with `--exclude`), `--database` |
 | `site delete SITE` | `--delete-pages`, `--yes`, `--database` |
 
 ## List Sources
@@ -511,7 +511,7 @@ chaoscypher source get if_a1b2c3d4e5f6
  Extract Entities    Yes
 
 Quality Score:
- Grade               92/100 (Excellent)
+ Grade               92/100 (Outstanding)
  Entity Quality      88/100
  Relationship Quality 94/100
  Topology Score      91/100
@@ -656,11 +656,11 @@ chaoscypher source search "machine learning algorithms"
 
 | Mode | Description | Embeddings Required |
 |------|-------------|:-------------------:|
-| `hybrid` | Semantic + keyword combined (most robust) | Yes |
+| `hybrid` | Semantic + keyword combined (most robust) | No — with vector search off (`search.enable_vector_search: false`) the keyword arm runs alone |
 | `keyword` | Fast full-text search | No |
 | `semantic` | Pure vector similarity | Yes |
 
-Semantic and hybrid modes use the configured embedding provider — by default the local CPU sentence-transformers provider, which needs no LLM and no API key. Hybrid mode internally falls back to keyword-only results for very short queries (fewer than 3 characters); semantic mode returns vector results only.
+Semantic and hybrid modes use the configured embedding provider — by default the local CPU sentence-transformers provider, which needs no LLM and no API key. Hybrid mode internally falls back to keyword-only results for very short queries (fewer than 3 characters) and runs its keyword arm alone when vector search is off; semantic mode returns vector results only and is refused when vector search is off.
 
 ### Sample Table Output
 
@@ -714,7 +714,7 @@ chaoscypher source search "neural networks" --format json
 
 ## Rebuild Search Indexes
 
-Rebuild search indexes with auto-detection of whether embeddings need regeneration. If the embedding model or dimensions have changed since the indexes were last built, all embeddings are regenerated. Otherwise, only the FTS full-text index is rebuilt (fast).
+Rebuild search indexes with auto-detection of whether embeddings need regeneration. If the embedding model or dimensions have changed since the indexes were last built, all embeddings are regenerated. Otherwise, the keyword and vector indexes are rebuilt from the stored embeddings (fast, no model call). When a re-embed is needed but vector search is off, the command prints the vector-search-off error and exits 1.
 
 ```bash
 chaoscypher source rebuild-search
