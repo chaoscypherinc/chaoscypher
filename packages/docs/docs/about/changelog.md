@@ -12,6 +12,20 @@ Entries from June 2026 onward are grouped by release so you can map them to the 
 
 ### November 2026
 
+#### v0.7.1 (2026-11-06)
+
+##### Fixes
+
+- **MCP `create_template` accepts every property type again.** 0.7.0 checks a tool's arguments against its advertised schema before the tool runs, and `create_template` listed only six property types, so `datetime`, `integer`, `float`, `url`, `email`, `json`, `node_reference` and `node_reference_list` were refused with `Input validation error: 'datetime' is not one of [...]` (0.6.0 accepted them). The schema now lists every [property type](../reference/api/templates.md#propertytype). It no longer lists `number`, which was never a property type: a template using it was refused when the tool ran; use `integer` or `float`. The other enums in the MCP and workflow tool schemas (template types, edge directions, tag `match`, extraction depth) are now built from the same definitions the code uses, so they cannot fall behind again.
+- **MCP `create_template` describes a property the way templates store it.** Each property's schema is now built from the property model itself. It lists every field a property can have (`description`, `enum_values`, `default_value`, `validation_pattern`, `allowed_node_types`), not just four, so a client can set an enum property's allowed values. It marks `name`, `display_name` and `property_type` as required, so a property missing one is refused before the tool runs, with a message naming the field, instead of failing inside it. A field the model doesn't have, such as `data_type`, is refused the same way.
+- **`confirm_extraction` lists its filtering presets.** `filtering_mode` now offers the six preset names (`maximum` to `unfiltered`) in its schema, so a misspelled preset is refused before the tool runs.
+
+##### Developer notes
+
+- A new lint rule, `CC053`, fails `make lint-claude` when a schema `"enum"`, a `click.Choice` or an inline `Literal` copies the values of a `StrEnum` or `Literal` type by hand. Build the list from the type instead (`schema_enum(...)`, `get_args(...)`), or mark a list that only looks like a copy with `# noqa: CC053 - <reason>`. The CLI's `template` and `source search` choices, Cortex's search type, a domain's role, a plugin's origin and a few others now come from their types.
+
+> **Before upgrading, let the queue go idle.** Stop new submissions and wait until `/api/v1/queue/stats` reports 0 pending tasks on every queue, then swap the image. This release changes no queue payloads and adds no migrations. Draining first is still the safe default, because the worker cannot negotiate payload versions yet.
+
 #### v0.7.0 (2026-11-05)
 
 ##### Features

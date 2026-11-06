@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from chaoscypher_core.models import EdgeCreate
+from chaoscypher_core.models import EdgeCreate, EdgeDirection
 from chaoscypher_core.ports.search import item_in_source_scope
 from chaoscypher_core.services.workflows.tools.engine.handlers.decorators import tool_handler
 from chaoscypher_core.services.workflows.tools.engine.handlers.template_lookup import (
@@ -146,7 +146,7 @@ class EdgeToolHandlers:
     async def get_node_edges(
         self,
         node_id: str,
-        direction: str = "both",
+        direction: EdgeDirection = "both",
         edge_type: str | None = None,
         limit: int = 50,
         source_ids: list[str] | None = None,

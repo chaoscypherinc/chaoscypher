@@ -39,6 +39,7 @@ from pydantic import (
 )
 
 from chaoscypher_core.constants import SOURCE_ROW_FILTERING_MODE
+from chaoscypher_core.models import MCPMode
 from chaoscypher_core.question_shapes import PRE_SHAPE_FIELDS, SHAPE_NAMES
 
 
@@ -1665,7 +1666,7 @@ class MemorySettings(BaseModel):
 class MCPSettings(BaseModel):
     """MCP server configuration."""
 
-    mode: Literal["read", "write"] = Field(
+    mode: MCPMode = Field(
         default="read",
         description="Tool access mode: 'read' for read-only, 'write' for full access",
     )

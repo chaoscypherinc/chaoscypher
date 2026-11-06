@@ -71,15 +71,15 @@ make lint-fix      # Auto-fix
 
 ### Custom Rules
 
-`make lint-claude` enforces 38 custom architectural rules (numbered `CC001` through `CC051`, with reserved gaps) across three engines:
+`make lint-claude` enforces 40 custom architectural rules (numbered `CC001` through `CC053`, with reserved gaps) across three engines:
 
 | Engine | Enforces | Rules |
 |--------|----------|-------|
 | **import-linter** (contracts in `pyproject.toml`) | Module boundaries — layering, framework isolation in core | `CC010`, `CC012`–`CC014`, `CC042`, `CC043` |
-| **semgrep** (`tools/semgrep/rules/cc-NNN-shortname.yml`) | Code patterns — naming conventions, forbidden expressions, missing calls | 26 rules: `CC001`, `CC003`, `CC005`–`CC009`, `CC015`, `CC019`, `CC022`/`CC023`, `CC026`–`CC029`, `CC031`, `CC033`, `CC038`, `CC040`/`CC041`, `CC045`–`CC050` |
-| **AST checker** (`scripts/lint_claude_rules.py`) | Rules needing data-flow or cross-file analysis | `CC002`, `CC004`, `CC011`, `CC018`, `CC044`, `CC051` |
+| **semgrep** (`tools/semgrep/rules/cc-NNN-shortname.yml`) | Code patterns — naming conventions, forbidden expressions, missing calls | 27 rules: `CC001`, `CC003`, `CC005`–`CC009`, `CC015`, `CC019`, `CC022`/`CC023`, `CC026`–`CC029`, `CC031`, `CC033`, `CC038`, `CC040`/`CC041`, `CC045`–`CC050`, `CC052` |
+| **AST checker** (`scripts/lint_claude_rules.py`) | Rules needing data-flow or cross-file analysis | `CC002`, `CC004`, `CC011`, `CC018`, `CC044`, `CC051`, `CC053` |
 
-Examples: `CC001` — factory functions must be named `get_{feature}_service()`; `CC002` — data type boundary violations (entity attribute access on storage dicts); `CC003` — SQLAlchemy list methods without `load_only()`; `CC011` — writes in repositories must use `adapter.transaction()`; `CC033` — API route handlers must be `async def`.
+Examples: `CC001` — factory functions must be named `get_{feature}_service()`; `CC002` — data type boundary violations (entity attribute access on storage dicts); `CC003` — SQLAlchemy list methods without `load_only()`; `CC011` — writes in repositories must use `adapter.transaction()`; `CC033` — API route handlers must be `async def`; `CC053` — a schema `"enum"`, `click.Choice` or inline `Literal` must not copy a `StrEnum`'s or `Literal` alias's values by hand (build it from the type, or mark a list that only looks like a copy `# noqa: CC053 - <reason>`).
 
 #### Adding a new rule
 

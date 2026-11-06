@@ -29,12 +29,17 @@ from pydantic import (
     model_validator,
 )
 
+from chaoscypher_core.services.sources.engine.deduplication.name_identity import Gender
 from chaoscypher_core.services.sources.engine.extraction.domains.core_types import (
     CORE_LABELS,
     CORE_TYPES,
     FLOOR_LIMITS,
     FLOOR_NAME,
 )
+
+
+DomainRole = Literal["floor", "pack"]
+"""A domain's place: ``'floor'`` for the one built-in generic plugin, ``'pack'`` for every other."""
 
 
 class ContentExclusions(BaseModel):
@@ -161,7 +166,7 @@ class NameFormSpec(BaseModel):
 
     ending: str = Field(..., min_length=1, description="The word ending, folded spelling")
     stem: str = Field(..., description="What the ending becomes in the family stem")
-    gender: Literal["f", "m"] | None = Field(default=None, description="Gender the ending says")
+    gender: Gender | None = Field(default=None, description="Gender the ending says")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -382,7 +387,7 @@ class DomainConfigModel(BaseModel):
 
     name: str = Field(..., description="Domain identifier")
     description: str = Field(default="", description="Human-readable description")
-    role: Literal["floor", "pack"] = Field(
+    role: DomainRole = Field(
         ..., description="'floor' for the one built-in generic plugin, 'pack' for every other"
     )
     extends: str | None = Field(default=None, description="'core' for every pack")

@@ -18,6 +18,7 @@ from pydantic import (
 from chaoscypher_core.models import AnalysisDepth, SiteStatus, SourceStatus
 from chaoscypher_core.operations.sources.url_import_options import url_upload_options
 from chaoscypher_core.ports.types import FilteringMode
+from chaoscypher_core.services.sources.engine.extraction.domains.config_schema import DomainRole
 from chaoscypher_core.services.sources.tags import (
     TagName,
     TagNames,
@@ -1457,7 +1458,7 @@ class DomainInfo(BaseModel):
             "Defaults to 1.0 and may be overridden per domain."
         )
     )
-    role: Literal["floor", "pack"] = Field(
+    role: DomainRole = Field(
         default="pack",
         description=(
             "'floor' for the floor every source extracts with (generic), 'pack' "

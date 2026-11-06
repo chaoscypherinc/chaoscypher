@@ -11,6 +11,7 @@ cleanly (data-flow tracking, per-file allowlists with line-level opt-outs):
 - CC018 Secret-carrying Pydantic field typed as str (use SecretStr)
 - CC044 Queue registration must match OPERATION_QUEUE_ROUTING
 - CC051 Session-routed write followed by an await without a commit
+- CC053 A literal string list that copies a StrEnum's or Literal alias's values
 The rules semgrep and import-linter took over are listed under --help.
 
 Usage:
@@ -906,6 +907,227 @@ def _scan_async_for_held_session(
     return violations
 
 
+# ---------------------------------------------------------------------------
+# CC053 — a hand-written copy of a StrEnum's or Literal alias's values
+# ---------------------------------------------------------------------------
+
+_CC053_SRC_PACKAGES: tuple[str, ...] = ("core", "cortex", "neuron", "cli")
+_CC053_ENUM_BASES: frozenset[str] = frozenset({"StrEnum", "Enum"})
+_CC053_MARKER = "noqa: CC053"
+_CC053_SOURCES_CACHE: dict[frozenset[str], str] | None = None
+
+
+def _string_values(node: ast.expr | None) -> list[str] | None:
+    """The strings of a list / tuple / ``Literal[...]`` slice of string constants, else None."""
+    if isinstance(node, (ast.List, ast.Tuple)):
+        items = node.elts
+    elif isinstance(node, ast.Constant):
+        items = [node]
+    else:
+        return None
+    values = [i.value for i in items if isinstance(i, ast.Constant) and isinstance(i.value, str)]
+    return values if len(values) == len(items) else None
+
+
+def _literal_subscript_values(node: ast.AST) -> list[str] | None:
+    """The values of ``Literal["a", "b"]`` (or ``typing.Literal[...]``), else None."""
+    if not isinstance(node, ast.Subscript):
+        return None
+    name = node.value
+    if not (
+        (isinstance(name, ast.Name) and name.id == "Literal")
+        or (isinstance(name, ast.Attribute) and name.attr == "Literal")
+    ):
+        return None
+    return _string_values(node.slice)
+
+
+def _alias_literal(stmt: ast.stmt) -> tuple[str, ast.Subscript] | None:
+    """``X = Literal[...]``, ``X: TypeAlias = Literal[...]`` or ``type X = Literal[...]``."""
+    if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+        target, value = stmt.targets[0], stmt.value
+    elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+        target, value = stmt.target, stmt.value
+    elif isinstance(stmt, ast.TypeAlias):
+        target, value = stmt.name, stmt.value
+    else:
+        return None
+    if (
+        isinstance(target, ast.Name)
+        and isinstance(value, ast.Subscript)
+        and _literal_subscript_values(value) is not None
+    ):
+        return target.id, value
+    return None
+
+
+def _value_sources_in(tree: ast.Module, module: str) -> dict[frozenset[str], str]:
+    """Every module-level ``StrEnum`` class and ``Literal`` alias in one module, by value set."""
+    found: dict[frozenset[str], str] = {}
+    for stmt in tree.body:
+        values: list[str] | None = None
+        if isinstance(stmt, ast.ClassDef):
+            bases = {
+                b.id if isinstance(b, ast.Name) else getattr(b, "attr", "") for b in stmt.bases
+            }
+            if bases & _CC053_ENUM_BASES:
+                values = [
+                    item.value.value
+                    for item in stmt.body
+                    if isinstance(item, ast.Assign)
+                    and isinstance(item.value, ast.Constant)
+                    and isinstance(item.value.value, str)
+                ]
+            name = stmt.name
+        elif (alias := _alias_literal(stmt)) is not None:
+            name, subscript = alias
+            values = _literal_subscript_values(subscript)
+        if values and len(set(values)) >= 2:
+            found.setdefault(frozenset(values), f"{module}.{name}")
+    return found
+
+
+def _load_value_sources() -> dict[frozenset[str], str]:
+    """The value sets of every ``StrEnum`` and ``Literal`` alias in the Python packages. Cached."""
+    global _CC053_SOURCES_CACHE
+    if _CC053_SOURCES_CACHE is not None:
+        return _CC053_SOURCES_CACHE
+    repo_root = Path(__file__).resolve().parent.parent
+    sources: dict[frozenset[str], str] = {}
+    for package in _CC053_SRC_PACKAGES:
+        src = repo_root / "packages" / package / "src"
+        for path in sorted(src.rglob("*.py")) if src.is_dir() else []:
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):  # fmt: skip
+                continue
+            module = ".".join(path.relative_to(src).with_suffix("").parts)
+            for values, name in _value_sources_in(tree, module).items():
+                sources.setdefault(values, name)
+    _CC053_SOURCES_CACHE = sources
+    return sources
+
+
+def _copied_source(values: list[str], sources: dict[frozenset[str], str]) -> str | None:
+    """The source a literal list copies, or None.
+
+    A copy shares two or more values with the source, and they are half or
+    more of its own values; and either three or more are shared or they are
+    half or more of the source's (two common words such as ``text`` and
+    ``json`` are not a copy of a thirteen-value enum that contains them).
+    """
+    wanted = set(values)
+    best: tuple[int, str] | None = None
+    for source_values, name in sources.items():
+        shared = len(wanted & source_values)
+        if shared < 2 or shared * 2 < len(wanted):
+            continue
+        if shared < 3 and shared * 2 < len(source_values):
+            continue
+        if best is None or shared > best[0]:
+            best = (shared, name)
+    return best[1] if best else None
+
+
+def check_copied_enum_values(  # noqa: C901, PLR0912 - one branch per literal shape
+    file_path: Path,
+    tree: ast.AST,
+    sources: dict[frozenset[str], str] | None = None,
+) -> list[Violation]:
+    """CC053: a literal list of strings that copies a ``StrEnum``'s or ``Literal`` alias's values.
+
+    0.7.0 shipped MCP ``create_template`` with a ``property_type`` schema enum
+    copied by hand from ``PropertyType``; the model gained members, the copy
+    did not, and the server refused ``datetime``. A copy kept in step by hand
+    drifts, so build the list from the type instead: ``schema_enum(T)`` for a
+    tool schema, ``list(get_args(T))`` / ``[m.value for m in T]`` for a
+    ``click.Choice``, the alias itself for an annotation.
+
+    Fires, in production code under ``packages/{core,cortex,neuron,cli}/src``,
+    on three shapes whose strings copy a module-level ``StrEnum`` / ``Enum``
+    class or ``X = Literal[...]`` alias anywhere in those packages (see
+    ``_copied_source`` for what counts as a copy):
+
+    - a schema ``"enum": [...]`` entry;
+    - ``click.Choice([...])`` / ``Choice([...])``;
+    - an inline ``Literal["a", "b"]`` annotation (an alias definition is a
+      source, not a copy).
+
+    A list that only looks like a copy (its own values, read by one tool)
+    opts out with ``# noqa: CC053 - <reason>`` on any line of the list; the
+    reason is required.
+    """
+    violations: list[Violation] = []
+    parts = str(file_path).replace("\\", "/").split("/")
+    if "tests" in parts or "src" not in parts:
+        return violations
+    if sources is None:
+        sources = _load_value_sources()
+    try:
+        lines = file_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):  # fmt: skip
+        lines = []
+
+    def opted_out(node: ast.AST) -> bool | None:
+        """True with a reason, None for a bare marker, False with no marker."""
+        start = getattr(node, "lineno", 0)
+        end = getattr(node, "end_lineno", start) or start
+        for line in lines[max(start - 1, 0) : end]:
+            if _CC053_MARKER in line:
+                reason = line.split(_CC053_MARKER, 1)[1].strip(" -—:")
+                return True if reason else None
+        return False
+
+    aliases = {
+        id(alias[1])
+        for stmt in getattr(tree, "body", [])
+        if (alias := _alias_literal(stmt)) is not None
+    }
+    found: list[tuple[ast.AST, list[str], str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values, strict=False):
+                if isinstance(key, ast.Constant) and key.value == "enum":
+                    values = _string_values(value)
+                    if values and isinstance(value, (ast.List, ast.Tuple)):
+                        found.append((value, values, 'schema "enum"'))
+        elif isinstance(node, ast.Call) and node.args:
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+            arg = node.args[0]
+            if name == "Choice" and isinstance(arg, (ast.List, ast.Tuple)):
+                values = _string_values(arg)
+                if values:
+                    found.append((arg, values, "click.Choice"))
+        elif id(node) not in aliases:
+            values = _literal_subscript_values(node)
+            if values:
+                found.append((node, values, "Literal annotation"))
+
+    for node, values, shape in found:
+        source = _copied_source(values, sources)
+        if source is None:
+            continue
+        marker = opted_out(node)
+        if marker:
+            continue
+        hint = (
+            "add the reason after the marker"
+            if marker is None
+            else f"build it from {source} (schema_enum / get_args / the alias), or mark it "
+            "'# noqa: CC053 - <why it is not a copy>'"
+        )
+        violations.append(
+            Violation(
+                file=file_path,
+                line=getattr(node, "lineno", 0),
+                rule="CC053",
+                message=f"{shape} {values} copies the values of {source}; {hint}",
+            )
+        )
+    return violations
+
+
 def check_file(file_path: Path) -> list[Violation]:
     """Run all CLAUDE.md rule checks on a file."""
     violations = []
@@ -945,6 +1167,9 @@ def check_file(file_path: Path) -> list[Violation]:
     # CC051 — session-routed write followed by await without commit
     violations.extend(check_session_held_across_await(file_path, tree))
 
+    # CC053 — a literal list that copies a StrEnum's / Literal alias's values
+    violations.extend(check_copied_enum_values(file_path, tree))
+
     return violations
 
 
@@ -974,6 +1199,7 @@ Rules:
   CC018  Secret-carrying Pydantic field typed as 'str' (use 'SecretStr')
   CC044  queue_client.register_handlers(QUEUE_X, {op: fn}) op-name -> queue mapping disagrees with OPERATION_QUEUE_ROUTING in chaoscypher_core.constants; see QUEUE_ROUTING.md
   CC051  session-routed write (`something(..., session=session)`) followed by `await` with no intervening `session.commit()` / `_maybe_commit()` inside an async function on the queue path — the SQLite writer lock is held across the await, starving sibling handlers (2026-05-21 writer-lock-contention regression class)
+  CC053  literal string list (schema "enum", click.Choice, inline Literal) copying a StrEnum's or Literal alias's values; build it from the type, or '# noqa: CC053 - <reason>'
 
 Rules now enforced by import-linter (see pyproject.toml [tool.importlinter];
 run via `uv run lint-imports` or `make lint-claude`):
@@ -1014,6 +1240,7 @@ or `make lint-claude`):
   CC048  Hardcoded Field(max_length=N) on Pydantic models
   CC049  Reference to a legacy extraction_chunks_* field
   CC050  Reference to a legacy dropped vision column
+  CC052  loop.run_in_executor(...) in Core without the caller's context
         """,
     )
     parser.add_argument(

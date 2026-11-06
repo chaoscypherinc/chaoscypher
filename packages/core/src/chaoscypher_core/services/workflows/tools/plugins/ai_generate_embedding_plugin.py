@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from chaoscypher_core.exceptions import NotFoundError, OperationError, ValidationError
+from chaoscypher_core.models import ElementKind
+from chaoscypher_core.utils.tool_schema import schema_enum
 
 
 if TYPE_CHECKING:
@@ -69,7 +71,7 @@ class EmbeddingPlugin:
                 "entity_id": {"type": "string", "description": "Entity ID to fetch and embed"},
                 "entity_type": {
                     "type": "string",
-                    "enum": ["node", "edge"],
+                    "enum": schema_enum(ElementKind),
                     "description": "Type of entity (required with entity or entity_id)",
                 },
             },

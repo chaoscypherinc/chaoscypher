@@ -45,6 +45,10 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+PluginOrigin = Literal["builtin", "entry_point", "user"]
+"""The discovery layer a plugin was registered from."""
+
+
 class PluginMetadata(BaseModel):
     """Standard metadata that all plugins provide.
 
@@ -114,7 +118,7 @@ class PluginMetadata(BaseModel):
         default=None,
         description="Optional predicate deciding applicability.",
     )
-    origin: Literal["builtin", "entry_point", "user"] = Field(
+    origin: PluginOrigin = Field(
         default="builtin",
         description="Discovery layer the registry registered this plugin from.",
     )

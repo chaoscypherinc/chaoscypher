@@ -1790,8 +1790,116 @@ class TestCreateTemplateSchemaIsTheOneTheHandlerAccepts:
         assert items is TEMPLATE_PROPERTY_ITEM_SCHEMA
         registry = TOOL_SCHEMAS["create_template"]["function"]["parameters"]
         assert registry["properties"]["properties"]["items"] is TEMPLATE_PROPERTY_ITEM_SCHEMA
-        assert set(items["properties"]) == {"name", "display_name", "property_type", "required"}
+        from chaoscypher_core.models import PropertyDefinition
+
+        assert set(items["properties"]) == set(PropertyDefinition.model_fields)
         assert "data_type" not in items["properties"]
+
+
+class TestCreateTemplateAcceptsEveryPropertyType:
+    """0.7.0: the SDK checks arguments against the advertised ``inputSchema`` before a tool
+    runs, and the schema's hand-copied ``property_type`` enum (string, text, number, boolean,
+    date, enum) refused ``datetime`` and seven more ``PropertyType`` members the model accepts.
+    """
+
+    @staticmethod
+    async def _call(arguments: dict[str, Any]) -> tuple[Any, AsyncMock]:
+        import mcp.types
+
+        from chaoscypher_core.mcp.bridge import BridgeResult
+        from chaoscypher_core.mcp.server import create_mcp_server
+
+        server = create_mcp_server(_engine())
+        handler = server.request_handlers[mcp.types.CallToolRequest]
+        ran = AsyncMock(return_value=BridgeResult(text='{"success": true}', is_error=False))
+        with patch("chaoscypher_core.mcp.bridge.MCPToolBridge.execute", ran):
+            req = mcp.types.CallToolRequest(
+                method="tools/call",
+                params=mcp.types.CallToolRequestParams(name="create_template", arguments=arguments),
+            )
+            return (await handler(req)).root, ran
+
+    @pytest.mark.asyncio
+    async def test_every_property_type_passes_the_servers_input_validation(self) -> None:
+        from chaoscypher_core.models import PropertyDefinition, PropertyType
+
+        properties = [
+            {"name": f"field_{t.value}", "display_name": t.value.title(), "property_type": t.value}
+            for t in PropertyType
+        ]
+        result, ran = await self._call(
+            {"name": "Reminder", "template_type": "node", "properties": properties}
+        )
+        assert result.isError is False, result.content[0].text
+        ran.assert_awaited_once()
+        # what reached the tool is what the handler builds its PropertyDefinitions from
+        sent = ran.await_args.args[1]["properties"]
+        assert [PropertyDefinition(**p).property_type for p in sent] == list(PropertyType)
+
+    @pytest.mark.asyncio
+    async def test_a_property_with_every_optional_field_is_accepted(self) -> None:
+        """0.7.0's hand-written item schema advertised four fields; the model has nine."""
+        from chaoscypher_core.models import PropertyDefinition
+
+        full = {
+            "name": "status",
+            "display_name": "Status",
+            "property_type": "enum",
+            "required": True,
+            "default_value": "open",
+            "enum_values": ["open", "closed"],
+            "description": "Where the ticket stands.",
+            "validation_pattern": "^[a-z]+$",
+            "allowed_node_types": ["tmpl_ticket"],
+        }
+        assert set(full) == set(PropertyDefinition.model_fields)  # every field, no more
+        result, ran = await self._call(
+            {"name": "Ticket", "template_type": "node", "properties": [full]}
+        )
+        assert result.isError is False, result.content[0].text
+        (sent,) = ran.await_args.args[1]["properties"]
+        assert PropertyDefinition(**sent).model_dump() == full
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("missing", ["name", "display_name", "property_type"])
+    async def test_a_property_without_a_required_field_is_refused_at_the_schema(
+        self, missing: str
+    ) -> None:
+        """The model requires these three; the hand-written schema required none of them."""
+        prop = {"name": "n", "display_name": "N", "property_type": "string"}
+        del prop[missing]
+        result, ran = await self._call(
+            {"name": "Reminder", "template_type": "node", "properties": [prop]}
+        )
+        assert result.isError is True
+        assert "Input validation error" in result.content[0].text
+        assert missing in result.content[0].text
+        ran.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_property_field_is_refused_at_the_schema(self) -> None:
+        """``PropertyDefinition`` forbids extras, and so does the schema built from it."""
+        prop = {"name": "n", "display_name": "N", "property_type": "string", "data_type": "x"}
+        result, ran = await self._call(
+            {"name": "Reminder", "template_type": "node", "properties": [prop]}
+        )
+        assert result.isError is True
+        assert "Input validation error" in result.content[0].text
+        ran.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_value_outside_the_model_is_still_refused(self) -> None:
+        """The validation the test above passes is real: ``number`` was never a member."""
+        result, ran = await self._call(
+            {
+                "name": "Reminder",
+                "template_type": "node",
+                "properties": [{"name": "n", "display_name": "N", "property_type": "number"}],
+            }
+        )
+        assert result.isError is True
+        assert "Input validation error" in result.content[0].text
+        ran.assert_not_awaited()
 
 
 class TestNoEmbedderWhenVectorSearchIsOff:

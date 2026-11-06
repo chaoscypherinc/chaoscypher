@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from chaoscypher_core.models import SearchMode
+
 
 class SearchNodeHit(BaseModel):
     """Projection of a graph node as it appears in search results.
@@ -74,7 +76,7 @@ class SearchResponse(BaseModel):
     """Search results response."""
 
     data: list[SearchResult]
-    type: Literal["keyword", "semantic", "hybrid"]
+    type: SearchMode
 
 
 class SearchStatistics(BaseModel):

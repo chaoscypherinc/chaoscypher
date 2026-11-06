@@ -86,6 +86,10 @@ def _one_line(text: str) -> str:
     return " ".join(text.split())
 
 
+ProvenanceKind = Literal["memory", "doc", "pack"]
+"""What a fact's source is: a memory, a document, or an imported pack."""
+
+
 @dataclass(frozen=True)
 class Provenance:
     """Where a fact or a chunk comes from, as the notation shows it.
@@ -102,7 +106,7 @@ class Provenance:
             leave out what a rendered fact already cites; never rendered.
     """
 
-    kind: Literal["memory", "doc", "pack"]
+    kind: ProvenanceKind
     by: str | None
     name: str | None
     valid_from: date | None

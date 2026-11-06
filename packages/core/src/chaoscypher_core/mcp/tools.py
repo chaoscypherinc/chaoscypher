@@ -13,15 +13,22 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal, get_args
 
 from chaoscypher_core.benchmark.retrieval import RETRIEVAL_MODES
 from chaoscypher_core.mcp.benchmark.suites import SUITES, all_stages
-from chaoscypher_core.models import AnalysisDepth
+from chaoscypher_core.models import (
+    AnalysisDepth,
+    EdgeDirection,
+    ElementKind,
+    MCPMode,
+    TagMatch,
+)
+from chaoscypher_core.ports.types import FilteringMode
 from chaoscypher_core.services.workflows.tools.engine.schema_registry import (
     TEMPLATE_PROPERTY_ITEM_SCHEMA,
 )
 from chaoscypher_core.settings import GraphSettings
+from chaoscypher_core.utils.tool_schema import schema_enum
 
 
 _GRAPH = GraphSettings()
@@ -55,7 +62,7 @@ def _tag_scope() -> dict[str, dict]:
         ),
         "match": {
             "type": "string",
-            "enum": ["any", "all"],
+            "enum": schema_enum(TagMatch),
             "description": "Documents carrying any (the default) or all of the tags.",
             "default": "any",
         },
@@ -502,7 +509,7 @@ _get_node_edges = ToolDefinition(
             },
             "direction": {
                 "type": "string",
-                "enum": ["both", "outgoing", "incoming"],
+                "enum": schema_enum(EdgeDirection),
                 "description": "Filter by edge direction relative to the node.",
                 "default": "both",
             },
@@ -569,7 +576,7 @@ _list_templates = ToolDefinition(
         "properties": {
             "template_type": {
                 "type": "string",
-                "enum": ["node", "edge"],
+                "enum": schema_enum(ElementKind),
                 "description": "Filter by template type.",
             },
         },
@@ -589,7 +596,7 @@ _search_templates = ToolDefinition(
             },
             "template_type": {
                 "type": "string",
-                "enum": ["node", "edge"],
+                "enum": schema_enum(ElementKind),
                 "description": "Filter by template type.",
             },
             "limit": {
@@ -614,7 +621,7 @@ _create_template = ToolDefinition(
             },
             "template_type": {
                 "type": "string",
-                "enum": ["node", "edge"],
+                "enum": schema_enum(ElementKind),
                 "description": "Whether this is a node or edge template.",
             },
             "description": {
@@ -895,7 +902,7 @@ _add_document = ToolDefinition(
                     "relationships, 'quick' extracts only key entities. "
                     "Defaults to 'full'."
                 ),
-                "enum": list(get_args(AnalysisDepth)),
+                "enum": schema_enum(AnalysisDepth),
                 "default": "full",
             },
             "packs": {
@@ -1076,7 +1083,7 @@ _confirm_extraction = ToolDefinition(
             "analysis_depth": {
                 "type": "string",
                 "description": "Extraction depth override.",
-                "enum": list(get_args(AnalysisDepth)),
+                "enum": schema_enum(AnalysisDepth),
             },
             "filtering_mode": {
                 "type": "string",
@@ -1084,6 +1091,7 @@ _confirm_extraction = ToolDefinition(
                     "Cross-chunk filtering preset override (0-5 scale preset "
                     "name, e.g. 'balanced')."
                 ),
+                "enum": schema_enum(FilteringMode),
             },
             "content_filtering": {
                 "type": "boolean",
@@ -1605,7 +1613,7 @@ tolerated (the slices land one tool at a time); ``get_tools`` serves what the re
 
 
 def get_tools(
-    mode: Literal["read", "write"],
+    mode: MCPMode,
     profile: str = "full",
     tools: Sequence[str] = (),
 ) -> tuple[ToolDefinition, ...]:

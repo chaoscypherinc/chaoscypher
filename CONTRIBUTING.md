@@ -176,9 +176,9 @@ Pick the right enforcer for the rule type, then add it.
 | **Frontend boundary** (TypeScript layering: components/hooks/services/utils) | **eslint-plugin-boundaries** | Edit `packages/interface/eslint.config.js` (boundaries block) |
 | **AST-shape required** (data-flow tracking, threshold-based file exclusion, class-base introspection with annotation walking, `# noqa:` line-level opt-out, cross-file value resolution) | **AST checker** (`scripts/lint_claude_rules.py`) | Add a new `check_*` function and wire it into `check_file()` |
 
-**Use the AST checker only as a last resort.** The 6 rules that survived
-the 2026 migration there (CC002, CC004, CC011, CC018, CC044, CC051) all share
-one identity — they need analysis no other tool can express. New rules
+**Use the AST checker only as a last resort.** Its rules (CC002, CC004,
+CC011, CC018, CC044, CC051, CC053) all share one identity — they need
+analysis no other tool can express. New rules
 should look like one of those before reaching for the AST checker.
 
 When adding a rule:

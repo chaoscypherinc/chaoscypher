@@ -23,6 +23,8 @@
 * A source delete releases only what no other source attests (#795): no page
   may say it "cascades to all" graph nodes or edges. The API reference said so
   for ``DELETE /sources/{id}`` while the user guide and the code said otherwise.
+* The Templates API reference's ``PropertyType`` table lists every member, in
+  order (0.7.1: the MCP schema's hand-copied list had fallen six members behind).
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from pathlib import Path
 import pytest
 
 from chaoscypher_core.mcp import get_tools
+from chaoscypher_core.models import PropertyType
 from chaoscypher_core.services.quality.counters import QualityCounter
 from chaoscypher_core.services.sources.engine.extraction.domains.config_schema import (
     FLOOR_ONLY_KEYS,
@@ -190,3 +193,9 @@ def test_no_page_says_a_source_delete_cascades_to_every_graph_row() -> None:
     assert not offenders, offenders
     delete = _read(_DOCS / "reference" / "api" / "sources.md").split("### Delete Source", 1)[1]
     assert "no other source attests" in delete.split("\n### ", 1)[0]
+
+
+def test_the_templates_reference_lists_every_property_type() -> None:
+    section = _read(_DOCS / "reference" / "api" / "templates.md").split("### PropertyType", 1)[1]
+    rows = re.findall(r"^\| `([a-z_]+)` \|", section.split("\n### ", 1)[0], re.MULTILINE)
+    assert rows == [t.value for t in PropertyType]

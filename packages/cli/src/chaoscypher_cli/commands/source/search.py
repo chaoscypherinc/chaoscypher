@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_args
 
 import click
 from rich.console import Console
@@ -23,6 +23,7 @@ from chaoscypher_cli.sources.tag_options import match_option, tag_option
 from chaoscypher_cli.utils.console import print_caught_error, print_json
 from chaoscypher_core.adapters.embedding import require_embedding_provider
 from chaoscypher_core.app_config import get_settings
+from chaoscypher_core.models import SearchMode
 
 
 if TYPE_CHECKING:
@@ -39,7 +40,7 @@ console = Console()
 @click.option(
     "--mode",
     "-m",
-    type=click.Choice(["hybrid", "keyword", "semantic"]),
+    type=click.Choice(list(get_args(SearchMode))),
     default="hybrid",
     help="Search mode: hybrid (default), keyword (fast), semantic (AI only)",
 )

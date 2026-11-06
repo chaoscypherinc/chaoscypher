@@ -988,7 +988,7 @@ def _show_summary(state: WizardState) -> None:
 @click.option(
     "--provider",
     "-p",
-    type=click.Choice(["ollama", "openai", "anthropic", "gemini"]),
+    type=click.Choice(list(PROVIDERS)),
     help="LLM provider (skip selection prompt)",
 )
 @click.option(

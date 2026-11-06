@@ -11,7 +11,9 @@ from typing import Any
 
 import structlog
 
+from chaoscypher_core.models import EdgeDirection, ElementKind, PropertyDefinition
 from chaoscypher_core.settings import GraphRAGSettings, GraphSettings
+from chaoscypher_core.utils.tool_schema import schema_enum, schema_object
 
 
 logger = structlog.get_logger(__name__)
@@ -24,22 +26,15 @@ _DEFAULT_RELATIONSHIP_TYPE = _GRAPH.default_relationship_type
 
 
 # Tool schema definitions in OpenAI function calling format
-TEMPLATE_PROPERTY_ITEM_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "name": {"type": "string"},
-        "display_name": {"type": "string"},
-        "property_type": {
-            "type": "string",
-            "enum": ["string", "text", "number", "boolean", "date", "enum"],
-        },
-        "required": {"type": "boolean", "default": False},
-    },
-}
-"""One property of ``create_template``, as ``PropertyDefinition`` accepts it.
+TEMPLATE_PROPERTY_ITEM_SCHEMA: dict[str, Any] = schema_object(PropertyDefinition)
+"""One property of ``create_template``: ``PropertyDefinition``'s own schema.
 
 The engine's tool schema and the MCP tool list both use this object (2026-10-20: the MCP copy
 advertised ``data_type`` and no ``display_name``, so every client that followed it was refused).
+It is built from the model (0.7.1): the hand-written copy listed six ``property_type`` values
+(0.7.0 checks arguments against this schema before the tool runs, so ``datetime`` and seven
+more were refused), did not mark ``name`` and ``display_name`` required and left out every
+optional field (``enum_values``, ``description``, ``default_value``, ...).
 """
 
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
@@ -372,7 +367,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "direction": {
                         "type": "string",
                         "description": "Edge direction filter",
-                        "enum": ["outgoing", "incoming", "both"],
+                        "enum": schema_enum(EdgeDirection),
                         "default": "both",
                     },
                     "edge_type": {
@@ -403,7 +398,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "template_type": {
                         "type": "string",
                         "description": "Filter by template type ('node' or 'edge')",
-                        "enum": ["node", "edge"],
+                        "enum": schema_enum(ElementKind),
                     },
                 },
                 "required": [],
@@ -425,7 +420,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "template_type": {
                         "type": "string",
                         "description": "Filter by template type",
-                        "enum": ["node", "edge"],
+                        "enum": schema_enum(ElementKind),
                     },
                     "limit": {
                         "type": "integer",
@@ -452,7 +447,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "template_type": {
                         "type": "string",
                         "description": "The type of template ('node' or 'edge')",
-                        "enum": ["node", "edge"],
+                        "enum": schema_enum(ElementKind),
                     },
                     "description": {
                         "type": "string",
@@ -600,7 +595,9 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "depth": {
                         "type": "string",
                         "description": "Research depth level",
-                        "enum": ["quick", "full"],
+                        # Local to this tool: no model defines a research depth (the research
+                        # callback is a stub), and it is not ``AnalysisDepth`` (extraction).
+                        "enum": ["quick", "full"],  # noqa: CC053 - research depth, not AnalysisDepth
                         "default": "full",
                     },
                 },

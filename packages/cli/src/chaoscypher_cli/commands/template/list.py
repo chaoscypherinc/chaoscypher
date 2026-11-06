@@ -5,6 +5,7 @@
 
 import json
 import sys
+from typing import get_args
 
 import click
 from rich.console import Console
@@ -13,6 +14,7 @@ from rich.table import Table
 from chaoscypher_cli.context import get_context
 from chaoscypher_cli.utils.console import print_caught_error, print_json
 from chaoscypher_core.app_config import get_settings
+from chaoscypher_core.models import ElementKind
 
 
 console = Console()
@@ -34,7 +36,7 @@ console = Console()
     "--type",
     "-t",
     "template_type",
-    type=click.Choice(["node", "edge"]),
+    type=click.Choice(list(get_args(ElementKind))),
     help="Filter by template type",
 )
 @click.option("--page", "-p", default=1, type=int, help="Page number")

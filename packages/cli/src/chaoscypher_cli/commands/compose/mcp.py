@@ -19,10 +19,12 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from typing import get_args
 
 import click
 
 from chaoscypher_cli.commands.lexicon.login import get_auth_config, get_lexicon_url
+from chaoscypher_core.models import MCPMode
 from chaoscypher_core.services.compose import ComposeConfig, ComposeError, ComposeService
 from chaoscypher_core.services.compose.merger import COMPOSED_DATABASE_NAME
 
@@ -38,7 +40,7 @@ from chaoscypher_core.services.compose.merger import COMPOSED_DATABASE_NAME
 @click.option(
     "--mode",
     "-m",
-    type=click.Choice(["read", "write"]),
+    type=click.Choice(list(get_args(MCPMode))),
     default=None,
     help="MCP tool access mode (default: from settings, usually 'read')",
 )

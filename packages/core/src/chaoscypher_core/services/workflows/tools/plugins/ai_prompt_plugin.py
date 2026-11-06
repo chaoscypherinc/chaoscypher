@@ -158,7 +158,7 @@ class PromptPlugin:
                 },
                 "chunk_strategy": {
                     "type": "string",
-                    "enum": ["none", "quick", "full"],
+                    "enum": ["none", "quick", "full"],  # noqa: CC053 - chunking, not AnalysisDepth
                     "description": "Chunking strategy for long documents",
                 },
                 "chunk_overlap": {

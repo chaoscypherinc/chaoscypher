@@ -4,6 +4,7 @@
 """Create command - Define a new template."""
 
 import sys
+from typing import get_args
 
 import click
 from rich.console import Console
@@ -12,6 +13,7 @@ from rich.prompt import Confirm, Prompt
 from chaoscypher_cli.commands.template.utils import PROPERTY_TYPES, parse_property
 from chaoscypher_cli.context import get_context
 from chaoscypher_cli.utils.console import print_caught_error
+from chaoscypher_core.models import ElementKind
 
 
 console = Console()
@@ -24,7 +26,7 @@ console = Console()
     "-t",
     "template_type",
     default="node",
-    type=click.Choice(["node", "edge"]),
+    type=click.Choice(list(get_args(ElementKind))),
     help="Template type (node or edge)",
 )
 @click.option("--description", help="Template description")

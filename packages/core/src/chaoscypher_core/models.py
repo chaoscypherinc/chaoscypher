@@ -86,6 +86,15 @@ SearchMode = Literal["hybrid", "semantic", "keyword"]
 AnalysisDepth = Literal["quick", "full"]
 """Extraction depth — ``'full'`` processes all chunks, ``'quick'`` samples."""
 
+ElementKind = Literal["node", "edge"]
+"""A graph element: a template's ``template_type``, an embedded entity's kind."""
+
+EdgeDirection = Literal["outgoing", "incoming", "both"]
+"""Which of a node's edges to read: the ones it starts, the ones it ends, or both."""
+
+MCPMode = Literal["read", "write"]
+"""An MCP server's tool access: ``'read'`` serves the read-only tools, ``'write'`` all of them."""
+
 ProgressStage = Literal["chunking", "indexing", "extraction"]
 """Pipeline stage name passed to progress callbacks."""
 

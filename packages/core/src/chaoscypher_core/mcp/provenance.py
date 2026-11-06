@@ -20,13 +20,16 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from chaoscypher_core.models import is_memory_source
 from chaoscypher_core.services.workflows.tools.engine.handlers.graphrag_blocks import (
     first_sentence,
 )
-from chaoscypher_core.services.workflows.tools.engine.memory_render import Provenance
+from chaoscypher_core.services.workflows.tools.engine.memory_render import (
+    Provenance,
+    ProvenanceKind,
+)
 
 
 if TYPE_CHECKING:
@@ -36,12 +39,11 @@ if TYPE_CHECKING:
 PACK_SOURCE_TYPES: frozenset[str] = frozenset({"imported"})
 """``sources.source_type`` of a source an imported ``.ccx`` package wrote (the package importer's), tagged ``[pack NAME]``."""
 
-_Kind = Literal["memory", "doc", "pack"]
 _KIND_RANK: dict[str, int] = {"memory": 0, "doc": 1, "pack": 2}
 """Which member names a fact: a memory, else a document, else a pack."""
 
 
-def source_kind(row: Mapping[str, Any]) -> _Kind:
+def source_kind(row: Mapping[str, Any]) -> ProvenanceKind:
     """A source row's provenance kind, from its ``source_type``."""
     if is_memory_source(row):
         return "memory"

@@ -10,11 +10,12 @@ POST /api/v1/search/indexes - Rebuild search indexes (auto-detects regeneration 
 POST /api/v1/search/embeddings - Generate embeddings for nodes.
 """
 
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from chaoscypher_core.app_config import Settings, get_settings
+from chaoscypher_core.models import SearchMode
 from chaoscypher_core.repo_factories import get_search_repository
 from chaoscypher_cortex.features.search.models import (
     GenerateEmbeddingsResponse,
@@ -72,9 +73,7 @@ async def search(
     search_service: Annotated[SearchService, Depends(get_search_service)],
     limit: LimitParam,
     q: str = Query(..., description="Search query string"),
-    search_type: Literal["keyword", "semantic", "hybrid"] = Query(
-        "keyword", description="Search type"
-    ),
+    search_type: SearchMode = Query("keyword", description="Search type"),
 ) -> SearchResponse:
     """Unified search endpoint supporting multiple search strategies.
 

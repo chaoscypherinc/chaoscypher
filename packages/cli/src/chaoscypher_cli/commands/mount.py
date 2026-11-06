@@ -265,7 +265,8 @@ def _index_for_search(ctx: Any, stats: ImportStats, console: Console) -> bool:
 @click.option(
     "--mode",
     "-m",
-    type=click.Choice(["read", "write"]),
+    # MCPMode's values, written out so `--help` does not import core.
+    type=click.Choice(["read", "write"]),  # noqa: CC053 - pinned by test_choices_follow_core
     default=None,
     help="MCP tool access mode (default: from settings, usually 'read')",
 )

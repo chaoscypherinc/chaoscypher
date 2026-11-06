@@ -36,12 +36,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, cast, get_args
 
 import structlog
 
 from chaoscypher_core.plugins import PluginMetadata, metadata_from_dict
 from chaoscypher_core.services.sources.engine.extraction.domains.config_schema import (
+    DomainRole,
     ExclusionRule,
 )
 from chaoscypher_core.services.sources.engine.extraction.domains.core_types import (
@@ -308,10 +309,10 @@ class ConfigurableDomain:
         return cast("str", self.config.get("description", ""))
 
     @property
-    def role(self) -> Literal["floor", "pack"] | None:
+    def role(self) -> DomainRole | None:
         """``"floor"`` for the generic floor, ``"pack"`` for a pack; None for an unvalidated config."""
         role = self.config.get("role")
-        return cast("Literal['floor', 'pack']", role) if role in ("floor", "pack") else None
+        return cast("DomainRole", role) if role in get_args(DomainRole) else None
 
     @property
     def extends(self) -> str | None:

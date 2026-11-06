@@ -10,7 +10,7 @@ graph tools to MCP-compatible hosts (Claude Desktop, Cursor, etc.).
 
 import asyncio
 import sys
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 import structlog
@@ -18,6 +18,10 @@ import structlog
 from chaoscypher_cli.context import get_context, get_database_name
 from chaoscypher_cli.mcp.stdin_lines import StdinLines
 from chaoscypher_cli.utils.signals import Termination, cancelled_by_signal
+
+
+if TYPE_CHECKING:
+    from chaoscypher_core.models import MCPMode
 
 
 logger = structlog.get_logger(__name__)
@@ -33,13 +37,15 @@ logger = structlog.get_logger(__name__)
 @click.option(
     "--mode",
     "-m",
-    type=click.Choice(["read", "write"]),
+    # MCPMode's values, written out so `--help` does not import core.
+    type=click.Choice(["read", "write"]),  # noqa: CC053 - pinned by test_choices_follow_core
     default=None,
     help="Tool access mode (default: from settings, usually 'read')",
 )
 @click.option(
     "--profile",
     "-p",
+    # TOOL_PROFILES' names, written out for the same reason (pinned by the same test).
     type=click.Choice(["full", "memory"]),
     default=None,
     help="Tool profile to serve (default: from settings, usually 'full'); "
@@ -151,10 +157,10 @@ def serve_stdio(
         ctx = get_context(database_name=db_name, explicit_database=explicit_database)
 
         if mode:
-            # click.Choice(["read", "write"]) above guarantees the value
-            ctx.settings.mcp.mode = cast("Literal['read', 'write']", mode)
+            # the --mode click.Choice above guarantees the value
+            ctx.settings.mcp.mode = cast("MCPMode", mode)
         if profile:
-            # click.Choice(["full", "memory"]) above guarantees the value
+            # the --profile click.Choice above guarantees the value
             ctx.settings.mcp.profile = profile
         if server_extraction:
             ctx.settings.mcp.auto_extract = True

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from importlib.metadata import entry_points
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -39,11 +39,8 @@ from chaoscypher_core.exceptions import ValidationError
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from chaoscypher_core.plugins.base import PluginMetadata
+    from chaoscypher_core.plugins.base import PluginMetadata, PluginOrigin
     from chaoscypher_core.settings import EngineSettings
-
-
-PluginOrigin = Literal["builtin", "entry_point", "user"]
 
 
 class DuplicatePluginError(ValidationError, ValueError):
@@ -491,4 +488,4 @@ class BaseRegistry[T](ABC):
         )
 
 
-__all__ = ["BaseRegistry", "DuplicatePluginError", "PluginOrigin"]
+__all__ = ["BaseRegistry", "DuplicatePluginError"]
