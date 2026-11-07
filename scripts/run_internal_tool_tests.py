@@ -16,8 +16,10 @@ Its own ``run_ci.py`` step, ``internal-tool-tests`` (2026-11-05; it was part of
 ``lint-internal-refs`` until then): GitHub CI runs it in every unit-test shard, where
 ``CI_TEST_SHARD`` and ``CI_TEST_DURATIONS`` (the repo-root conftest) give each shard its share
 of each suite, and the benchmark tools' suite no longer holds one job for 19 minutes on a small
-runner. With ``CI_TEST_DURATIONS_OUT`` set, each suite records its seconds in a file of its own
-beside that path, so the shard's unit-test record is not overwritten.
+runner. A change only to the private tree skips the shards, and the ``internal-checks`` job runs
+the whole step instead (2026-11-06, ``scripts/ci_changes.py``). With ``CI_TEST_DURATIONS_OUT``
+set, each suite records its seconds in a file of its own beside that path, so the shard's
+unit-test record is not overwritten.
 
 Usage:  python scripts/run_internal_tool_tests.py [--root PATH]
 """

@@ -20,6 +20,11 @@
   moved seven Dockerfiles and left cortex's and neuron's ARG-pinned 3.14.7.
 * setup-uv keeps its own cache default: on the home runners' shared cache, a
   forced Actions cache made the post-job prune time out.
+* CI skips by job-level ``if:`` on one detection (the ``changes`` job, scripts/ci_changes.py),
+  never by a workflow-level path filter, and a private-tree-only change still runs the checks
+  that read that tree; gitleaks is never skipped (2026-11-06).
+* The unit-test shards match the home fleet, and superseded runs are cancelled everywhere but
+  the public mirror's main, where auto-tag.yml needs the release commit's own run (2026-11-06).
 * Graph rows are never deleted by ``source_id`` outside the membership release
   (#795, D5): a node merged across sources has one ``source_id`` and many
   members, so a delete keyed on ``source_id`` destroys the other sources' part.
@@ -225,6 +230,109 @@ def test_every_publishing_job_runs_on_the_public_mirror_only(name: str) -> None:
         job for job, spec in jobs.items() if _PUBLIC_MIRROR_GUARD not in str(spec.get("if", ""))
     ]
     assert not unguarded, f"{name}: jobs without the public-mirror guard: {unguarded}"
+
+
+def _workflow(name: str) -> dict[str, Any]:
+    return yaml.safe_load((_WORKFLOWS / name).read_text(encoding="utf-8"))
+
+
+def _triggers(spec: dict[str, Any]) -> dict[str, Any]:
+    """The ``on:`` block (PyYAML reads the bare key ``on`` as True)."""
+    on = spec.get("on", spec.get(True))
+    if isinstance(on, dict):
+        return on
+    return dict.fromkeys([on] if isinstance(on, str) else on or [])
+
+
+_CI = "ci.yml"
+_DETECT = "changes"
+_INTERNAL_ONLY_JOB = "internal-checks"
+_RUNS_FOR_CODE = "needs.changes.outputs.code == 'true'"
+_RUNS_FOR_INTERNAL_ONLY = "needs.changes.outputs.code == 'false'"
+_RUNS_FOR_IMAGE = "needs.changes.outputs.docker == 'true'"
+# The checks the skipped jobs run that read the private tree: the secret scan (python-quality),
+# the metrics and media checks (public-gates' lint-internal-refs) and the operations-tooling
+# tests (the unit shards).
+_PRIVATE_TREE_STEPS = {"lint-secrets", "lint-internal-refs", "internal-tool-tests"}
+# The home fleet's runner count; the unit-test matrix has one shard per runner, so a run's
+# shards go in one wave (2026-11-06: ten shards on four runners queued a run into five waves).
+_HOME_FLEET = 4
+
+
+def _needs(job: dict[str, Any]) -> list[str]:
+    needs = job.get("needs", [])
+    return [needs] if isinstance(needs, str) else list(needs)
+
+
+def test_ci_has_no_workflow_level_path_filter() -> None:
+    """A skipped run never starts, so the merge train would wait on it forever: skip by job."""
+    for event, spec in _triggers(_workflow(_CI)).items():
+        assert not ({"paths", "paths-ignore"} & set(spec or {})), f"{_CI} {event} filters paths"
+
+
+def test_every_ci_job_but_the_detection_runs_on_its_verdict() -> None:
+    """Each job needs ``changes`` and runs on exactly one of its outputs; none forces ``always()``."""
+    jobs = _jobs(_WORKFLOWS / _CI)
+    assert _DETECT in jobs
+    assert "needs" not in jobs[_DETECT] and "if" not in jobs[_DETECT]
+    gates = {_RUNS_FOR_CODE, _RUNS_FOR_INTERNAL_ONLY, _RUNS_FOR_IMAGE}
+    for name, job in jobs.items():
+        if name == _DETECT:
+            continue
+        assert _DETECT in _needs(job), f"{name} does not need {_DETECT}"
+        assert job.get("if") in gates, f"{name}: if is {job.get('if')!r}"
+    assert jobs[_INTERNAL_ONLY_JOB]["if"] == _RUNS_FOR_INTERNAL_ONLY
+    assert [n for n, j in jobs.items() if j.get("if") == _RUNS_FOR_INTERNAL_ONLY] == [
+        _INTERNAL_ONLY_JOB
+    ]
+    assert jobs["docker-image"]["if"] == _RUNS_FOR_IMAGE
+    outputs = jobs[_DETECT]["outputs"]
+    assert set(outputs) == {"code", "docker"}
+    detect = [str(step.get("run", "")) for step in jobs[_DETECT]["steps"]]
+    assert any(f"scripts/ci_changes.py --workflow {_CI}" in run for run in detect)
+
+
+def test_an_internal_only_change_still_runs_the_checks_that_read_the_private_tree() -> None:
+    """The secret scan, metrics/media checks and operations-tooling tests run in their place."""
+    steps = [str(s.get("run", "")) for s in _jobs(_WORKFLOWS / _CI)[_INTERNAL_ONLY_JOB]["steps"]]
+    ran = {
+        name
+        for run in steps
+        for match in re.finditer(r"run_ci\.py --steps ([\w,-]+)", run)
+        for name in match.group(1).split(",")
+    }
+    assert ran >= _PRIVATE_TREE_STEPS, sorted(_PRIVATE_TREE_STEPS - ran)
+
+
+def test_gitleaks_is_never_skipped() -> None:
+    """The committed-secret scan runs on every push, whatever the change touches."""
+    spec = _workflow("gitleaks.yml")
+    triggers = _triggers(spec)
+    assert "push" in triggers
+    assert not (
+        {"paths", "paths-ignore", "branches", "branches-ignore"} & set(triggers["push"] or {})
+    )
+    for name, job in spec["jobs"].items():
+        assert "if" not in job, f"gitleaks {name} is conditional"
+        assert "needs" not in job, f"gitleaks {name} waits on another job"
+
+
+def test_the_unit_test_shards_match_the_home_fleet() -> None:
+    shards = _jobs(_WORKFLOWS / _CI)["python-tests"]["strategy"]["matrix"]["shard"]
+    assert shards == list(range(1, _HOME_FLEET + 1))
+
+
+def test_superseded_runs_cancel_except_on_the_public_mirrors_main() -> None:
+    """auto-tag.yml (public mirror) tags only after CI succeeded on that exact commit.
+
+    A cancelled run there reads as a red release gate, so the mirror's main keeps every run;
+    pull requests and the dev repo's main cancel the superseded run.
+    """
+    cancel = str(_workflow(_CI)["concurrency"]["cancel-in-progress"])
+    assert "github.event_name == 'pull_request'" in cancel
+    mirror = _PUBLIC_MIRROR_GUARD.replace("==", "!=")
+    assert f"|| {mirror}" in cancel
+    assert _PUBLIC_MIRROR_GUARD in str(_jobs(_WORKFLOWS / "auto-tag.yml")["tag"]["if"])
 
 
 _PYPI_PUBLISH = "pypa/gh-action-pypi-publish"

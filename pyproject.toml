@@ -219,7 +219,7 @@ target-version = "py314"
 # smoke test hit SyntaxErrors in two tools that passed every 3.14 check. The
 # root conftest.py loads into every pytest run started at the repo root, the
 # routines' runs of internal/scripts/tests included (2026-10-16).
-per-file-target-version = { "internal/scripts/**/*.py" = "py311", "./conftest.py" = "py311", "scripts/check_media_manifest.py" = "py311", "scripts/check_metrics_artifacts.py" = "py311" }
+per-file-target-version = { "internal/scripts/**/*.py" = "py311", "./conftest.py" = "py311", "scripts/check_media_manifest.py" = "py311", "scripts/check_metrics_artifacts.py" = "py311", "scripts/ci_changes.py" = "py311" }
 
 # Directories to exclude from linting
 exclude = [

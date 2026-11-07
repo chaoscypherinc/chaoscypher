@@ -89,7 +89,8 @@ _STEPS: dict[str, list[Command] | str] = {
     ],
     # The dev repo's operations-tooling tests (a no-op on the public tree). Part of
     # lint-internal-refs until 2026-11-05, which put them, about ten CPU-minutes, in one GitHub CI
-    # job; the unit-test shards now run this step, each its share (CI_TEST_SHARD).
+    # job; the unit-test shards now run this step, each its share (CI_TEST_SHARD), and a change
+    # only to the private tree runs it whole in the internal-checks job (scripts/ci_changes.py).
     "internal-tool-tests": [
         ("uv run python scripts/run_internal_tool_tests.py", None),
     ],

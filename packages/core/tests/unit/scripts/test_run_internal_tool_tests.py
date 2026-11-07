@@ -11,6 +11,7 @@ enclosing xdist run's basetemp mid-session (seen 2026-10-15).
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -104,7 +105,10 @@ def test_an_empty_share_passes_only_in_a_shard(
 
 
 def test_the_ci_step_and_make_target_both_run_it() -> None:
-    """Its own step, which GitHub CI runs in every unit-test shard (each its share)."""
+    """Its own step: every unit-test shard runs its share; an internal-only change runs it whole.
+
+    A change only to the private tree skips the shards, and the internal-checks job runs it.
+    """
     root = _PATH.parents[1]
     run_ci = _load(root / "scripts" / "run_ci.py")
     assert run_ci._STEPS["internal-tool-tests"] == [
@@ -122,6 +126,12 @@ def test_the_ci_step_and_make_target_both_run_it() -> None:
     shard_steps = [str(step.get("run", "")) for step in ci["jobs"]["python-tests"]["steps"]]
     assert any("run_ci.py --steps internal-tool-tests" in run for run in shard_steps)
     assert "CI_TEST_SHARD" in ci["jobs"]["python-tests"]["env"]
+    internal = ci["jobs"]["internal-checks"]
+    assert "CI_TEST_SHARD" not in internal.get("env", {})
+    internal_steps = [str(step.get("run", "")) for step in internal["steps"]]
+    assert any(
+        re.search(r"run_ci\.py --steps \S*\binternal-tool-tests\b", run) for run in internal_steps
+    )
 
 
 def _load(path: Path) -> Any:

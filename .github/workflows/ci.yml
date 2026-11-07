@@ -15,15 +15,77 @@ on:
 permissions:
   contents: read
 
-# A new push to a PR cancels its superseded run: the home fleet is four runners, and a stale run
-# holds them while the current one queues. Runs on main always finish.
+# A newer push cancels a superseded run: the home fleet is four runners, and a stale run holds
+# them while the current one queues. On main too (2026-11-06): when several merges land together,
+# only the newest commit's run goes on. Nothing reads an older main commit's own run: the merge
+# train reads the tip's run and counts a cancelled one as pending, never red, and a push run
+# diffs from the newest green main commit (scripts/ci_changes.py), so a cancelled run's changes
+# are checked by the next. The exception is the public mirror's main, which keeps every run:
+# auto-tag.yml there tags a release commit only once CI succeeded on that exact commit, and a
+# cancelled run would stop the release.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.repository != 'chaoscypherinc/chaoscypher' }}
 
 jobs:
+  # Which jobs this change needs (scripts/ci_changes.py, the one detection every conditional job
+  # reads). A job skipped by its `if:` concludes as skipped, which counts as passing for the run's
+  # conclusion (and a required check); a workflow-level `paths-ignore` would instead leave the
+  # run absent, so the merge train would wait for a CI run that never comes.
+  changes:
+    name: Detect what the change touches
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # the newest green run on main, the base of a push's range
+    outputs:
+      code: ${{ steps.detect.outputs.code }}
+      docker: ${{ steps.detect.outputs.docker }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect
+        id: detect
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci_changes.py --workflow ci.yml
+
+  # A change only to the private operations tree (internal/, outside what shipped tests read)
+  # skips every job below that builds or tests what ships; this job runs the checks that read
+  # that tree in their place: the secret scan, the metrics and media checks, and the
+  # operations-tooling tests. The gitleaks workflow runs on every push regardless.
+  internal-checks:
+    name: Operations checks (internal-only changes)
+    needs: changes
+    if: needs.changes.outputs.code == 'false'
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          cache-dependency-glob: uv.lock
+
+      - name: Sync workspace (frozen)
+        run: uv sync --all-packages --extra dev --frozen
+
+      - name: Secret scan, metrics and media checks, operations-tooling tests
+        run: uv run python scripts/run_ci.py --steps lint-secrets,lint-internal-refs,internal-tool-tests
+
   python-quality:
     name: Python Quality
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     # 30 (was 20): the Architecture-rules step now runs the full lint-claude
     # sweep (rule self-tests + import-linter + semgrep + AST checker), ~7 min
@@ -71,6 +133,8 @@ jobs:
   # or never.
   test-timings:
     name: Test timings for the shards
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 5
     steps:
@@ -99,23 +163,26 @@ jobs:
     # Sharded (CI_TEST_SHARD, the repo-root conftest; the matrix list is the one place the count
     # lives): the whole suite took about 27 minutes on one 4-CPU home runner, past the timeout. Each
     # shard keeps its coverage data; python-coverage combines them and holds the 80% gate. A run's
-    # wall time is its slowest shard. Ten, not six (2026-11-05): the shards pack equal seconds, but
-    # the runners differ in size, and a shard on a small one took three times as long as on a large
-    # one (21 minutes against 6 1/2). Smaller shards bound that, and those queued past the fleet's
-    # size go to whichever runner frees first, so the large runners take more of them.
+    # wall time is its slowest shard. Four, the home fleet's size (2026-11-06; ten from 2026-11-05):
+    # a run is about 20 jobs, so on four runners it queued in waves and took 40-60 minutes, and ten
+    # shards were half of those jobs; a run with six shards on quiet runners took about 20. The
+    # shards pack equal seconds from the recorded timings, so four fill the fleet in one wave.
+    # Pinned by test_ci_config_guards.py.
     # Each shard also runs its share of the operations-tooling tests (internal-tool-tests: a no-op
     # on the public tree), which held the Public Gates job for 19 minutes on one small runner.
     name: Python Unit Tests (${{ matrix.shard }}/${{ strategy.job-total }})
-    needs: test-timings
+    needs: [changes, test-timings]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
-    # 40: a shard ends on the recipe tests, a few of which run the retrieval sample for minutes
-    # each (a known cost, tracked to be made fast); faulthandler names any one test past five
-    # minutes, so a real hang still shows.
-    timeout-minutes: 40
+    # 60 (40 with ten shards): a shard ends on the recipe tests, a few of which run the retrieval
+    # sample for minutes each (a known cost, tracked to be made fast), and each of four shards
+    # carries two and a half times a ten-shard share, which took up to 21 minutes on the slowest
+    # runner. faulthandler names any one test past five minutes, so a real hang still shows.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        shard: [1, 2, 3, 4]
     env:
       CI_TEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
       COVERAGE_FILE: coverage-data/shard-${{ matrix.shard }}
@@ -180,7 +247,8 @@ jobs:
 
   python-coverage:
     name: Python Coverage
-    needs: python-tests
+    needs: [changes, python-tests]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 10
     steps:
@@ -242,6 +310,8 @@ jobs:
 
   frontend:
     name: Frontend (Node ${{ matrix.node }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 20
     strategy:
@@ -296,6 +366,8 @@ jobs:
 
   security:
     name: Dependency Audits
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 15
     steps:
@@ -335,6 +407,8 @@ jobs:
 
   public-gates:
     name: Public Gates (internal-ref scan, license policy, docs build)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     # 25 again (2026-11-05): the operations-tooling tests that took it to 35 on 2026-10-24 (up to
     # 19 of its 28 minutes on a small runner) moved to the unit-test shards; about 8 minutes remain.
@@ -378,6 +452,8 @@ jobs:
 
   remaining-gates:
     name: Remaining gates (docstrings, dead code, bundle size, generated docs, CLI e2e)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 25
     steps:
@@ -415,45 +491,18 @@ jobs:
 
   docker-image:
     name: Production Image Build (image-relevant changes only)
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-
-      - name: Detect image-relevant changes
-        id: changed
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_REF: ${{ github.base_ref }}
-          BEFORE_SHA: ${{ github.event.before }}
-        run: |
-          set -eu
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            git fetch -q origin "$BASE_REF"
-            RANGE="origin/${BASE_REF}...HEAD"
-          elif [ -n "$BEFORE_SHA" ] && git cat-file -e "$BEFORE_SHA" 2>/dev/null; then
-            RANGE="${BEFORE_SHA}..HEAD"
-          else
-            RANGE="HEAD~1..HEAD"
-          fi
-          # The paths that change what `docker build` produces: the docker tree
-          # itself (Dockerfile, entrypoint, nginx/supervisor configs, digest
-          # bumps), the Python manifests and lockfile the image installs from,
-          # and the frontend manifest it builds from.
-          if git diff --name-only "$RANGE" | grep -E '^(packages/docker/|pyproject\.toml$|uv\.lock$|packages/[^/]+/pyproject\.toml$|packages/interface/package(-lock)?\.json$)'; then
-            echo "docker=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "docker=false" >> "$GITHUB_OUTPUT"
-            echo "No image-relevant change in $RANGE; skipping the build."
-          fi
 
       - name: Build the production image
-        if: steps.changed.outputs.docker == 'true'
         # The `docker-image-build` step of scripts/run_ci.py, which is in no
         # default plan because the routine sandbox has no Docker daemon — so a
         # Dockerfile digest bump (Dependabot, weekly) could only ever be verified
         # by a human build (#673; ruled 2026-09-28: build it here, mechanically).
-        # run_ci.py is stdlib-only, so no workspace sync is needed for this step.
+        # Runs only when the changes job finds an image-relevant path (its DOCKER
+        # pattern). run_ci.py is stdlib-only, so no workspace sync is needed.
         run: python3 scripts/run_ci.py --steps docker-image-build
