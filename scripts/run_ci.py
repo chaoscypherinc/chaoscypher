@@ -94,6 +94,11 @@ _STEPS: dict[str, list[Command] | str] = {
     "internal-tool-tests": [
         ("uv run python scripts/run_internal_tool_tests.py", None),
     ],
+    # The same tests under Python 3.11, the cloud sandbox's version (CI's own is 3.14): the
+    # scripts suite only, whole, in the internal-checks job and in shard 1 of the unit tests.
+    "internal-tool-tests-py311": [
+        ("uv run python scripts/run_internal_tool_tests.py --py311", None),
+    ],
     "docstrings": [
         (
             "uv run interrogate -c pyproject.toml packages/core/src "
@@ -241,6 +246,7 @@ _COMMON = [
     "lint-secrets",
     "lint-internal-refs",
     "internal-tool-tests",
+    "internal-tool-tests-py311",
     "docstrings",
     "deadcode",
     "bundle-size",

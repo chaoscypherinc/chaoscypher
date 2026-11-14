@@ -351,10 +351,11 @@ def test_search_with_tag_returns_only_tagged(
     assert "No results found." in nothing.output
 
 
-@pytest.mark.parametrize("mode", ["semantic", "hybrid"])
+@pytest.mark.parametrize("mode", ["keyword", "semantic", "hybrid"])
 def test_search_passes_the_tag_scope_to_every_mode(mode: str) -> None:
     ctx = MagicMock()
-    hits = AsyncMock(return_value=[])
+    # Keyword search is synchronous; the other modes are awaited.
+    hits = MagicMock(return_value=[]) if mode == "keyword" else AsyncMock(return_value=[])
     setattr(ctx.search_repository, f"{mode}_search", hits)
     ctx.embedding_service.embed = AsyncMock(return_value=MagicMock(embedding=[0.1]))
 
@@ -364,8 +365,9 @@ def test_search_passes_the_tag_scope_to_every_mode(mode: str) -> None:
         )
 
     assert result.exit_code == 0, result.output
-    assert hits.await_args.kwargs["tags"] == ["alpha", "beta"]
-    assert hits.await_args.kwargs["tag_match"] is TagMatch.ALL
+    hits.assert_called_once()
+    assert hits.call_args.kwargs["tags"] == ["alpha", "beta"]
+    assert hits.call_args.kwargs["tag_match"] is TagMatch.ALL
 
 
 def test_help_lists_tag_and_summarize() -> None:

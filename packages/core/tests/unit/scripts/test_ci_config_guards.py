@@ -253,7 +253,12 @@ _RUNS_FOR_IMAGE = "needs.changes.outputs.docker == 'true'"
 # The checks the skipped jobs run that read the private tree: the secret scan (python-quality),
 # the metrics and media checks (public-gates' lint-internal-refs) and the operations-tooling
 # tests (the unit shards).
-_PRIVATE_TREE_STEPS = {"lint-secrets", "lint-internal-refs", "internal-tool-tests"}
+_PRIVATE_TREE_STEPS = {
+    "lint-secrets",
+    "lint-internal-refs",
+    "internal-tool-tests",
+    "internal-tool-tests-py311",
+}
 # The home fleet's runner count; the unit-test matrix has one shard per runner, so a run's
 # shards go in one wave (2026-11-06: ten shards on four runners queued a run into five waves).
 _HOME_FLEET = 4

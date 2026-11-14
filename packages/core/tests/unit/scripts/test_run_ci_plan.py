@@ -36,6 +36,7 @@ _COMMON = [
     "lint-secrets",
     "lint-internal-refs",
     "internal-tool-tests",
+    "internal-tool-tests-py311",
     "docstrings",
     "deadcode",
     "bundle-size",

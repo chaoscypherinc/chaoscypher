@@ -278,6 +278,44 @@ async def test_caller_summary_is_kept(in_memory_adapter: SqliteAdapter, tmp_path
 
 
 @pytest.mark.asyncio
+async def test_a_summary_typed_while_the_model_runs_is_kept(
+    in_memory_adapter: SqliteAdapter, tmp_path: Path
+) -> None:
+    """The under-lock re-check: a summary written during the call (PATCH, MCP) wins."""
+    _add(in_memory_adapter, "doc-a")
+    settings = _settings(tmp_path)
+
+    async def chat(messages: list[dict[str, str]]) -> str:
+        in_memory_adapter.update_source("doc-a", {"summary": "Typed."})
+        return "A guide to falcons."
+
+    run = await summarize_documents(in_memory_adapter, DB, chat=chat, settings=settings)
+
+    assert run == SummaryRun(written=0, failed=0, skipped=1)
+    assert _summary(in_memory_adapter, "doc-a") == "Typed."
+
+
+@pytest.mark.asyncio
+async def test_a_source_deleted_while_the_model_runs_gets_no_write(
+    in_memory_adapter: SqliteAdapter, tmp_path: Path
+) -> None:
+    """The under-lock re-check: a document deleted during the call is not written to."""
+    _add(in_memory_adapter, "doc-a")
+    settings = _settings(tmp_path)
+
+    async def chat(messages: list[dict[str, str]]) -> str:
+        assert in_memory_adapter.delete_source("doc-a", DB)
+        return "A guide to falcons."
+
+    with capture_logs() as logs:
+        run = await summarize_documents(in_memory_adapter, DB, chat=chat, settings=settings)
+
+    assert run == SummaryRun(written=0, failed=0, skipped=1)
+    assert in_memory_adapter.get_source("doc-a", DB) is None
+    assert [e["event"] for e in logs if e["log_level"] == "warning"] == []
+
+
+@pytest.mark.asyncio
 async def test_memory_is_never_summarised(in_memory_adapter: SqliteAdapter, tmp_path: Path) -> None:
     _add(in_memory_adapter, "mem-a", source_type=MEMORY_SOURCE_TYPE)
     settings = _settings(tmp_path)

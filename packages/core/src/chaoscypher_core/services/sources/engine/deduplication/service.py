@@ -12,6 +12,7 @@ SRP: Single responsibility for entity processing orchestration.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -455,8 +456,10 @@ class EntityProcessor:
                     entity_texts, embedding_service
                 )
 
-            # Find duplicates using similarity matrix
-            unique_entities, unique_embeddings, index_mapping = self._find_semantic_duplicates(
+            # Find duplicates using similarity matrix: a CPU-bound pair loop
+            # (seconds on a book-length source), kept off the event loop.
+            unique_entities, unique_embeddings, index_mapping = await asyncio.to_thread(
+                self._find_semantic_duplicates,
                 entities,
                 embeddings,
                 embeddings_normalized,

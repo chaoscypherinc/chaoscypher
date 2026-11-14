@@ -21,7 +21,15 @@ the whole step instead (2026-11-06, ``scripts/ci_changes.py``). With ``CI_TEST_D
 set, each suite records its seconds in a file of its own beside that path, so the shard's
 unit-test record is not overwritten.
 
-Usage:  python scripts/run_internal_tool_tests.py [--root PATH]
+``--py311`` (its own step, ``internal-tool-tests-py311``) runs only the first suite under Python
+3.11, the version of the cloud sandbox that runs the routine tools, which GitHub CI otherwise
+never exercises (it uses 3.14). It needs no workspace packages and takes about six seconds. It
+runs the whole suite in every job that has the step: its child gets none of the shard variables
+(``CI_TEST_SHARD``, ``CI_TEST_DURATIONS``, ``CI_TEST_DURATIONS_OUT``), because the repo-root
+conftest deselects by them — on 2026-11-12 shard 1's 3.11 pass ran 241 of 964 tests and wrote
+over the shard's durations record.
+
+Usage:  python scripts/run_internal_tool_tests.py [--root PATH] [--py311]
 """
 
 from __future__ import annotations
@@ -42,7 +50,13 @@ _SUITES: tuple[tuple[Path, tuple[str, ...]], ...] = (
 )
 
 
+_PY311_CMD = (
+    "uv", "run", "--no-project", "--python", "3.11", "--with", "pytest", "--with", "pyyaml",
+    "python", "-m", "pytest",
+)  # fmt: skip
 _DURATIONS_OUT = "CI_TEST_DURATIONS_OUT"
+# The repo-root conftest's shard variables: the 3.11 pass runs whole and records nothing.
+_SHARD_VARS = ("CI_TEST_SHARD", "CI_TEST_DURATIONS", _DURATIONS_OUT)
 _NO_TESTS = 5  # pytest.ExitCode.NO_TESTS_COLLECTED
 
 
@@ -60,12 +74,26 @@ def suite_env(rel: Path, environ: dict[str, str] | None = None) -> dict[str, str
     return env
 
 
+def py311_env(environ: dict[str, str] | None = None) -> dict[str, str]:
+    """The 3.11 pass's environment: the caller's, without the shard variables."""
+    env = dict(os.environ if environ is None else environ)
+    for name in _SHARD_VARS:
+        env.pop(name, None)
+    return env
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run pytest over the tooling tests under ``--root``; exit with its status."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
+    parser.add_argument(
+        "--py311",
+        action="store_true",
+        help="run only the scripts suite, under Python 3.11 (the sandbox's version)",
+    )
     args = parser.parse_args(argv)
-    suites = [((args.root / rel).resolve(), rel, extra) for rel, extra in _SUITES]
+    wanted = _SUITES[:1] if args.py311 else _SUITES
+    suites = [((args.root / rel).resolve(), rel, extra) for rel, extra in wanted]
     present = [suite for suite in suites if suite[0].is_dir()]
     if not present:
         print(f"OK: no operations-tooling tests under {args.root.resolve()} (public tree).")
@@ -73,9 +101,22 @@ def main(argv: list[str] | None = None) -> int:
     worst = 0
     for tests, rel, extra in present:  # every suite runs; the first failure's status is the step's
         print(f"Running operations-tooling tests in {tests}", flush=True)
-        cmd = [sys.executable, "-m", "pytest", str(tests), "-q", "-p", "no:cacheprovider", *extra]
-        code = subprocess.run(cmd, check=False, env=suite_env(rel)).returncode
-        if code == _NO_TESTS and os.environ.get("CI_TEST_SHARD"):
+        if args.py311:
+            cmd = [*_PY311_CMD, str(tests), "-q", "-p", "no:cacheprovider"]
+        else:
+            cmd = [
+                sys.executable,
+                "-m",
+                "pytest",
+                str(tests),
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                *extra,
+            ]
+        env = py311_env() if args.py311 else suite_env(rel)
+        code = subprocess.run(cmd, check=False, env=env).returncode
+        if code == _NO_TESTS and os.environ.get("CI_TEST_SHARD") and not args.py311:
             code = 0  # this shard's share of the suite is empty, which is no failure
         worst = worst or code
     return worst

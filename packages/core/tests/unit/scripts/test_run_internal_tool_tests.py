@@ -57,6 +57,68 @@ def test_every_suite_runs_and_the_first_failure_is_the_steps(
     assert calls[1][-2:] == ["-n", "auto"]  # the benchmark tools' suite runs in parallel
 
 
+_PY311 = [
+    "uv", "run", "--no-project", "--python", "3.11", "--with", "pytest", "--with", "pyyaml",
+    "python", "-m", "pytest",
+]  # fmt: skip
+
+
+def test_py311_runs_only_the_scripts_suite_under_python_311(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sandbox's Python is 3.11: the suite that needs no workspace packages runs there too."""
+    _two_suites(tmp_path)
+    calls: list[list[str]] = []
+    envs: list[dict[str, str]] = []
+
+    def fake_run(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        envs.append(kw["env"])
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(_TOOL.subprocess, "run", fake_run)
+    # The repo-root conftest deselects by these: shard 1's 3.11 pass ran 241 of 964 tests and
+    # overwrote the shard's durations record (2026-11-12). The child must not see them.
+    monkeypatch.setenv("CI_TEST_SHARD", "2/4")
+    monkeypatch.setenv("CI_TEST_DURATIONS", str(tmp_path / "durations.json"))
+    monkeypatch.setenv("CI_TEST_DURATIONS_OUT", str(tmp_path / "durations-shard-2.json"))
+    monkeypatch.setenv("KEEP_ME", "1")
+    scripts = (tmp_path / "internal" / "scripts" / "tests").resolve()
+    assert _TOOL.main(["--root", str(tmp_path), "--py311"]) == 0
+    assert calls == [[*_PY311, str(scripts), "-q", "-p", "no:cacheprovider"]]
+    (env,) = envs
+    assert not {"CI_TEST_SHARD", "CI_TEST_DURATIONS", "CI_TEST_DURATIONS_OUT"} & set(env)
+    assert env["KEEP_ME"] == "1"
+
+
+def test_py311_without_the_private_tree_is_a_no_op(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail(*_a: Any, **_kw: Any) -> None:
+        raise AssertionError("nothing to run on the public tree")
+
+    monkeypatch.setattr(_TOOL.subprocess, "run", fail)
+    assert _TOOL.main(["--root", str(tmp_path), "--py311"]) == 0
+    assert "public tree" in capsys.readouterr().out
+
+
+def test_py311_step_is_in_the_plan_and_in_both_ci_jobs() -> None:
+    root = _PATH.parents[1]
+    run_ci = _load(root / "scripts" / "run_ci.py")
+    assert run_ci._STEPS["internal-tool-tests-py311"] == [
+        ("uv run python scripts/run_internal_tool_tests.py --py311", None)
+    ]
+    assert "internal-tool-tests-py311" in run_ci.build_plan("local")
+    import yaml
+
+    ci = yaml.safe_load((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+    runs = [step for step in ci["jobs"]["python-tests"]["steps"] if "py311" in str(step.get("run"))]
+    assert len(runs) == 1
+    assert runs[0]["if"] == "matrix.shard == 1"
+    internal = [str(step.get("run", "")) for step in ci["jobs"]["internal-checks"]["steps"]]
+    assert any(re.search(r"--steps \S*\binternal-tool-tests-py311\b", run) for run in internal)
+
+
 def _two_suites(tmp_path: Path) -> None:
     (tmp_path / "internal" / "scripts" / "tests").mkdir(parents=True)
     (tmp_path / "internal" / "benchmarks" / "tools" / "tests").mkdir(parents=True)

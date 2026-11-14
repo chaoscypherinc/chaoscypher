@@ -80,7 +80,7 @@ jobs:
         run: uv sync --all-packages --extra dev --frozen
 
       - name: Secret scan, metrics and media checks, operations-tooling tests
-        run: uv run python scripts/run_ci.py --steps lint-secrets,lint-internal-refs,internal-tool-tests
+        run: uv run python scripts/run_ci.py --steps lint-secrets,lint-internal-refs,internal-tool-tests,internal-tool-tests-py311
 
   python-quality:
     name: Python Quality
@@ -236,6 +236,12 @@ jobs:
       # records its own seconds beside the shard's (scripts/run_internal_tool_tests.py).
       - name: Run this shard's share of the operations-tooling tests
         run: uv run python scripts/run_ci.py --steps internal-tool-tests
+
+      # The sandbox that runs the routine tools has Python 3.11; CI's is 3.14. One shard runs the
+      # whole scripts suite there (about six seconds; uv fetches the interpreter itself).
+      - name: Run the operations-tooling tests on Python 3.11
+        if: matrix.shard == 1
+        run: uv run python scripts/run_ci.py --steps internal-tool-tests-py311
 
       - name: Keep the shard's coverage data
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
