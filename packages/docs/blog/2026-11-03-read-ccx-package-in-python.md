@@ -3,8 +3,8 @@ slug: read-ccx-package-in-python
 title: "Read a .ccx Knowledge Package in Python with Nothing Installed but ccx-format"
 authors: [denis]
 tags: [python, opensource, selfhosted, graphrag]
-date: 2026-11-03
-draft: true
+date: 2026-11-13
+draft: false
 description: A short, runnable tutorial — open an exported .ccx package with the Apache-2.0 ccx-format reader, list its entities and relationships, print the source passages that cite them, and load the triples into networkx or a DataFrame. No Chaos Cypher required.
 ---
 

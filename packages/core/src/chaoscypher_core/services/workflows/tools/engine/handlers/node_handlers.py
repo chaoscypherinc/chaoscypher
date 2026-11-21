@@ -90,7 +90,7 @@ class NodeToolHandlers:
             Error message if out of scope, None if allowed
 
         """
-        if not source_ids or item_in_source_scope(node, source_ids):
+        if not source_ids or item_in_source_scope(node, frozenset(source_ids)):
             return None
         return f"Node '{node.label}' is not accessible in the current source scope"
 
@@ -259,7 +259,7 @@ class NodeToolHandlers:
                         continue
 
                 # Filter by source scope
-                if source_ids and not item_in_source_scope(node, source_ids):
+                if source_ids and not item_in_source_scope(node, frozenset(source_ids)):
                     filtered_count += 1
                     continue
 
@@ -769,7 +769,8 @@ class NodeToolHandlers:
             )
             # Filter related nodes by source scope
             if source_ids:
-                related_nodes = [n for n in related_nodes if item_in_source_scope(n, source_ids)]
+                scope = frozenset(source_ids)
+                related_nodes = [n for n in related_nodes if item_in_source_scope(n, scope)]
             nodes_dict = {n.id: n for n in related_nodes}
 
             # Build edge summaries

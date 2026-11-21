@@ -7,6 +7,7 @@ Delegates all source/citation management to chaoscypher service.
 Tag operations are handled by TagService (tag_service.py).
 """
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -46,7 +47,6 @@ if TYPE_CHECKING:
     from chaoscypher_core.adapters.sqlite import SqliteAdapter
     from chaoscypher_core.adapters.sqlite.repos import GraphRepository, SearchRepository
     from chaoscypher_core.app_config import Settings
-    from chaoscypher_core.models import ReleasedRows
     from chaoscypher_core.ports.embedding import EmbeddingProviderProtocol
     from chaoscypher_core.services.graph.management.release import LazyEmbedder
     from chaoscypher_core.services.graph.management.source import (
@@ -300,14 +300,7 @@ class SourceService:
         # Both writes run inside adapter.transaction() via force_re_extract so the
         # adapter-side reset rolls back on any exception.
         if force and source_status == SourceStatus.COMMITTED:
-            released = force_re_extract(
-                source_id=source_id,
-                database_name=self.database_name,
-                storage_adapter=self.storage_adapter,
-                settings=self._engine_settings(),
-            )
-            # Now: the reset commit counters make the next commit skip its cleanup.
-            await self._refresh_released(released)
+            await asyncio.to_thread(self._release_for_re_extract, source_id)
 
         # The forced packs as the columns a row and a queue payload carry
         # (``forced_packs`` and the old ``forced_domain``); both None to detect.
@@ -737,11 +730,27 @@ class SourceService:
 
         return LazyEmbedder(build=build, owned=True)
 
-    async def _refresh_released(self, released: ReleasedRows) -> None:
-        """After a release commits: its search rows and embeddings (``refresh_after_release``)."""
-        from chaoscypher_core.services.graph.management.release import refresh_after_release
+    def _release_for_re_extract(self, source_id: str) -> None:
+        """Release a committed source's graph and reset its row, then refresh what the release left.
 
-        await refresh_after_release(
+        Runs in a worker thread (both async callers offload it, as the API
+        offloads ``delete_source``): the release transaction and the scoped
+        identity resolution after it read the whole graph, which on Cortex's
+        event loop stalled every other request. The refresh runs at once,
+        because the reset commit counters make the next commit skip its
+        cleanup.
+        """
+        from chaoscypher_core.services.graph.management.release import (
+            refresh_after_release_sync,
+        )
+
+        released = force_re_extract(
+            source_id=source_id,
+            database_name=self.database_name,
+            storage_adapter=self.storage_adapter,
+            settings=self._engine_settings(),
+        )
+        refresh_after_release_sync(
             self.storage_adapter,
             self.database_name,
             released,
@@ -1899,14 +1908,7 @@ class SourceService:
             # force_re_extract is the atomic graph-release + row-reset helper.
             # It now clears commit_payload too (audit fix #F44), so the new
             # extraction starts from a fully clean slate.
-            released = force_re_extract(
-                source_id=source_id,
-                database_name=self.database_name,
-                storage_adapter=self.storage_adapter,
-                settings=self._engine_settings(),
-            )
-            # Now: the reset commit counters make the next commit skip its cleanup.
-            await self._refresh_released(released)
+            await asyncio.to_thread(self._release_for_re_extract, source_id)
         elif source_status == SourceStatus.ERROR:
             # Errored source: use reset_for_retry which clears the error
             # bookkeeping and (with clear_commit_payload=True) the stale

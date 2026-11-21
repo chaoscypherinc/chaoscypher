@@ -10,6 +10,7 @@ HTTP endpoint is a thin shim over the service method tested here.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -103,7 +104,11 @@ class TestReextractSource:
 
     @pytest.mark.asyncio
     async def test_committed_source_uses_force_re_extract(self) -> None:
-        """COMMITTED → calls force_re_extract (atomic graph release + reset)."""
+        """COMMITTED → force_re_extract (atomic graph release + reset), then the refresh, off the loop.
+
+        The release and the identity resolution after it read the whole graph,
+        so both run in a worker thread, never on Cortex's event loop.
+        """
         adapter = MagicMock()
         graph_repo = MagicMock()
         engine = MagicMock()
@@ -113,13 +118,25 @@ class TestReextractSource:
         ]
         service = _make_service(adapter=adapter, engine_service=engine, graph_repository=graph_repo)
 
+        threads: list[int] = []
+
+        def on_thread(*_: Any, **__: Any) -> None:
+            threads.append(threading.get_ident())
+
         with (
-            patch("chaoscypher_cortex.features.sources.service.force_re_extract") as mock_fre,
+            patch(
+                "chaoscypher_cortex.features.sources.service.force_re_extract",
+                side_effect=lambda **_: on_thread() or released,
+            ) as mock_fre,
             patch("chaoscypher_cortex.features.sources.service.queue_utils") as mock_queue,
             patch("chaoscypher_cortex.features.sources.service.event_bus"),
-            patch.object(service, "_refresh_released", new_callable=AsyncMock) as refresh,
+            patch(
+                "chaoscypher_core.services.graph.management.release.refresh_after_release_sync",
+                side_effect=on_thread,
+            ) as refresh,
             _patched_provider(),
         ):
+            released = MagicMock()
             mock_queue.queue_import_analysis = AsyncMock(return_value="t1")
             await service.reextract_source("src-1")
 
@@ -130,7 +147,10 @@ class TestReextractSource:
             settings=engine.settings,
         )
         # refreshed now: the reset commit counters make the next commit skip its cleanup
-        refresh.assert_awaited_once_with(mock_fre.return_value)
+        refresh.assert_called_once()
+        assert refresh.call_args.args[2] is released
+        assert len(threads) == 2
+        assert threading.get_ident() not in threads, "release ran on the event loop"
         # reset_for_retry must NOT be called for COMMITTED — force_re_extract
         # owns the atomic reset.
         adapter.reset_for_retry.assert_not_called()

@@ -18,9 +18,9 @@ That is the problem a knowledge graph is supposed to fix. We wanted a number for
 
 The board states three headlines, each one only because it held across the models measured:
 
-- **33% fewer failed answers than plain vector RAG on ordinary questions** (fewer on 22 of 22 models; failed answers 19% → 13%). These are the 80 original questions, which were not written with the graph in mind.
-- **50% fewer failed answers on graph-shaped questions than plain RAG** (median over 22 models; 18 of 22 remove at least 25% against plain RAG and against hybrid search).
-- **Llama 3.1 8B with the graph answers as well as Qwen3.6 27B, the top-scoring model on plain vector RAG** (86% vs 86% on ordinary questions), which needs 3.7× the GPU memory of the 8B; 15 of 22 models match it with the graph.
+- **29% fewer failed answers than plain vector RAG on ordinary questions** (fewer on 22 of 22 models; failed answers 20% → 13%). These are the 80 original questions, which were not written with the graph in mind.
+- **36% fewer failed answers on graph-shaped questions than plain RAG** (median over 22 models; 13 of 22 remove at least 25% against plain RAG and against hybrid search).
+- **Phi-4 14B with the graph answers as well as Qwen3.6 35B-A3B MoE, the best model on plain vector RAG** (86% vs 86% on ordinary questions), which needs 2.5× the GPU memory of the 14B; 12 of 22 models match it with the graph.
 
 Each headline is judged over all 22 models, not on whichever model came out on top. The [leaderboard](/leaderboard) shows each one with every model's row behind it.
 
@@ -77,8 +77,8 @@ We would rather you know the limits before you quote the numbers.
 
 - **These figures are one corpus, and it is a novel.** Fiction is full of people, families and look-alike names, which may be where a graph helps most. The board now also carries a second corpus, the Ollama documentation, reported on its own and never pooled with Book One: there the ordinary-question headline holds (68% fewer failed answers than plain vector RAG, on 22 of 22 models) and so does the small-model match (Qwen3 8B with the graph beats Qwen3.6 35B-A3B on plain RAG, 21 of 22 match), while the graph-shaped headline does not clear its bar against hybrid search (11 of 22 models, 12 needed). This post's numbers are Book One's.
 - **Local models only.** All 22 are open-weight models pulled from Ollama. The board says nothing about hosted models on this comparison.
-- **Measured on the board's day.** The figures are for the board dated 2026-10-21 and the build it measured. The graph + vector search measured there ships in v0.6.0 and later.
-- **Two headlines are against plain RAG only.** The ordinary-question figure and the small-model match are against plain vector RAG. On Book One, against hybrid search the ordinary-question gain is smaller (median 24%, and 11 of 22 models remove at least 25% of their failed answers, one short of a majority), so we claim neither against hybrid search.
+- **Measured on the board's day.** The figures are for the runs of 2026-10-21 and the build they measured, as the board was rebuilt from their saved answers on 2026-10-24. The graph + vector search measured there ships in v0.6.0 and later.
+- **Two headlines are against plain RAG only.** The ordinary-question figure and the small-model match are against plain vector RAG. On Book One, against hybrid search the ordinary-question gain is smaller (median 24%, and 10 of 22 models remove at least 25% of their failed answers, two short of a majority), so we claim neither against hybrid search.
 - **The graph is not free.** The extra context also makes some models answer out-of-scope questions they should decline. That one is on our list.
 
 In plain English: this is one book, local models, one day's build, and a clear list of what it does not show.

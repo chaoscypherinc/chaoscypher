@@ -18,6 +18,7 @@ Main implementation: chaoscypher_core.adapters.sqlite.repos.SearchRepository
 from __future__ import annotations
 
 from collections.abc import Callable, Container, Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from typing import TYPE_CHECKING, Any, Protocol
 
 from chaoscypher_core.models import TagMatch
@@ -41,7 +42,7 @@ def has_no_source(source_id: str | None) -> bool:
     return not source_id
 
 
-def node_in_source_scope(source_id: str | None, scope: Container[str]) -> bool:
+def node_in_source_scope(source_id: str | None, scope: AbstractSet[str]) -> bool:
     """Whether a node of ``source_id`` is in a source scope: it names no source, or one in it."""
     return has_no_source(source_id) or source_id in scope
 
@@ -75,7 +76,7 @@ def attesting_sources(item: object) -> list[str]:
 
 
 def item_in_source_scope(
-    item: object, scope: Container[str], *, attested_only: bool = False
+    item: object, scope: AbstractSet[str], *, attested_only: bool = False
 ) -> bool:
     """Whether a graph row is in a source scope: a person made it, it names no source, or a source in the scope attests it.
 

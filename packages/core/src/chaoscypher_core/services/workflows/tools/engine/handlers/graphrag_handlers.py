@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import contextlib
 import re
-from collections.abc import Callable, Collection, Container, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -699,7 +700,9 @@ stated both ways (A courts B, B courts A) is two facts and both lines stay."""
 
 
 def _in_scope(
-    by_node: Mapping[str, list[Any]], in_scope: set[str], attested_by: Container[str] | None = None
+    by_node: Mapping[str, list[Any]],
+    in_scope: set[str],
+    attested_by: AbstractSet[str] | None = None,
 ) -> dict[str, list[Any]]:
     """Each node's edges with both ends in ``in_scope`` (a chat's source scope, audit wave 4).
 
@@ -1657,12 +1660,12 @@ class GraphRAGToolHandlers:
             if not nodes:
                 return [], []
 
-            # Scope filter (belt-and-braces for repos ignoring the kwarg)
-            if source_ids:
+            # Scope filter (belt-and-braces for repos ignoring the kwarg); one
+            # set for the whole load, never a list scanned per node
+            scope = frozenset(source_ids or ())
+            if scope:
                 nodes = [
-                    n
-                    for n in nodes
-                    if item_in_source_scope(n, source_ids, attested_only=attested_only)
+                    n for n in nodes if item_in_source_scope(n, scope, attested_only=attested_only)
                 ]
 
             # Load edges (scope in SQL too; the endpoint filter below still
@@ -1679,7 +1682,7 @@ class GraphRAGToolHandlers:
             if stats is not None:  # the edges past a full listing were never read
                 stats["graph_listing_capped"] = int(len(edges) >= edge_limit)
 
-            if source_ids:
+            if scope:
                 node_id_set = {n.id for n in nodes}
                 edges = [
                     e
@@ -1687,9 +1690,7 @@ class GraphRAGToolHandlers:
                     if e.source_node_id in node_id_set
                     and e.target_node_id in node_id_set
                     # under a tag scope the relationship itself must be a tagged document's
-                    and (
-                        not attested_only or item_in_source_scope(e, source_ids, attested_only=True)
-                    )
+                    and (not attested_only or item_in_source_scope(e, scope, attested_only=True))
                 ]
         except Exception:
             logger.warning("graphrag_graph_load_failed", exc_info=True)
@@ -2463,10 +2464,11 @@ class GraphRAGToolHandlers:
         ``filename`` and ``source_title`` (the title, else the filename).
         """
         chunks: list[dict[str, Any]] = []
+        scope = frozenset(source_ids or ())
         kept = [
             (chunk_data, score)
             for chunk_data, score in rows
-            if not source_ids or chunk_data.get("source_id", "") in source_ids
+            if not scope or chunk_data.get("source_id", "") in scope
         ]
         kept_rows = [chunk_data for chunk_data, _ in kept]
         source_filenames = chunk_source_filenames(
@@ -2589,6 +2591,7 @@ class GraphRAGToolHandlers:
             # Unhydrated: the top entities cite most of the corpus, and rank fusion
             # reads ids and ranks alone, so only the chunks that survive the cut
             # are numbered and built (_hydrate_survivors).
+            scope = frozenset(source_ids or ())
             return [
                 {
                     "chunk_id": row["id"],
@@ -2598,7 +2601,7 @@ class GraphRAGToolHandlers:
                     _UNHYDRATED_ROW: row,
                 }
                 for row in chunk_rows
-                if not source_ids or row.get("source_id", "") in source_ids
+                if not scope or row.get("source_id", "") in scope
             ]
         except Exception:
             logger.warning("graphrag_provenance_retrieval_failed", exc_info=True)

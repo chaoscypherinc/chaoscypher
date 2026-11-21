@@ -2452,7 +2452,7 @@ a test pins the two alike.
 |---|---|---|
 | `source_id` | `str \| None` |  |
 
-### `item_in_source_scope(item: object, scope: Container[str], *, attested_only: bool = False) -> bool`
+### `item_in_source_scope(item: object, scope: AbstractSet[str], *, attested_only: bool = False) -> bool`
 
 Whether a graph row is in a source scope: a person made it, it names no source, or a source in the scope attests it.
 
@@ -2463,7 +2463,7 @@ is out (owner decision 2026-11-05).
 | Parameter | Type | Description |
 |---|---|---|
 | `item` | `object` |  |
-| `scope` | `Container[str]` |  |
+| `scope` | `AbstractSet[str]` |  |
 | `attested_only` | `bool` |  |
 
 ### `item_visible(item: object, disabled: Container[str]) -> bool`
@@ -2475,14 +2475,14 @@ Whether a graph row may answer: a person made it, it names no source, or a sourc
 | `item` | `object` |  |
 | `disabled` | `Container[str]` |  |
 
-### `node_in_source_scope(source_id: str | None, scope: Container[str]) -> bool`
+### `node_in_source_scope(source_id: str | None, scope: AbstractSet[str]) -> bool`
 
 Whether a node of `source_id` is in a source scope: it names no source, or one in it.
 
 | Parameter | Type | Description |
 |---|---|---|
 | `source_id` | `str \| None` |  |
-| `scope` | `Container[str]` |  |
+| `scope` | `AbstractSet[str]` |  |
 
 ### `source_visible(source_id: str | None, disabled: Container[str]) -> bool`
 

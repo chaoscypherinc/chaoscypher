@@ -119,7 +119,8 @@ class EdgeToolHandlers:
                 all_node_ids.add(edge.source_node_id)
                 all_node_ids.add(edge.target_node_id)
             nodes = self.graph.get_nodes_batch(list(all_node_ids), include_embedding=False)
-            allowed_ids = {n.id for n in nodes if item_in_source_scope(n, source_ids)}
+            scope = frozenset(source_ids)
+            allowed_ids = {n.id for n in nodes if item_in_source_scope(n, scope)}
             edges = [
                 e
                 for e in edges
@@ -208,7 +209,8 @@ class EdgeToolHandlers:
         related_nodes = self.graph.get_nodes_batch(list(related_node_ids), include_embedding=False)
         # Filter related nodes by source scope
         if source_ids:
-            related_nodes = [n for n in related_nodes if item_in_source_scope(n, source_ids)]
+            scope = frozenset(source_ids)
+            related_nodes = [n for n in related_nodes if item_in_source_scope(n, scope)]
         nodes_dict = {node.id: node for node in related_nodes}
 
         # Build result with node details
